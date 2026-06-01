@@ -2,3 +2,5 @@ venv/
 .env
 __pycache__/
 *.pyc
+code/prototype_v1/test_images/*.png
+code/prototype_v1/results/
