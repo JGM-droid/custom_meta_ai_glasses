@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from context_aware_prompt import build_prompt
+from fix_writer import save_latest_fix
 from memory_manager import save_observation, update_active_task
 
 
@@ -91,6 +92,7 @@ response = client.responses.create(
 )
 
 analysis_text = response.output_text
+save_latest_fix(image_path.name, analysis_text)
 
 # Save observation and then attach extracted task continuity fields.
 save_observation(image_path.name, analysis_text)
