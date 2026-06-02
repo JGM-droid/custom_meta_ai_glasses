@@ -1,23 +1,33 @@
 from pathlib import Path
 import time
 import subprocess
+import sys
 
-watch_folder = Path("code/prototype_v1/test_images")
-supported_extensions = {".png", ".jpg", ".jpeg", ".webp"}
+BASE_DIR = Path(__file__).resolve().parent
+WATCH_FOLDER = BASE_DIR / "test_images"
+SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+PIPELINE_SCRIPT = BASE_DIR / "watch_latest_image.py"
 
-seen_files = set(image.name for image in watch_folder.iterdir() if image.is_file())
+seen_files = {image.name for image in WATCH_FOLDER.iterdir() if image.is_file()}
 
-print("Watching for new images...")
+print(f"Watcher started: monitoring {WATCH_FOLDER}")
 
 while True:
-    for image in watch_folder.iterdir():
-        if image.is_file() and image.suffix.lower() in supported_extensions:
+    for image in WATCH_FOLDER.iterdir():
+        if image.is_file() and image.suffix.lower() in SUPPORTED_EXTENSIONS:
             if image.name not in seen_files:
-                print(f"\nNew image detected: {image.name}")
+                print(f"\nImage detected: {image.name}")
 
-                subprocess.run(
-                    ["python", "code/prototype_v1/watch_latest_image.py", str(image)]
+                result = subprocess.run(
+                    [sys.executable, str(PIPELINE_SCRIPT), str(image)],
+                    cwd=str(BASE_DIR),
+                    check=False,
                 )
+
+                if result.returncode == 0:
+                    print(f"Analysis completed: {image.name}")
+                else:
+                    print(f"Analysis failed: {image.name} (exit code {result.returncode})")
 
                 seen_files.add(image.name)
 
