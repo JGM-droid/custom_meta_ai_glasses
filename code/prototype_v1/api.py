@@ -9,9 +9,17 @@ import sys
 import tempfile
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI(title="Prototype V1 API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"

@@ -100,6 +100,54 @@
       opacity: 0.95;
     }
 
+    .upload-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .file-input {
+      color: #fff;
+      font-size: 0.9rem;
+      max-width: 100%;
+    }
+
+    .analyze-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #0f4fcc;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .analyze-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .upload-status {
+      font-size: 0.9rem;
+      font-weight: 600;
+      min-height: 1.2em;
+    }
+
+    .upload-status.uploading {
+      color: #ffe6bf;
+    }
+
+    .upload-status.success {
+      color: #b6ffd0;
+    }
+
+    .upload-status.error {
+      color: #ffd1d1;
+    }
+
     .grid {
       display: grid;
       grid-template-columns: 1fr;
@@ -163,6 +211,11 @@
         </div>
         <div id="lastChecked" class="meta">Last checked: never</div>
       </div>
+      <div class="upload-row">
+        <input id="uploadInput" class="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+        <button id="analyzeBtn" class="analyze-btn" type="button">Analyze Image</button>
+        <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
+      </div>
     </section>
 
     <section class="grid two">
@@ -205,7 +258,8 @@
   </main>
 
   <script>
-    const API_URL = "http://127.0.0.1:8001/latest";
+    const API_LATEST_URL = "http://127.0.0.1:8001/latest";
+    const API_ANALYZE_URL = "http://127.0.0.1:8001/analyze";
     const POLL_MS = 3000;
 
     const fields = [
@@ -222,6 +276,9 @@
     const statusPill = document.getElementById("statusPill");
     const statusText = document.getElementById("statusText");
     const lastChecked = document.getElementById("lastChecked");
+    const uploadInput = document.getElementById("uploadInput");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const uploadStatus = document.getElementById("uploadStatus");
 
     function setStatus(connected) {
       statusPill.classList.remove("connected", "waiting");
@@ -231,6 +288,14 @@
       } else {
         statusPill.classList.add("waiting");
         statusText.textContent = "Waiting for API";
+      }
+    }
+
+    function setUploadStatus(message, state) {
+      uploadStatus.textContent = message;
+      uploadStatus.classList.remove("uploading", "success", "error");
+      if (state) {
+        uploadStatus.classList.add(state);
       }
     }
 
@@ -258,7 +323,7 @@
     async function fetchLatest() {
       setLastChecked();
       try {
-        const response = await fetch(API_URL, { cache: "no-store" });
+        const response = await fetch(API_LATEST_URL, { cache: "no-store" });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -269,6 +334,40 @@
         setStatus(false);
       }
     }
+
+    async function uploadAndAnalyze() {
+      const file = uploadInput.files && uploadInput.files[0];
+      if (!file) {
+        setUploadStatus("Upload failed", "error");
+        return;
+      }
+
+      analyzeBtn.disabled = true;
+      setUploadStatus("Uploading...", "uploading");
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch(API_ANALYZE_URL, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        setUploadStatus("Analysis complete", "success");
+        await fetchLatest();
+      } catch (_err) {
+        setUploadStatus("Upload failed", "error");
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+    }
+
+    analyzeBtn.addEventListener("click", uploadAndAnalyze);
 
     fetchLatest();
     setInterval(fetchLatest, POLL_MS);
