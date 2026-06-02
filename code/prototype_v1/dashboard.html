@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Glasses Live Analysis Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #52606d;
+      --line: #d9e2ec;
+      --ok: #1f9d55;
+      --warn: #d9822b;
+      --accent: #0f6fff;
+      --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(15, 111, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 90% 5%, rgba(31, 157, 85, 0.07), transparent 35%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    .wrap {
+      max-width: 1050px;
+      margin: 28px auto;
+      padding: 0 18px;
+    }
+
+    .hero {
+      background: linear-gradient(120deg, #0f6fff 0%, #0f4fcc 100%);
+      color: #fff;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .sub {
+      margin: 8px 0 0;
+      opacity: 0.92;
+      font-size: 0.96rem;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .status-pill.connected .status-dot {
+      background: #9ff2bf;
+      box-shadow: 0 0 0 6px rgba(159, 242, 191, 0.18);
+    }
+
+    .status-pill.waiting .status-dot {
+      background: #ffd19d;
+      box-shadow: 0 0 0 6px rgba(255, 209, 157, 0.2);
+    }
+
+    .meta {
+      font-size: 0.86rem;
+      opacity: 0.95;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    @media (min-width: 900px) {
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 14px 12px;
+      box-shadow: var(--shadow);
+      min-height: 90px;
+    }
+
+    .label {
+      display: inline-block;
+      margin-bottom: 6px;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .value {
+      font-size: 1rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .value.mono {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 0.95rem;
+      background: #f9fbfd;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>Recruiter Demo Dashboard</h1>
+      <p class="sub">Live view of the latest AI glasses analysis response (auto-refresh every 3 seconds).</p>
+      <div class="status-row">
+        <div id="statusPill" class="status-pill waiting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">Waiting for API</span>
+        </div>
+        <div id="lastChecked" class="meta">Last checked: never</div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="label">Timestamp</div>
+        <div id="timestamp" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Image Analyzed</div>
+        <div id="image_analyzed" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Observed Issue</div>
+        <div id="observed_issue" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Likely Cause</div>
+        <div id="likely_cause" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Recommended Fix</div>
+        <div id="recommended_fix" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Validation Step</div>
+        <div id="validation_step" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Next Action</div>
+        <div id="next_action" class="value muted">No data yet</div>
+      </article>
+    </section>
+
+    <section class="grid" style="margin-top: 12px;">
+      <article class="card">
+        <div class="label">Full Analysis</div>
+        <div id="full_analysis" class="value mono muted">No data yet</div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const API_URL = "http://127.0.0.1:8001/latest";
+    const POLL_MS = 3000;
+
+    const fields = [
+      "timestamp",
+      "image_analyzed",
+      "observed_issue",
+      "likely_cause",
+      "recommended_fix",
+      "validation_step",
+      "next_action",
+      "full_analysis"
+    ];
+
+    const statusPill = document.getElementById("statusPill");
+    const statusText = document.getElementById("statusText");
+    const lastChecked = document.getElementById("lastChecked");
+
+    function setStatus(connected) {
+      statusPill.classList.remove("connected", "waiting");
+      if (connected) {
+        statusPill.classList.add("connected");
+        statusText.textContent = "Connected";
+      } else {
+        statusPill.classList.add("waiting");
+        statusText.textContent = "Waiting for API";
+      }
+    }
+
+    function setLastChecked() {
+      const now = new Date();
+      lastChecked.textContent = `Last checked: ${now.toLocaleTimeString()}`;
+    }
+
+    function normalize(value) {
+      if (value === null || value === undefined || value === "") {
+        return "No data";
+      }
+      return String(value);
+    }
+
+    function applyData(data) {
+      fields.forEach((field) => {
+        const el = document.getElementById(field);
+        if (!el) return;
+        el.textContent = normalize(data[field]);
+        el.classList.remove("muted");
+      });
+    }
+
+    async function fetchLatest() {
+      setLastChecked();
+      try {
+        const response = await fetch(API_URL, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        applyData(data);
+        setStatus(true);
+      } catch (_err) {
+        setStatus(false);
+      }
+    }
+
+    fetchLatest();
+    setInterval(fetchLatest, POLL_MS);
+  </script>
+</body>
+</html>
