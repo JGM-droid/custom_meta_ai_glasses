@@ -51,7 +51,7 @@ def save_latest_fix(image_name, analysis_text):
         extracted_sections["Recommended Fix"] = fallback_recommended_fix
     for section_name in SECTION_NAMES:
         if not extracted_sections[section_name]:
-            extracted_sections[section_name] = "Not explicitly provided in the model output."
+            extracted_sections[section_name] = "No information provided."
 
     results_dir = Path(__file__).resolve().parent / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
