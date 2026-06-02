@@ -110,6 +110,18 @@ OBSERVATIONS:
 - Observation 2
 - Observation 3
 
+LIKELY CAUSE:
+One short explanation of the most probable root cause.
+
+RECOMMENDED FIX:
+One short actionable fix.
+
+VALIDATION:
+One short validation step to confirm the fix worked.
+
+NEXT ACTION:
+One short statement describing the next task after validation.
+
 NEXT:
 - Step 1
 - Step 2

@@ -1,5 +1,123 @@
 from pathlib import Path
 from datetime import datetime
+import re
+
+
+SECTION_ORDER = [
+    "Observed Issue",
+    "Likely Cause",
+    "Recommended Fix",
+    "Validation Step",
+    "Next Action",
+]
+
+SECTION_ALIASES = {
+    "Observed Issue": {
+        "observed issue",
+        "issue",
+        "observed problem",
+        "problem",
+        "observation",
+    },
+    "Likely Cause": {
+        "likely cause",
+        "cause",
+        "root cause",
+        "possible cause",
+    },
+    "Recommended Fix": {
+        "recommended fix",
+        "fix",
+        "recommendation",
+        "proposed fix",
+        "solution",
+    },
+    "Validation Step": {
+        "validation step",
+        "validation",
+        "verification",
+        "verify",
+        "test step",
+    },
+    "Next Action": {
+        "next action",
+        "next step",
+        "follow up",
+        "follow-up",
+    },
+}
+
+
+def _normalize_label(label):
+    return re.sub(r"[^a-z0-9]+", " ", label.lower()).strip()
+
+
+def _to_canonical_section(label):
+    normalized = _normalize_label(label)
+    for section, aliases in SECTION_ALIASES.items():
+        alias_normalized = {_normalize_label(a) for a in aliases}
+        if normalized in alias_normalized:
+            return section
+    return None
+
+
+def _extract_structured_sections(analysis_text):
+    sections = {name: "" for name in SECTION_ORDER}
+    text = (analysis_text or "").strip()
+    if not text:
+        return sections
+
+    lines = text.splitlines()
+    current_section = None
+    buffer = []
+
+    def flush_buffer():
+        nonlocal buffer
+        if current_section and buffer:
+            value = "\n".join(buffer).strip()
+            if value:
+                if sections[current_section]:
+                    sections[current_section] += "\n\n" + value
+                else:
+                    sections[current_section] = value
+        buffer = []
+
+    for raw_line in lines:
+        # Match markdown headings like: ## Recommended Fix
+        heading_match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", raw_line)
+        if heading_match:
+            maybe_section = _to_canonical_section(heading_match.group(1))
+            if maybe_section:
+                flush_buffer()
+                current_section = maybe_section
+                continue
+
+        # Match bold labels like: **Likely Cause**
+        bold_match = re.match(r"^\s*\*\*(.+?)\*\*\s*:?\s*$", raw_line)
+        if bold_match:
+            maybe_section = _to_canonical_section(bold_match.group(1))
+            if maybe_section:
+                flush_buffer()
+                current_section = maybe_section
+                continue
+
+        # Match inline labels like: Validation Step: Re-run with...
+        inline_match = re.match(r"^\s*([A-Za-z][A-Za-z \-]{2,})\s*:\s*(.*)$", raw_line)
+        if inline_match:
+            maybe_section = _to_canonical_section(inline_match.group(1))
+            if maybe_section:
+                flush_buffer()
+                current_section = maybe_section
+                inline_value = inline_match.group(2).strip()
+                if inline_value:
+                    buffer.append(inline_value)
+                continue
+
+        if current_section:
+            buffer.append(raw_line)
+
+    flush_buffer()
+    return sections
 
 
 def save_latest_fix(image_name, analysis_text):
@@ -9,6 +127,18 @@ def save_latest_fix(image_name, analysis_text):
 
     report_path = results_dir / "latest_fix.md"
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    parsed_sections = _extract_structured_sections(analysis_text)
+
+    fallback_text = "Not explicitly provided by AI response."
+    raw_text = (analysis_text or "").strip()
+
+    # If no structured sections were detected, preserve raw analysis text.
+    if not any(parsed_sections.values()) and raw_text:
+        parsed_sections["Observed Issue"] = raw_text
+
+    for section_name in SECTION_ORDER:
+        if not parsed_sections[section_name]:
+            parsed_sections[section_name] = fallback_text
 
     content = "\n".join(
         [
@@ -17,17 +147,25 @@ def save_latest_fix(image_name, analysis_text):
             f"- Timestamp: {timestamp}",
             f"- Image Analyzed: {image_name}",
             "",
-            "## Full AI Analysis",
+            "## Observed Issue",
             "",
-            analysis_text,
+            parsed_sections["Observed Issue"],
             "",
-            "## Copy/Paste Fix",
+            "## Likely Cause",
             "",
-            analysis_text,
+            parsed_sections["Likely Cause"],
             "",
-            "## Next Step",
+            "## Recommended Fix",
             "",
-            "Use the guidance above to apply the fix, then run the next capture to validate the result.",
+            parsed_sections["Recommended Fix"],
+            "",
+            "## Validation Step",
+            "",
+            parsed_sections["Validation Step"],
+            "",
+            "## Next Action",
+            "",
+            parsed_sections["Next Action"],
             "",
         ]
     )
