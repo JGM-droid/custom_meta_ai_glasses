@@ -45,6 +45,52 @@
       margin-bottom: 16px;
     }
 
+    .glasses-view {
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      border: 1px solid #cdd9ee;
+      border-left: 6px solid var(--accent);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+
+    .glasses-view h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .glasses-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    @media (min-width: 700px) {
+      .glasses-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .glasses-item {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .glasses-item .label {
+      margin-bottom: 4px;
+      font-size: 0.72rem;
+    }
+
+    .glasses-item .value {
+      font-size: 0.96rem;
+      white-space: pre-wrap;
+    }
+
     h1 {
       margin: 0;
       font-size: 1.4rem;
@@ -201,6 +247,28 @@
 </head>
 <body>
   <main class="wrap">
+    <section class="glasses-view">
+      <h2>Glasses View</h2>
+      <div class="glasses-grid">
+        <article class="glasses-item">
+          <div class="label">Current Task</div>
+          <div id="glasses_current_task" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Next Action</div>
+          <div id="glasses_next_action" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Risk</div>
+          <div id="glasses_risk" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Confidence</div>
+          <div id="glasses_confidence" class="value muted">No data yet</div>
+        </article>
+      </div>
+    </section>
+
     <section class="hero">
       <h1>Recruiter Demo Dashboard</h1>
       <p class="sub">Live view of the latest AI glasses analysis response (auto-refresh every 3 seconds).</p>
@@ -279,6 +347,10 @@
     const uploadInput = document.getElementById("uploadInput");
     const analyzeBtn = document.getElementById("analyzeBtn");
     const uploadStatus = document.getElementById("uploadStatus");
+    const glassesCurrentTask = document.getElementById("glasses_current_task");
+    const glassesNextAction = document.getElementById("glasses_next_action");
+    const glassesRisk = document.getElementById("glasses_risk");
+    const glassesConfidence = document.getElementById("glasses_confidence");
 
     function setStatus(connected) {
       statusPill.classList.remove("connected", "waiting");
@@ -318,6 +390,44 @@
         el.textContent = normalize(data[field]);
         el.classList.remove("muted");
       });
+
+      const fullAnalysis = data.full_analysis || "";
+      const currentTask = data.current_task || extractLine(fullAnalysis, "Current task");
+      const nextAction = data.next_action || extractSection(fullAnalysis, "NEXT ACTION");
+      const risk = data.risk || extractLine(fullAnalysis, "RISK");
+      const confidence = data.confidence || extractLine(fullAnalysis, "Confidence");
+
+      glassesCurrentTask.textContent = normalize(currentTask);
+      glassesNextAction.textContent = normalize(nextAction);
+      glassesRisk.textContent = normalize(risk);
+      glassesConfidence.textContent = normalize(confidence);
+
+      [glassesCurrentTask, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
+        el.classList.remove("muted");
+      });
+    }
+
+    function extractSection(text, label) {
+      if (!text) {
+        return "No data";
+      }
+
+      const pattern = new RegExp(
+        String.raw`(?:^|\n)${label}:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{2,}:\s*|$)`,
+        "i"
+      );
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() || "No data" : "No data";
+    }
+
+    function extractLine(text, label) {
+      if (!text) {
+        return "No data";
+      }
+
+      const pattern = new RegExp(String.raw`${label}:\s*([^\n]+)`, "i");
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() || "No data" : "No data";
     }
 
     async function fetchLatest() {
