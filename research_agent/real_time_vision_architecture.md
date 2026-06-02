@@ -9,7 +9,7 @@ Smart Glasses Camera
   ↓ (frame/sample every 500–1000 ms)
 Phone Companion App (iOS/Android)
   ↓ (quality gate: blur, brightness, duplicate-frame hash)
-Edge Preprocessor (crop/resize/compress + prompt template)
+Companion App Preprocessor (crop/resize/compress + prompt template)
   ↓
 Vision LLM API (OpenAI Vision / Gemini Vision / Claude Vision)
   ↓
@@ -103,8 +103,8 @@ Optional: Open Interpreter / tool runner executes user-approved fix
 | Local OCR/detectors (fast path) | 120–400 ms |
 | Cloud vision inference (single image) | 900–2800 ms |
 | Response synthesis + TTS kick-off | 120–350 ms |
-| **Total (fast OCR-first path)** | **0.4–1.2 s** |
-| **Total (cloud-vision path)** | **1.3–3.8 s** |
+| **Total (fast OCR-first path)** | **0.4–1.2 seconds** |
+| **Total (cloud-vision path)** | **1.3–3.8 seconds** |
 
 ### Optimization checklist
 
@@ -172,7 +172,8 @@ Examples to study for architecture patterns and implementation ideas:
 - **Orchestration API:** Python FastAPI
 - **Vision:** OpenAI Vision (primary), Claude/Gemini fallback routing
 - **OCR:** PaddleOCR local first, LLM OCR fallback
-- **Memory:** SQLite + lightweight vector DB (FAISS/Chroma)
+- **Memory (MVP):** SQLite + lightweight vector DB (FAISS/Chroma)
+- **Memory (production):** Postgres for durable multi-stream state + Redis for queue/cache workloads
 - **Speech:** device-native STT/TTS where possible
 - **Queueing:** Redis or in-process async queue for frame tasks
 - **Observability:** latency traces per stage + prompt/result logging
@@ -193,7 +194,7 @@ Examples to study for architecture patterns and implementation ideas:
 
 Success criteria for MVP:
 - sub-2.5 seconds median for short scene Q&A
-- sub-1.2 seconds OCR fast path median on clear text
+- ≤1.2 seconds end-to-end fast OCR-first path median on clear text
 - stable “camera → answer” loop for 10+ minute live demo
 
 ## 10) Risks
