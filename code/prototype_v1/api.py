@@ -20,6 +20,23 @@ LATEST_RESPONSE_JSON = BASE_DIR / "results" / "latest_response.json"
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
+@app.get("/latest")
+async def latest():
+    if not LATEST_RESPONSE_JSON.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="latest_response.json not found.",
+        )
+
+    try:
+        return json.loads(LATEST_RESPONSE_JSON.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"latest_response.json is not valid JSON: {exc}",
+        ) from exc
+
+
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
     suffix = Path(file.filename or "upload.bin").suffix.lower()
