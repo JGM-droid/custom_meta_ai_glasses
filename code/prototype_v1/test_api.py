@@ -3,7 +3,7 @@ from pathlib import Path
 import requests
 
 
-API_URL = "http://127.0.0.1:8000/analyze"
+API_URL = "http://127.0.0.1:8001/analyze"
 IMAGE_PATH = Path(__file__).resolve().parent / "test_images" / "test_image.png"
 
 
