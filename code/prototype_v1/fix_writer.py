@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
 import re
+import json
 
 
 SECTION_ORDER = [
@@ -126,6 +127,7 @@ def save_latest_fix(image_name, analysis_text):
     results_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = results_dir / "latest_fix.md"
+    response_json_path = results_dir / "latest_response.json"
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     parsed_sections = _extract_structured_sections(analysis_text)
 
@@ -171,3 +173,18 @@ def save_latest_fix(image_name, analysis_text):
     )
 
     report_path.write_text(content, encoding="utf-8")
+
+    response_payload = {
+        "timestamp": timestamp,
+        "image_analyzed": image_name,
+        "observed_issue": parsed_sections["Observed Issue"],
+        "likely_cause": parsed_sections["Likely Cause"],
+        "recommended_fix": parsed_sections["Recommended Fix"],
+        "validation_step": parsed_sections["Validation Step"],
+        "next_action": parsed_sections["Next Action"],
+        "full_analysis": raw_text,
+    }
+    response_json_path.write_text(
+        json.dumps(response_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
