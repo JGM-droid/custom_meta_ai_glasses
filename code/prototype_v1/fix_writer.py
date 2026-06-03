@@ -169,6 +169,43 @@ def _extract_section_value(analysis_text, label, default="Unknown"):
     return first_line if first_line else default
 
 
+def _extract_completed_steps(analysis_text):
+    text = (analysis_text or "").strip()
+    if not text:
+        return []
+
+    steps = []
+
+    # Include the singular "Last completed step" when present.
+    last_completed = _extract_line_field(analysis_text, "Last completed step", default="")
+    if last_completed:
+        steps.append(last_completed)
+
+    # Include any explicit "Completed steps" section when present.
+    section_match = re.search(
+        r"(?:^|\n)Completed\s+steps\s*:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{2,}\s*:|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if section_match:
+        section_text = section_match.group(1).strip()
+        for line in section_text.splitlines():
+            cleaned = re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+            if cleaned:
+                steps.append(cleaned)
+
+    # Preserve order but remove duplicates.
+    deduped = []
+    seen = set()
+    for step in steps:
+        key = step.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(step)
+
+    return deduped
+
+
 def _truncate(text, max_len):
     value = (text or "").strip()
     if len(value) <= max_len:
@@ -216,6 +253,7 @@ def save_latest_fix(image_name, analysis_text):
     current_task = _extract_line_field(analysis_text, "Current task")
     confidence = _extract_line_field(analysis_text, "Confidence")
     risk = _extract_line_field(analysis_text, "RISK", default="No major risk.")
+    completed_steps = _extract_completed_steps(analysis_text)
     next_action_for_guidance = _extract_section_value(analysis_text, "NEXT ACTION")
     glasses_guidance = _build_glasses_guidance(
         current_task,
@@ -272,6 +310,7 @@ def save_latest_fix(image_name, analysis_text):
         "recommended_fix": parsed_sections["Recommended Fix"],
         "validation_step": parsed_sections["Validation Step"],
         "next_action": parsed_sections["Next Action"],
+        "completed_steps": completed_steps,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,

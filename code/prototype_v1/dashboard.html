@@ -323,6 +323,10 @@
         <div class="label">Next Action</div>
         <div id="next_action" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Completed Steps</div>
+        <div id="completed_steps" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -346,6 +350,7 @@
       "recommended_fix",
       "validation_step",
       "next_action",
+      "completed_steps",
       "full_analysis"
     ];
 
@@ -397,7 +402,12 @@
       fields.forEach((field) => {
         const el = document.getElementById(field);
         if (!el) return;
-        el.textContent = normalize(data[field]);
+        if (field === "completed_steps") {
+          const steps = Array.isArray(data.completed_steps) ? data.completed_steps : [];
+          el.textContent = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps yet";
+        } else {
+          el.textContent = normalize(data[field]);
+        }
         el.classList.remove("muted");
       });
 
