@@ -485,6 +485,23 @@ def _build_metrics_snapshot(task_continuity, task_progress, stuck_status, interv
     }
 
 
+def _build_glasses_display(current_task, next_action, confidence, stuck_status):
+    status_payload = stuck_status if isinstance(stuck_status, dict) else {}
+    is_stuck = bool(status_payload.get("is_stuck", False))
+
+    title = _truncate(current_task or "Unknown task", 48)
+    primary_action = _truncate(next_action or "Continue current step.", 72)
+    confidence_value = _truncate(confidence or "Unknown", 20)
+    status = "STUCK" if is_stuck else "ACTIVE"
+
+    return {
+        "title": title,
+        "primary_action": primary_action,
+        "confidence": confidence_value,
+        "status": status,
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -538,6 +555,12 @@ def save_latest_fix(image_name, analysis_text):
         next_action_for_guidance,
         risk,
         confidence,
+    )
+    glasses_display = _build_glasses_display(
+        current_task,
+        next_step_for_progress,
+        confidence,
+        stuck_status,
     )
 
     # If no structured sections were detected, preserve raw analysis text.
@@ -596,6 +619,7 @@ def save_latest_fix(image_name, analysis_text):
         "metrics_snapshot": metrics_snapshot,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
+        "glasses_display": glasses_display,
         "full_analysis": raw_text,
     }
     response_json_path.write_text(

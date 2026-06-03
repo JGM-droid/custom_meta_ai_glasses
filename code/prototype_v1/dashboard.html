@@ -423,6 +423,10 @@
         <div class="label">Metrics Snapshot</div>
         <div id="metrics_snapshot" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Glasses Display</div>
+        <div id="glasses_display" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -452,6 +456,7 @@
       "resume_previous_task",
       "intervention",
       "metrics_snapshot",
+      "glasses_display",
       "full_analysis"
     ];
 
@@ -546,6 +551,13 @@
           const latestTaskContinuity = normalize(metrics.latest_task_continuity);
           const latestStepCount = Number.isInteger(metrics.latest_step_count) ? metrics.latest_step_count : 0;
           el.textContent = `Recent observation count: ${recentObservationCount}\nStuck count: ${stuckCount}\nIntervention count: ${interventionCount}\nLatest task continuity: ${latestTaskContinuity}\nLatest step count: ${latestStepCount}`;
+        } else if (field === "glasses_display") {
+          const display = (data.glasses_display && typeof data.glasses_display === "object") ? data.glasses_display : {};
+          const title = normalize(display.title);
+          const primaryAction = normalize(display.primary_action);
+          const confidence = normalize(display.confidence);
+          const status = normalize(display.status);
+          el.textContent = `Title: ${title}\nPrimary action: ${primaryAction}\nConfidence: ${confidence}\nStatus: ${status}`;
         } else {
           el.textContent = normalize(data[field]);
         }
