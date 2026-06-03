@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import json
 import subprocess
@@ -14,6 +15,34 @@ RESUME_NOW_SCRIPT = BASE_DIR / "resume_now.py"
 RESUME_NOW_OUTPUT = RESULTS_DIR / "resume_now.json"
 OUTPUT_PATH = RESULTS_DIR / "glasses_demo.json"
 DISPLAY_MOCK_PATH = BASE_DIR / "glasses_display_mock.html"
+
+SCENARIO_GUIDANCE = {
+    "normal": {
+        "level": "info",
+        "headline": "Continue Implementation",
+        "recommended_action": "Continue the next implementation step.",
+    },
+    "error": {
+        "level": "critical",
+        "headline": "Resolve Error First",
+        "recommended_action": "Review and resolve the current error before continuing.",
+    },
+    "git": {
+        "level": "high",
+        "headline": "Review Git Changes",
+        "recommended_action": "Review your git changes before continuing.",
+    },
+    "switch": {
+        "level": "low",
+        "headline": "Possible Task Switch",
+        "recommended_action": "Confirm whether you want to continue the current task.",
+    },
+    "stuck": {
+        "level": "medium",
+        "headline": "Possible Blocker",
+        "recommended_action": "Break the task into a smaller next step.",
+    },
+}
 
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
@@ -103,9 +132,59 @@ def _print_demo_summary(payload: dict[str, Any]) -> None:
     print(f"Display mock path: {_as_text(payload.get('display_mock_path'), fallback='')}")
 
 
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate demo guidance payloads for glasses display testing.")
+    parser.add_argument("--speak", action="store_true", help="Enable spoken guidance in default mode.")
+    parser.add_argument(
+        "--scenario",
+        choices=sorted(SCENARIO_GUIDANCE.keys()),
+        help="Generate deterministic resume payload for a specific scenario.",
+    )
+    return parser.parse_args()
+
+
+def _build_scenario_resume_payload(scenario: str) -> dict[str, Any]:
+    guidance = SCENARIO_GUIDANCE[scenario]
+    return {
+        "recommended_next_action": guidance["recommended_action"],
+        "current_file": "",
+        "guidance_priority": {
+            "level": guidance["level"],
+            "headline": guidance["headline"],
+            "recommended_action": guidance["recommended_action"],
+        },
+    }
+
+
 def main() -> None:
-    speak_enabled = "--speak" in sys.argv[1:]
+    args = _parse_args()
+    speak_enabled = bool(args.speak)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.scenario:
+        resume_payload = _build_scenario_resume_payload(args.scenario)
+        RESUME_NOW_OUTPUT.write_text(json.dumps(resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        demo_payload = _build_demo_payload(
+            script_results=[
+                {
+                    "script": f"scenario:{args.scenario}",
+                    "ok": True,
+                    "returncode": 0,
+                }
+            ],
+            resume_payload=resume_payload,
+            speak_enabled=speak_enabled,
+        )
+        demo_payload["scenario"] = args.scenario
+        OUTPUT_PATH.write_text(json.dumps(demo_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        print(f"GLASSES DEMO (scenario: {args.scenario})")
+        _print_demo_summary(demo_payload)
+        print()
+        print(f"Wrote: {RESUME_NOW_OUTPUT}")
+        print(f"Wrote: {OUTPUT_PATH}")
+        return
 
     script_results = []
     script_results.append(_run_script(CODING_CONTEXT_SCRIPT))
