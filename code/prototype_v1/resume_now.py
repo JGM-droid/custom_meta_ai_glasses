@@ -6,6 +6,8 @@ import subprocess
 import sys
 from typing import Any
 
+from voice_readout import _speak_message
+
 
 BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / "results"
@@ -58,7 +60,6 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
     error_summary = _as_text(error_context.get("summary"), fallback="No error context available")
 
     possible_task_switch = bool(task_switch_context.get("possible_task_switch", False))
-    switch_text = "Yes" if possible_task_switch else "No"
 
     if has_error_signals:
         recommended_next_action = "Review error context first and resolve the blocker before continuing development."
@@ -80,6 +81,19 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
         "error_context": error_summary,
         "recommended_next_action": recommended_next_action,
     }
+
+
+def _speak_recommendation(payload: dict[str, Any]) -> None:
+    message = _as_text(payload.get("recommended_next_action"), fallback="")
+    if not message:
+        print("Warning: No recommended next action available for voice readout.")
+        return
+
+    try:
+        if not _speak_message(message):
+            print("Warning: Voice readout unavailable for recommended next action.")
+    except Exception as exc:
+        print(f"Warning: Voice readout failed: {exc}")
 
 
 def _print_resume_now(payload: dict[str, Any]) -> None:
@@ -105,6 +119,8 @@ def _print_resume_now(payload: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    speak_enabled = "--speak" in sys.argv[1:]
+
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     _run_script(CODING_CONTEXT_SCRIPT)
@@ -116,6 +132,8 @@ def main() -> None:
     payload = _build_resume_now_payload(coding_pack, session_recovery)
     OUTPUT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _print_resume_now(payload)
+    if speak_enabled:
+        _speak_recommendation(payload)
     print()
     print(f"Wrote: {OUTPUT_PATH}")
 
