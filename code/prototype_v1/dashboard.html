@@ -343,6 +343,10 @@
         <div class="label">Intervention</div>
         <div id="intervention" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Metrics Snapshot</div>
+        <div id="metrics_snapshot" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -371,6 +375,7 @@
       "stuck_status",
       "resume_previous_task",
       "intervention",
+      "metrics_snapshot",
       "full_analysis"
     ];
 
@@ -451,6 +456,14 @@
           const message = normalize(intervention.message);
           const reason = normalize(intervention.reason);
           el.textContent = `Recommended: ${recommended ? "Yes" : "No"}\nMessage: ${message}\nReason: ${reason}`;
+        } else if (field === "metrics_snapshot") {
+          const metrics = (data.metrics_snapshot && typeof data.metrics_snapshot === "object") ? data.metrics_snapshot : {};
+          const recentObservationCount = Number.isInteger(metrics.recent_observation_count) ? metrics.recent_observation_count : 0;
+          const stuckCount = Number.isInteger(metrics.stuck_count) ? metrics.stuck_count : 0;
+          const interventionCount = Number.isInteger(metrics.intervention_count) ? metrics.intervention_count : 0;
+          const latestTaskContinuity = normalize(metrics.latest_task_continuity);
+          const latestStepCount = Number.isInteger(metrics.latest_step_count) ? metrics.latest_step_count : 0;
+          el.textContent = `Recent observation count: ${recentObservationCount}\nStuck count: ${stuckCount}\nIntervention count: ${interventionCount}\nLatest task continuity: ${latestTaskContinuity}\nLatest step count: ${latestStepCount}`;
         } else {
           el.textContent = normalize(data[field]);
         }

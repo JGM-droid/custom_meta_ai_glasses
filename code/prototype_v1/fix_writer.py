@@ -426,6 +426,65 @@ def _build_intervention(stuck_status, task_progress, resume_previous_task, next_
     }
 
 
+def _build_metrics_snapshot(task_continuity, task_progress, stuck_status, intervention):
+    session_memory_path = Path(__file__).resolve().parent / "results" / "session_memory.json"
+
+    observations = []
+    if session_memory_path.exists():
+        try:
+            memory_payload = json.loads(session_memory_path.read_text(encoding="utf-8"))
+            if isinstance(memory_payload, dict) and isinstance(memory_payload.get("observations"), list):
+                observations = memory_payload.get("observations", [])
+        except (json.JSONDecodeError, OSError):
+            observations = []
+
+    recent_observation_count = len(observations)
+    stuck_count = 0
+    intervention_count = 0
+    repeated_next_step_tracker = {}
+
+    for item in observations:
+        if not isinstance(item, dict):
+            continue
+
+        prior_analysis = item.get("analysis", "")
+        if not isinstance(prior_analysis, str):
+            continue
+
+        prior_task, prior_next_step = _extract_task_and_next_step(prior_analysis)
+        task_key = _normalize_similarity_text(prior_task)
+        step_key = _normalize_similarity_text(prior_next_step)
+        if not task_key or not step_key:
+            continue
+
+        combo_key = f"{task_key}::{step_key}"
+        repeated_next_step_tracker[combo_key] = repeated_next_step_tracker.get(combo_key, 0) + 1
+
+        if repeated_next_step_tracker[combo_key] >= 2:
+            stuck_count += 1
+            intervention_count += 1
+
+    if isinstance(stuck_status, dict) and bool(stuck_status.get("is_stuck", False)):
+        stuck_count += 1
+
+    if isinstance(intervention, dict) and bool(intervention.get("recommended", False)):
+        intervention_count += 1
+
+    latest_step_count = 0
+    if isinstance(task_progress, dict) and isinstance(task_progress.get("step_count"), int):
+        latest_step_count = task_progress.get("step_count", 0)
+
+    latest_task_continuity = str(task_continuity or "Unknown")
+
+    return {
+        "recent_observation_count": recent_observation_count,
+        "stuck_count": stuck_count,
+        "intervention_count": intervention_count,
+        "latest_task_continuity": latest_task_continuity,
+        "latest_step_count": latest_step_count,
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -466,6 +525,12 @@ def save_latest_fix(image_name, analysis_text):
         task_progress,
         resume_previous_task,
         parsed_sections["Next Action"] if parsed_sections.get("Next Action") else next_step_for_progress,
+    )
+    metrics_snapshot = _build_metrics_snapshot(
+        task_continuity,
+        task_progress,
+        stuck_status,
+        intervention,
     )
 
     glasses_guidance = _build_glasses_guidance(
@@ -528,6 +593,7 @@ def save_latest_fix(image_name, analysis_text):
         "stuck_status": stuck_status,
         "resume_previous_task": resume_previous_task,
         "intervention": intervention,
+        "metrics_snapshot": metrics_snapshot,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,
