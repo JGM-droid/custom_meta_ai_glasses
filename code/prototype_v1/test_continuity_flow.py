@@ -20,7 +20,7 @@ def pick_first_existing(candidates: list[str]) -> Path | None:
     return None
 
 
-def run_case(image_path: Path, expected_continuity: str) -> bool:
+def run_case(image_path: Path, expected_continuity: str | tuple[str, ...]) -> bool:
     result = subprocess.run(
         [sys.executable, str(PIPELINE_SCRIPT), str(image_path)],
         cwd=str(BASE_DIR),
@@ -56,7 +56,8 @@ def run_case(image_path: Path, expected_continuity: str) -> bool:
         return False
 
     task_continuity = str(payload.get("task_continuity", "Unknown") or "Unknown")
-    passed = task_continuity.lower() == expected_continuity.lower()
+    expected_values = (expected_continuity,) if isinstance(expected_continuity, str) else expected_continuity
+    passed = task_continuity.lower() in {value.lower() for value in expected_values}
 
     print(f"image filename: {image_path.name}")
     print(f"task_continuity: {task_continuity}")
@@ -64,6 +65,14 @@ def run_case(image_path: Path, expected_continuity: str) -> bool:
     print()
 
     return passed
+
+
+def run_optional_case(image_path: Path | None, expected_continuity: str | tuple[str, ...], missing_message: str) -> bool | None:
+    if image_path is None:
+        print(missing_message)
+        return None
+
+    return run_case(image_path, expected_continuity)
 
 
 def main() -> None:
@@ -86,6 +95,12 @@ def main() -> None:
         ]
     )
 
+    task_switch_image = pick_first_existing(
+        [
+            "Screenshot 2026-05-26 112414.png",
+        ]
+    )
+
     missing = []
     if continuation_image is None:
         missing.append("Razer/task-related image (e.g., test_image.png)")
@@ -101,12 +116,25 @@ def main() -> None:
     print("Running task continuity smoke test...")
     print(f"Continuation case image: {continuation_image.name}")
     print(f"New task case image: {scenic_image.name}")
+    if task_switch_image is not None:
+        print(f"Different workflow case image: {task_switch_image.name}")
+    else:
+            print("Different workflow case image: not available (case will be skipped)")
     print()
 
     results = [
         run_case(continuation_image, "Continuation"),
         run_case(scenic_image, "New task"),
     ]
+
+    task_switch_result = run_optional_case(
+        task_switch_image,
+        ("Task switch", "New task"),
+        "Different workflow case skipped: no suitable workflow screenshot found.",
+    )
+
+    if task_switch_result is not None:
+        results.append(task_switch_result)
 
     if all(results):
         print("Overall result: PASS")
