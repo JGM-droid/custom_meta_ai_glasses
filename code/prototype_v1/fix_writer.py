@@ -311,6 +311,87 @@ def _build_stuck_status(current_task, current_next_step):
     }
 
 
+def _build_resume_previous_task(current_task, completed_steps, next_step):
+    session_memory_path = Path(__file__).resolve().parent / "results" / "session_memory.json"
+    current_task_value = current_task or "Unknown"
+    current_next_step = next_step or "Unknown"
+
+    if not session_memory_path.exists():
+        available = current_task_value != "Unknown" and (
+            bool(completed_steps) or current_next_step != "Unknown"
+        )
+        return {
+            "available": available,
+            "task": current_task_value,
+            "completed_steps": completed_steps,
+            "next_step": current_next_step,
+            "reason": (
+                "Using current task progress because prior session memory was not found."
+                if available
+                else "No prior session memory found for resume suggestions."
+            ),
+        }
+
+    try:
+        memory_payload = json.loads(session_memory_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {
+            "available": False,
+            "task": "Unknown",
+            "completed_steps": [],
+            "next_step": "Unknown",
+            "reason": "Unable to read session memory for resume suggestions.",
+        }
+
+    active_task = memory_payload.get("active_task", {}) if isinstance(memory_payload, dict) else {}
+    task_name = str(active_task.get("current_task", "Unknown") or "Unknown")
+    next_recommended = str(active_task.get("next_recommended_step", "Unknown") or "Unknown")
+
+    observations = memory_payload.get("observations", []) if isinstance(memory_payload, dict) else []
+    if not isinstance(observations, list):
+        observations = []
+
+    resume_steps = []
+    normalized_task = _normalize_similarity_text(task_name)
+    for item in reversed(observations):
+        if not isinstance(item, dict):
+            continue
+        analysis_text = item.get("analysis", "")
+        if not isinstance(analysis_text, str):
+            continue
+
+        observed_task = _extract_line_field(analysis_text, "Current task", default="")
+        if _normalize_similarity_text(observed_task) != normalized_task:
+            continue
+
+        observed_steps = _extract_completed_steps(analysis_text)
+        if observed_steps:
+            resume_steps = observed_steps
+            break
+
+    if not resume_steps and _normalize_similarity_text(current_task_value) == normalized_task:
+        resume_steps = completed_steps
+
+    if next_recommended == "Unknown" and _normalize_similarity_text(current_task_value) == normalized_task:
+        next_recommended = current_next_step
+
+    available = task_name != "Unknown" and (
+        bool(resume_steps) or (next_recommended and next_recommended != "Unknown")
+    )
+
+    return {
+        "available": available,
+        "task": task_name,
+        "completed_steps": resume_steps,
+        "next_step": next_recommended if next_recommended else "Unknown",
+        "reason": (
+            "Resume data loaded from recent session memory."
+            if available
+            else "No useful previous task context available to resume."
+        ),
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -341,6 +422,11 @@ def save_latest_fix(image_name, analysis_text):
         "step_count": len(completed_steps),
     }
     stuck_status = _build_stuck_status(current_task, next_step_for_progress)
+    resume_previous_task = _build_resume_previous_task(
+        current_task,
+        completed_steps,
+        next_step_for_progress,
+    )
 
     glasses_guidance = _build_glasses_guidance(
         current_task,
@@ -400,6 +486,7 @@ def save_latest_fix(image_name, analysis_text):
         "completed_steps": completed_steps,
         "task_progress": task_progress,
         "stuck_status": stuck_status,
+        "resume_previous_task": resume_previous_task,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,

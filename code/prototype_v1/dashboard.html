@@ -335,6 +335,10 @@
         <div class="label">Stuck Status</div>
         <div id="stuck_status" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Resume Previous Task</div>
+        <div id="resume_previous_task" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -361,6 +365,7 @@
       "completed_steps",
       "task_progress",
       "stuck_status",
+      "resume_previous_task",
       "full_analysis"
     ];
 
@@ -426,6 +431,15 @@
           const reason = normalize(status.reason);
           const count = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
           el.textContent = `Is stuck: ${isStuck ? "Yes" : "No"}\nReason: ${reason}\nRepeated next step count: ${count}`;
+        } else if (field === "resume_previous_task") {
+          const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
+          const available = typeof resume.available === "boolean" ? resume.available : false;
+          const task = normalize(resume.task);
+          const nextStep = normalize(resume.next_step);
+          const reason = normalize(resume.reason);
+          const steps = Array.isArray(resume.completed_steps) ? resume.completed_steps : [];
+          const stepsText = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps";
+          el.textContent = `Available: ${available ? "Yes" : "No"}\nTask: ${task}\nNext step: ${nextStep}\nCompleted:\n${stepsText}\nReason: ${reason}`;
         } else {
           el.textContent = normalize(data[field]);
         }
