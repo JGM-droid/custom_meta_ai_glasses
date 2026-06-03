@@ -619,6 +619,87 @@ def _build_guidance_priority(
     }
 
 
+def _build_progress_context(
+    git_intelligence: dict[str, Any],
+    vscode_context: dict[str, Any],
+    session_memory_summary: dict[str, Any] | None,
+    latest_response_summary: dict[str, Any] | None,
+    guidance_priority: dict[str, Any],
+) -> dict[str, str | bool]:
+    git = git_intelligence if isinstance(git_intelligence, dict) else {}
+    vscode = vscode_context if isinstance(vscode_context, dict) else {}
+    session = session_memory_summary if isinstance(session_memory_summary, dict) else {}
+    latest = latest_response_summary if isinstance(latest_response_summary, dict) else {}
+    guidance = guidance_priority if isinstance(guidance_priority, dict) else {}
+
+    active_task = session.get("active_task", {}) if isinstance(session.get("active_task"), dict) else {}
+    last_completed_step = str(active_task.get("last_completed_step", "") or "").strip()
+    next_recommended_step = str(active_task.get("next_recommended_step", "") or "").strip()
+
+    git_risk = str(git.get("risk_level", "low") or "low").strip().lower()
+    guidance_level = str(guidance.get("level", "info") or "info").strip().lower()
+    guidance_action = str(guidance.get("recommended_action", "") or "").strip()
+
+    current_file = str(vscode.get("current_file", "") or "").strip().lower()
+    recent_modified = vscode.get("recent_modified_files", []) if isinstance(vscode.get("recent_modified_files"), list) else []
+    recent_text = " ".join(str(item).lower() for item in recent_modified[:5])
+
+    expected_file_match = re.search(r"[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+", next_recommended_step)
+    expected_file = expected_file_match.group(0).lower() if expected_file_match else ""
+    moved_to_expected_file = bool(expected_file and (expected_file in current_file or expected_file in recent_text))
+
+    latest_stuck = bool(latest.get("stuck", False))
+    working_tree_clean_signal = git_risk == "low"
+    guidance_downgraded_signal = guidance_level == "info" and not latest_stuck
+    completed_step_signal = bool(last_completed_step and last_completed_step.lower() != "unknown")
+    next_step_signal = bool(next_recommended_step and next_recommended_step.lower() != "unknown")
+
+    next_expected_action = guidance_action or next_recommended_step or "Continue current implementation."
+    completed_step = last_completed_step if completed_step_signal else ""
+
+    if completed_step_signal and guidance_downgraded_signal:
+        return {
+            "progress_detected": True,
+            "confidence": "high",
+            "reason": "Possible progress detected: a step appears completed and guidance is now continuation-level.",
+            "completed_step": completed_step,
+            "next_expected_action": next_expected_action,
+        }
+
+    if completed_step_signal or moved_to_expected_file or (working_tree_clean_signal and next_step_signal):
+        reason = "Possible progress detected from local workflow signals."
+        if moved_to_expected_file:
+            reason = "Possible progress detected: file activity appears aligned with the expected next file."
+        elif working_tree_clean_signal and next_step_signal:
+            reason = "Possible progress detected: working tree appears clean and the next step is defined."
+        elif completed_step_signal:
+            reason = "Possible progress detected: a task step appears completed."
+        return {
+            "progress_detected": True,
+            "confidence": "medium",
+            "reason": reason,
+            "completed_step": completed_step,
+            "next_expected_action": next_expected_action,
+        }
+
+    if working_tree_clean_signal or guidance_downgraded_signal:
+        return {
+            "progress_detected": True,
+            "confidence": "low",
+            "reason": "Possible progress detected: blocker pressure appears reduced in current local context.",
+            "completed_step": completed_step,
+            "next_expected_action": next_expected_action,
+        }
+
+    return {
+        "progress_detected": False,
+        "confidence": "low",
+        "reason": "No clear local evidence of possible progress detected.",
+        "completed_step": completed_step,
+        "next_expected_action": next_expected_action,
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
@@ -650,6 +731,13 @@ def _build_context_pack() -> dict[str, Any]:
         session_memory_summary,
         latest_response_summary,
     )
+    progress_context = _build_progress_context(
+        git_intelligence,
+        vscode_context,
+        session_memory_summary,
+        latest_response_summary,
+        guidance_priority,
+    )
 
     pack = {
         "branch": branch,
@@ -663,6 +751,7 @@ def _build_context_pack() -> dict[str, Any]:
         "task_switch_context": task_switch_context,
         "developer_stuck_context": developer_stuck_context,
         "guidance_priority": guidance_priority,
+        "progress_context": progress_context,
     }
     return pack
 
@@ -784,6 +873,15 @@ def _print_summary(pack: dict[str, Any]) -> None:
         print(f"- Source: {guidance_priority.get('source', 'continuation')}")
         print(f"- Headline: {guidance_priority.get('headline', '')}")
         print(f"- Recommended action: {guidance_priority.get('recommended_action', '')}")
+
+    progress_context = pack.get("progress_context")
+    if isinstance(progress_context, dict):
+        print("Progress Context:")
+        print(f"- Progress detected: {progress_context.get('progress_detected', False)}")
+        print(f"- Confidence: {progress_context.get('confidence', 'low')}")
+        print(f"- Reason: {progress_context.get('reason', '')}")
+        print(f"- Completed step: {progress_context.get('completed_step', '')}")
+        print(f"- Next expected action: {progress_context.get('next_expected_action', '')}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
