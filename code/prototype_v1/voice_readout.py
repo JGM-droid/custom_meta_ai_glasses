@@ -19,6 +19,12 @@ def _clean_text(value: object) -> str:
 
 
 def _message_from_payload(payload: dict) -> str:
+    display_priority = payload.get("display_priority", {})
+    if isinstance(display_priority, dict):
+        primary_message = _clean_text(display_priority.get("primary_message"))
+        if primary_message:
+            return primary_message
+
     glasses_guidance = _clean_text(payload.get("glasses_guidance"))
     if glasses_guidance:
         return glasses_guidance
