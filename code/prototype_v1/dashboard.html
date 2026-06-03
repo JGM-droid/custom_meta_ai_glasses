@@ -339,6 +339,10 @@
         <div class="label">Resume Previous Task</div>
         <div id="resume_previous_task" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Intervention</div>
+        <div id="intervention" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -366,6 +370,7 @@
       "task_progress",
       "stuck_status",
       "resume_previous_task",
+      "intervention",
       "full_analysis"
     ];
 
@@ -440,6 +445,12 @@
           const steps = Array.isArray(resume.completed_steps) ? resume.completed_steps : [];
           const stepsText = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps";
           el.textContent = `Available: ${available ? "Yes" : "No"}\nTask: ${task}\nNext step: ${nextStep}\nCompleted:\n${stepsText}\nReason: ${reason}`;
+        } else if (field === "intervention") {
+          const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
+          const recommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
+          const message = normalize(intervention.message);
+          const reason = normalize(intervention.reason);
+          el.textContent = `Recommended: ${recommended ? "Yes" : "No"}\nMessage: ${message}\nReason: ${reason}`;
         } else {
           el.textContent = normalize(data[field]);
         }

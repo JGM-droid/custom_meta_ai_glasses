@@ -392,6 +392,40 @@ def _build_resume_previous_task(current_task, completed_steps, next_step):
     }
 
 
+def _build_intervention(stuck_status, task_progress, resume_previous_task, next_action):
+    status = stuck_status if isinstance(stuck_status, dict) else {}
+    progress = task_progress if isinstance(task_progress, dict) else {}
+    resume = resume_previous_task if isinstance(resume_previous_task, dict) else {}
+
+    is_stuck = bool(status.get("is_stuck", False))
+    status_reason = str(status.get("reason", "No stuck analysis available.") or "No stuck analysis available.")
+
+    if is_stuck:
+        candidate_step = str(resume.get("next_step", "") or "").strip()
+        if not candidate_step or candidate_step == "Unknown":
+            candidate_step = str(progress.get("next_step", "") or "").strip()
+        if not candidate_step or candidate_step == "Unknown":
+            candidate_step = str(next_action or "").strip()
+
+        if not candidate_step:
+            candidate_step = "Try a different approach or revisit the previous completed step."
+
+        message = _truncate(f"You may be stuck. Try this next: {candidate_step}", 150)
+        return {
+            "recommended": True,
+            "message": message,
+            "reason": status_reason,
+        }
+
+    next_hint = str(next_action or progress.get("next_step", "") or "Continue current step.").strip()
+    message = _truncate(f"No intervention needed. Continue: {next_hint}", 150)
+    return {
+        "recommended": False,
+        "message": message,
+        "reason": status_reason,
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -426,6 +460,12 @@ def save_latest_fix(image_name, analysis_text):
         current_task,
         completed_steps,
         next_step_for_progress,
+    )
+    intervention = _build_intervention(
+        stuck_status,
+        task_progress,
+        resume_previous_task,
+        parsed_sections["Next Action"] if parsed_sections.get("Next Action") else next_step_for_progress,
     )
 
     glasses_guidance = _build_glasses_guidance(
@@ -487,6 +527,7 @@ def save_latest_fix(image_name, analysis_text):
         "task_progress": task_progress,
         "stuck_status": stuck_status,
         "resume_previous_task": resume_previous_task,
+        "intervention": intervention,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,
