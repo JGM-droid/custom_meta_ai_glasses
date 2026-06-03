@@ -16,6 +16,7 @@ RESUME_NOW_OUTPUT = RESULTS_DIR / "resume_now.json"
 OUTPUT_PATH = RESULTS_DIR / "glasses_demo.json"
 DISPLAY_MOCK_PATH = BASE_DIR / "glasses_display_mock.html"
 TERMINAL_ERROR_OUTPUT = RESULTS_DIR / "terminal_error_context.json"
+CODING_CONTEXT_OUTPUT = RESULTS_DIR / "coding_context_pack.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -137,6 +138,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate demo guidance payloads for glasses display testing.")
     parser.add_argument("--speak", action="store_true", help="Enable spoken guidance in default mode.")
     parser.add_argument(
+        "--use-real-git",
+        action="store_true",
+        help="Use guidance from results/coding_context_pack.json when git risk is medium/high.",
+    )
+    parser.add_argument(
         "--use-real-errors",
         action="store_true",
         help="Use guidance from results/terminal_error_context.json when a terminal error is present.",
@@ -189,10 +195,65 @@ def _build_terminal_error_resume_payload() -> dict[str, Any] | None:
     }
 
 
+def _build_git_intelligence_resume_payload() -> dict[str, Any] | None:
+    payload = _safe_load_json(CODING_CONTEXT_OUTPUT)
+    git_info = payload.get("git_intelligence") if isinstance(payload, dict) else None
+    if not isinstance(git_info, dict):
+        return None
+
+    risk_level = _as_text(git_info.get("risk_level")).lower()
+    if risk_level not in {"medium", "high"}:
+        return None
+
+    recommended_action = _as_text(
+        git_info.get("recommendation"),
+        fallback="Review your git changes before continuing.",
+    )
+
+    return {
+        "recommended_next_action": recommended_action,
+        "current_file": "",
+        "guidance_priority": {
+            "level": "high",
+            "source": "git_intelligence",
+            "headline": "Review Git Changes",
+            "recommended_action": recommended_action,
+        },
+    }
+
+
 def main() -> None:
     args = _parse_args()
     speak_enabled = bool(args.speak)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.use_real_git:
+        real_git_resume_payload = _build_git_intelligence_resume_payload()
+        if real_git_resume_payload:
+            RESUME_NOW_OUTPUT.write_text(json.dumps(real_git_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            demo_payload = _build_demo_payload(
+                script_results=[
+                    {
+                        "script": "git_intelligence",
+                        "ok": True,
+                        "returncode": 0,
+                    }
+                ],
+                resume_payload=real_git_resume_payload,
+                speak_enabled=speak_enabled,
+            )
+            demo_payload["source"] = "git_intelligence"
+            OUTPUT_PATH.write_text(json.dumps(demo_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            print("Source: git_intelligence")
+            _print_demo_summary(demo_payload)
+            print()
+            print(f"Wrote: {RESUME_NOW_OUTPUT}")
+            print(f"Wrote: {OUTPUT_PATH}")
+            return
+
+        print("Source: fallback")
 
     if args.use_real_errors:
         real_error_resume_payload = _build_terminal_error_resume_payload()
