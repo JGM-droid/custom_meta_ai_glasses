@@ -10,6 +10,7 @@ from typing import Any
 from context_aware_prompt import build_prompt
 from fix_writer import save_latest_fix
 from memory_manager import save_observation, update_active_task
+from voice_readout import speak_latest_response
 
 
 def _extract_task_fields(analysis_text):
@@ -103,6 +104,13 @@ update_active_task(
     task_fields["last_completed_step"],
     task_fields["next_recommended_step"],
 )
+
+try:
+    spoke, detail = speak_latest_response(print_message=True)
+    if not spoke:
+        print(f"Warning: Automatic voice readout unavailable: {detail}")
+except Exception as exc:
+    print(f"Warning: Automatic voice readout failed: {exc}")
 
 print(f"\nAnalyzing image: {image_path.name}")
 print("\n=== CONTEXT-AWARE TASK GUIDANCE ===\n")

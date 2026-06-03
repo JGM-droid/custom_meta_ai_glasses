@@ -84,28 +84,33 @@ def _speak_message(message: str) -> bool:
     return False
 
 
-def main() -> None:
+def speak_latest_response(print_message: bool = True) -> tuple[bool, str]:
     if not LATEST_RESPONSE_PATH.exists():
-        print(f"Missing file: {LATEST_RESPONSE_PATH}")
-        print("Run an analysis first so latest_response.json is available.")
-        sys.exit(1)
+        return False, f"Missing file: {LATEST_RESPONSE_PATH}"
 
     try:
         payload = json.loads(LATEST_RESPONSE_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        print(f"Invalid JSON in latest_response.json: {exc}")
-        sys.exit(1)
+        return False, f"Invalid JSON in latest_response.json: {exc}"
 
     if not isinstance(payload, dict):
-        print("latest_response.json must contain a JSON object.")
-        sys.exit(1)
+        return False, "latest_response.json must contain a JSON object."
 
     message = _message_from_payload(payload)
-    print(f"Speaking: {message}")
+    if print_message:
+        print(f"Speaking: {message}")
 
     spoke = _speak_message(message)
     if not spoke:
-        print("Local TTS unavailable. Install pyttsx3 or run on Windows with PowerShell speech support.")
+        return False, "Local TTS unavailable. Install pyttsx3 or run on Windows with PowerShell speech support."
+
+    return True, message
+
+
+def main() -> None:
+    spoke, detail = speak_latest_response(print_message=True)
+    if not spoke:
+        print(detail)
         sys.exit(1)
 
 
