@@ -92,10 +92,15 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
 
 def _build_conversational_spoken_message(payload: dict[str, Any]) -> str:
     guidance_priority = payload.get("guidance_priority", {}) if isinstance(payload.get("guidance_priority"), dict) else {}
-    guidance_level = _as_text(guidance_priority.get("level"), fallback="").lower()
-    guidance_action = str(guidance_priority.get("recommended_action", "") or "").strip()
     fallback_action = _as_text(payload.get("recommended_next_action"), fallback="Continue current implementation.")
-    recommended_action = guidance_action if guidance_action else fallback_action
+    return _build_voice_guidance_from_priority(guidance_priority, fallback_action)
+
+
+def _build_voice_guidance_from_priority(guidance_priority: dict[str, Any], fallback_action: str) -> str:
+    priority = guidance_priority if isinstance(guidance_priority, dict) else {}
+    guidance_level = _as_text(priority.get("level"), fallback="").lower()
+    guidance_action = str(priority.get("recommended_action", "") or "").strip()
+    recommended_action = guidance_action if guidance_action else _as_text(fallback_action, fallback="Continue current implementation.")
 
     if guidance_level == "critical":
         return "Resolve the current error first."
