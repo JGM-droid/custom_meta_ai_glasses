@@ -386,22 +386,107 @@ def _build_error_context(changed_files: list[dict[str, str]], vscode_context: di
     }
 
 
+def _build_task_switch_context(
+    session_memory_summary: dict[str, Any] | None,
+    vscode_context: dict[str, Any],
+    latest_response_summary: dict[str, Any] | None,
+    git_intelligence: dict[str, str],
+    error_context: dict[str, Any],
+) -> dict[str, str | bool]:
+    memory = session_memory_summary if isinstance(session_memory_summary, dict) else {}
+    active_task = memory.get("active_task", {}) if isinstance(memory.get("active_task"), dict) else {}
+
+    previous_task = str(active_task.get("current_task", "") or "").strip()
+    has_active_task = bool(previous_task and previous_task.lower() != "unknown")
+
+    current_file = str(vscode_context.get("current_file", "") or "").strip()
+    recent_modified = vscode_context.get("recent_modified_files", []) if isinstance(vscode_context.get("recent_modified_files"), list) else []
+    recent_modified_text = ", ".join(str(item) for item in recent_modified[:3]) if recent_modified else "none"
+    current_context = f"file={current_file if current_file else 'unknown'}; recent_modified={recent_modified_text}"
+
+    latest = latest_response_summary if isinstance(latest_response_summary, dict) else {}
+    continuity = str(latest.get("task_continuity", "") or "").strip().lower()
+
+    has_errors = bool(error_context.get("has_error_signals", False)) if isinstance(error_context, dict) else False
+    git_recommendation = str(git_intelligence.get("recommendation", "Review git state")) if isinstance(git_intelligence, dict) else "Review git state"
+
+    if not has_active_task:
+        return {
+            "possible_task_switch": False,
+            "reason": "No active task is available, so task-switch detection is not applied.",
+            "previous_task": "",
+            "current_context": current_context,
+            "suggested_action": "Start or capture an active task before evaluating task switches.",
+        }
+
+    if continuity == "task switch":
+        return {
+            "possible_task_switch": True,
+            "reason": "Latest response indicates the developer may have switched tasks.",
+            "previous_task": previous_task,
+            "current_context": current_context,
+            "suggested_action": "Confirm whether the workflow changed, then either resume previous task or continue the new one.",
+        }
+
+    if has_errors:
+        return {
+            "possible_task_switch": False,
+            "reason": "Error signals are present; prioritize error review before inferring a task switch.",
+            "previous_task": previous_task,
+            "current_context": current_context,
+            "suggested_action": "Review error context and resolve blocker first.",
+        }
+
+    task_terms = {token for token in re.findall(r"[a-z0-9]+", previous_task.lower()) if len(token) >= 4}
+    file_terms = {token for token in re.findall(r"[a-z0-9]+", current_file.lower()) if len(token) >= 3}
+    overlap = task_terms.intersection(file_terms)
+
+    if current_file and task_terms and not overlap:
+        return {
+            "possible_task_switch": True,
+            "reason": "Current file appears unrelated to the active task; developer may have switched tasks.",
+            "previous_task": previous_task,
+            "current_context": current_context,
+            "suggested_action": "Use caution and verify intent; if this is a switch, update active task context."
+            if "unknown" not in git_recommendation.lower()
+            else "Use caution and verify intent before continuing.",
+        }
+
+    return {
+        "possible_task_switch": False,
+        "reason": "No clear local signal that the developer may have switched tasks.",
+        "previous_task": previous_task,
+        "current_context": current_context,
+        "suggested_action": "Continue active task and monitor continuity on the next analysis run.",
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
     git_intelligence = _build_git_intelligence(git_status_summary, changed_files)
+    latest_response_summary = _build_latest_response_summary()
+    session_memory_summary = _build_session_memory_summary()
     vscode_context = _build_vscode_context()
     error_context = _build_error_context(changed_files, vscode_context)
+    task_switch_context = _build_task_switch_context(
+        session_memory_summary,
+        vscode_context,
+        latest_response_summary,
+        git_intelligence,
+        error_context,
+    )
 
     pack = {
         "branch": branch,
         "git_status_summary": git_status_summary,
         "changed_files": changed_files,
         "git_intelligence": git_intelligence,
-        "latest_response_summary": _build_latest_response_summary(),
-        "session_memory_summary": _build_session_memory_summary(),
+        "latest_response_summary": latest_response_summary,
+        "session_memory_summary": session_memory_summary,
         "vscode_context": vscode_context,
         "error_context": error_context,
+        "task_switch_context": task_switch_context,
     }
     return pack
 
@@ -499,6 +584,14 @@ def _print_summary(pack: dict[str, Any]) -> None:
             print("- Files: none")
         print(f"- Summary: {error_context.get('summary', '')}")
         print(f"- Next step: {error_context.get('suggested_next_step', '')}")
+
+    task_switch_context = pack.get("task_switch_context")
+    if isinstance(task_switch_context, dict):
+        print("Task switch context:")
+        print(f"- Possible switch: {task_switch_context.get('possible_task_switch', False)}")
+        print(f"- Previous task: {task_switch_context.get('previous_task', '')}")
+        print(f"- Current context: {task_switch_context.get('current_context', '')}")
+        print(f"- Suggested action: {task_switch_context.get('suggested_action', '')}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
