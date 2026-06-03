@@ -51,9 +51,14 @@ First determine whether the user is:
 
 Task continuity rules:
 
+- Task continuity must be exactly one of: "Continuation", "Task switch", "New task", or "Unclear".
+- "Continuation" = same workflow or same objective as the active task.
+- "Task switch" = different workflow but still an intentional user task.
+- "New task" = unrelated content with no active workflow connection.
+- "Unclear" = insufficient visual evidence to confidently classify continuity.
 - Only continue the active task if the image clearly relates to it.
 - If the image appears unrelated, create a new task.
-- If confidence is low, prefer "New task" instead of forcing continuity.
+- If confidence is low, use "Unclear" instead of forcing continuity.
 - Visual evidence is more important than memory.
 - Repository context is supporting evidence, not proof of what is on screen.
 - Do not assume the user is editing a file unless it is visible or strongly supported by context.
@@ -96,7 +101,7 @@ ACTIVE TASK:
 Current task: <task name>
 Last completed step: <one short step>
 Next recommended step: <one short step>
-Task continuity: <Continuation or New task>
+Task continuity: <Continuation or Task switch or New task or Unclear>
 Confidence: <0-100%>
 
 SITUATION:
