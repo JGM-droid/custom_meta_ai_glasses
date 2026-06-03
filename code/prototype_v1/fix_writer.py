@@ -121,6 +121,19 @@ def _extract_structured_sections(analysis_text):
     return sections
 
 
+def _extract_task_continuity(analysis_text):
+    text = (analysis_text or "").strip()
+    if not text:
+        return "Unknown"
+
+    match = re.search(r"Task\s+continuity\s*:\s*(.+)", text, flags=re.IGNORECASE)
+    if not match:
+        return "Unknown"
+
+    value = match.group(1).strip()
+    return value if value else "Unknown"
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -133,6 +146,7 @@ def save_latest_fix(image_name, analysis_text):
 
     fallback_text = "Not explicitly provided by AI response."
     raw_text = (analysis_text or "").strip()
+    task_continuity = _extract_task_continuity(analysis_text)
 
     # If no structured sections were detected, preserve raw analysis text.
     if not any(parsed_sections.values()) and raw_text:
@@ -182,6 +196,7 @@ def save_latest_fix(image_name, analysis_text):
         "recommended_fix": parsed_sections["Recommended Fix"],
         "validation_step": parsed_sections["Validation Step"],
         "next_action": parsed_sections["Next Action"],
+        "task_continuity": task_continuity,
         "full_analysis": raw_text,
     }
     response_json_path.write_text(
