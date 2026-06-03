@@ -251,6 +251,10 @@
       <h2>Glasses View</h2>
       <div class="glasses-grid">
         <article class="glasses-item">
+          <div class="label">Glasses Guidance</div>
+          <div id="glasses_guidance" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
           <div class="label">Current Task</div>
           <div id="glasses_current_task" class="value muted">No data yet</div>
         </article>
@@ -351,6 +355,7 @@
     const uploadInput = document.getElementById("uploadInput");
     const analyzeBtn = document.getElementById("analyzeBtn");
     const uploadStatus = document.getElementById("uploadStatus");
+    const glassesGuidance = document.getElementById("glasses_guidance");
     const glassesCurrentTask = document.getElementById("glasses_current_task");
     const glassesTaskContinuity = document.getElementById("glasses_task_continuity");
     const glassesNextAction = document.getElementById("glasses_next_action");
@@ -402,14 +407,17 @@
       const nextAction = data.next_action || extractSection(fullAnalysis, "NEXT ACTION");
       const risk = data.risk || extractLine(fullAnalysis, "RISK");
       const confidence = data.confidence || extractLine(fullAnalysis, "Confidence");
+      const glassesGuidanceText = data.glasses_guidance
+        || `Task ${normalize(currentTask)}. Next ${normalize(nextAction)}. Risk ${normalize(risk)}. Confidence ${normalize(confidence)}.`;
 
+      glassesGuidance.textContent = normalize(glassesGuidanceText);
       glassesCurrentTask.textContent = normalize(currentTask);
       glassesTaskContinuity.textContent = normalize(taskContinuity);
       glassesNextAction.textContent = normalize(nextAction);
       glassesRisk.textContent = normalize(risk);
       glassesConfidence.textContent = normalize(confidence);
 
-      [glassesCurrentTask, glassesTaskContinuity, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
+      [glassesGuidance, glassesCurrentTask, glassesTaskContinuity, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
         el.classList.remove("muted");
       });
     }

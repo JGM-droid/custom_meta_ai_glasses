@@ -134,6 +134,72 @@ def _extract_task_continuity(analysis_text):
     return value if value else "Unknown"
 
 
+def _extract_line_field(analysis_text, label, default="Unknown"):
+    text = (analysis_text or "").strip()
+    if not text:
+        return default
+
+    pattern = rf"{re.escape(label)}\s*:\s*([^\n]+)"
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        return default
+
+    value = match.group(1).strip()
+    return value if value else default
+
+
+def _extract_section_value(analysis_text, label, default="Unknown"):
+    text = (analysis_text or "").strip()
+    if not text:
+        return default
+
+    pattern = re.compile(
+        rf"(?:^|\n){re.escape(label)}\s*:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{{2,}}\s*:|$)",
+        flags=re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    if not match:
+        return default
+
+    value = match.group(1).strip()
+    if not value:
+        return default
+
+    first_line = value.splitlines()[0].strip()
+    return first_line if first_line else default
+
+
+def _truncate(text, max_len):
+    value = (text or "").strip()
+    if len(value) <= max_len:
+        return value
+    if max_len <= 1:
+        return value[:max_len]
+    return value[: max_len - 1].rstrip() + "…"
+
+
+def _build_glasses_guidance(current_task, next_action, risk, confidence):
+    task = current_task or "Unknown"
+    next_step = next_action or "Unknown"
+    risk_value = risk or "Unknown"
+    confidence_value = confidence or "Unknown"
+
+    concise = (
+        f"Task {task}. Next {next_step}. Risk {risk_value}. Confidence {confidence_value}."
+    )
+    if len(concise) <= 150:
+        return concise
+
+    compressed = (
+        f"Task {_truncate(task, 24)}; Next {_truncate(next_step, 48)}; "
+        f"Risk {_truncate(risk_value, 20)}; Confidence {_truncate(confidence_value, 10)}."
+    )
+    if len(compressed) <= 150:
+        return compressed
+
+    return _truncate(compressed, 150)
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -147,6 +213,16 @@ def save_latest_fix(image_name, analysis_text):
     fallback_text = "Not explicitly provided by AI response."
     raw_text = (analysis_text or "").strip()
     task_continuity = _extract_task_continuity(analysis_text)
+    current_task = _extract_line_field(analysis_text, "Current task")
+    confidence = _extract_line_field(analysis_text, "Confidence")
+    risk = _extract_line_field(analysis_text, "RISK", default="No major risk.")
+    next_action_for_guidance = _extract_section_value(analysis_text, "NEXT ACTION")
+    glasses_guidance = _build_glasses_guidance(
+        current_task,
+        next_action_for_guidance,
+        risk,
+        confidence,
+    )
 
     # If no structured sections were detected, preserve raw analysis text.
     if not any(parsed_sections.values()) and raw_text:
@@ -197,6 +273,7 @@ def save_latest_fix(image_name, analysis_text):
         "validation_step": parsed_sections["Validation Step"],
         "next_action": parsed_sections["Next Action"],
         "task_continuity": task_continuity,
+        "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,
     }
     response_json_path.write_text(
