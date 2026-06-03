@@ -2,10 +2,23 @@ from memory_manager import format_recent_memory, get_task_summary
 from repo_context import build_repo_context
 
 
-def build_prompt():
+def build_prompt(supplementary_coding_context=""):
     memory = format_recent_memory()
     active_task = get_task_summary()
     repo_context = build_repo_context()
+    supplementary_block = ""
+    if supplementary_coding_context:
+        supplementary_block = f"""
+========================
+CODING CONTEXT PACK (SUPPORTING)
+========================
+
+{supplementary_coding_context}
+
+Use this coding context as supporting evidence only.
+Current image evidence is primary.
+Do not override visible screen evidence with stale coding context.
+"""
 
     return f"""
 You are an advanced wearable AI assistant running on Meta Ray-Ban Display glasses.
@@ -32,6 +45,8 @@ REPOSITORY CONTEXT
 ========================
 
 {repo_context}
+
+{supplementary_block}
 
 ========================
 INSTRUCTIONS

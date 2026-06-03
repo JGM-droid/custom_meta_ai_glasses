@@ -5,6 +5,7 @@ import base64
 import os
 import sys
 import re
+import json
 from typing import Any
 
 from context_aware_prompt import build_prompt
@@ -40,6 +41,57 @@ def _extract_task_fields(analysis_text):
 
     return fields
 
+
+def _safe_text(value, fallback="Unknown"):
+    text = str(value).strip() if value is not None else ""
+    return text if text else fallback
+
+
+def _join_items(values, limit=5):
+    if not isinstance(values, list):
+        return "None"
+    items = [str(item).strip() for item in values if str(item).strip()]
+    if not items:
+        return "None"
+    return ", ".join(items[:limit])
+
+
+def _load_coding_context_pack_text():
+    context_pack_path = Path(__file__).resolve().parent / "results" / "coding_context_pack.json"
+    if not context_pack_path.exists() or not context_pack_path.is_file():
+        return ""
+
+    try:
+        payload = json.loads(context_pack_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    if not isinstance(payload, dict):
+        return ""
+
+    git_intelligence = payload.get("git_intelligence", {}) if isinstance(payload.get("git_intelligence"), dict) else {}
+    vscode_context = payload.get("vscode_context", {}) if isinstance(payload.get("vscode_context"), dict) else {}
+    session_summary = payload.get("session_memory_summary", {}) if isinstance(payload.get("session_memory_summary"), dict) else {}
+    active_task = session_summary.get("active_task", {}) if isinstance(session_summary.get("active_task"), dict) else {}
+    latest_summary = payload.get("latest_response_summary", {}) if isinstance(payload.get("latest_response_summary"), dict) else {}
+    error_context = payload.get("error_context", {}) if isinstance(payload.get("error_context"), dict) else {}
+
+    lines = [
+        f"- Current branch: {_safe_text(payload.get('branch'))}",
+        f"- Git recommendation: {_safe_text(git_intelligence.get('recommendation'), fallback='No recommendation')}",
+        f"- Current file: {_safe_text(vscode_context.get('current_file'), fallback='Unknown file')}",
+        f"- Recent modified files: {_join_items(vscode_context.get('recent_modified_files', []), limit=5)}",
+        f"- Active task: {_safe_text(active_task.get('current_task'), fallback='Unknown task')}",
+        (
+            "- Latest display priority: "
+            f"mode={_safe_text(latest_summary.get('priority_mode'))}; "
+            f"headline={_safe_text(latest_summary.get('priority_headline'))}; "
+            f"message={_safe_text(latest_summary.get('priority_message'))}"
+        ),
+        f"- Error context summary: {_safe_text(error_context.get('summary'), fallback='No error summary available')}",
+    ]
+    return "\n".join(lines)
+
 # Load .env from project root
 env_path = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(env_path)
@@ -68,7 +120,8 @@ with open(image_path, "rb") as image_file:
     base64_image = base64.b64encode(image_file.read()).decode("utf-8")
 
 # Build context-aware prompt
-prompt = build_prompt()
+coding_context_pack_text = _load_coding_context_pack_text()
+prompt = build_prompt(supplementary_coding_context=coding_context_pack_text)
 
 input_payload: Any = [
     {
