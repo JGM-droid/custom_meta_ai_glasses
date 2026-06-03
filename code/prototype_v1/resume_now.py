@@ -76,22 +76,56 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
     return {
         "current_task": current_task,
         "current_file": current_file,
+        "git_risk": git_risk,
         "git_state": git_state,
         "possible_task_switch": possible_task_switch,
+        "has_error_signals": has_error_signals,
         "error_context": error_summary,
         "recommended_next_action": recommended_next_action,
     }
 
 
+def _build_conversational_spoken_message(payload: dict[str, Any]) -> str:
+    task = _as_text(payload.get("current_task"), fallback="an unknown task")
+    current_file = _as_text(payload.get("current_file"), fallback="unknown")
+    git_state = _as_text(payload.get("git_state"), fallback="no git recommendation available")
+    next_step = _as_text(payload.get("recommended_next_action"), fallback="continue with the next implementation step")
+
+    possible_task_switch = bool(payload.get("possible_task_switch", False))
+    has_error_signals = bool(payload.get("has_error_signals", False))
+    git_risk = _as_text(payload.get("git_risk"), fallback="low").lower()
+
+    sentences = [
+        "Welcome back.",
+        f"You were working on {task}.",
+        f"Your current file is {current_file}.",
+    ]
+
+    if possible_task_switch:
+        sentences.append("You may have switched tasks. Confirm whether you want to continue before making changes.")
+    elif has_error_signals:
+        sentences.append("Before continuing, review the error context first and resolve the blocker.")
+    elif git_risk in {"medium", "high"}:
+        sentences.append("Before continuing, review your git state before resuming implementation.")
+    else:
+        sentences.append(f"Your git status is {git_state}, and your next step is {next_step}.")
+
+    return " ".join(sentences)
+
+
 def _speak_recommendation(payload: dict[str, Any]) -> None:
-    message = _as_text(payload.get("recommended_next_action"), fallback="")
+    message = _build_conversational_spoken_message(payload)
     if not message:
         print("Warning: No recommended next action available for voice readout.")
         return
 
+    print()
+    print("Spoken message:")
+    print(message)
+
     try:
         if not _speak_message(message):
-            print("Warning: Voice readout unavailable for recommended next action.")
+            print("Warning: Voice readout unavailable for spoken guidance.")
     except Exception as exc:
         print(f"Warning: Voice readout failed: {exc}")
 
