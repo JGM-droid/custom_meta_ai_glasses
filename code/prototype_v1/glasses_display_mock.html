@@ -161,6 +161,7 @@
 
   <script>
     const API_LATEST_URL = "http://127.0.0.1:8001/latest";
+    const LOCAL_RESUME_FALLBACK_URL = "./results/resume_now.json";
     const POLL_MS = 3000;
 
     const titleEl = document.getElementById("title");
@@ -232,6 +233,50 @@
       connectionEl.textContent = `Connected (${mode})`;
     }
 
+    function renderGuidancePriority(guidancePriority) {
+      const headline = normalize(guidancePriority.headline, "Resume guidance");
+      const recommendedAction = normalize(guidancePriority.recommended_action, "Continue current implementation.");
+      const level = normalize(guidancePriority.level, "info").toLowerCase();
+
+      titleEl.textContent = headline;
+      actionEl.textContent = recommendedAction;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = "Guidance";
+      statusEl.textContent = level.toUpperCase();
+      statusEl.classList.remove("active", "stuck", "switch", "new");
+
+      if (level === "critical") {
+        statusEl.classList.add("stuck");
+      } else if (level === "high") {
+        statusEl.classList.add("new");
+      } else if (level === "medium") {
+        statusEl.classList.add("switch");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      connectionEl.textContent = "Connected (guidance)";
+    }
+
+    async function fetchResumeFallback() {
+      try {
+        const response = await fetch(LOCAL_RESUME_FALLBACK_URL, { cache: "no-store" });
+        if (!response.ok) {
+          return null;
+        }
+
+        const resumeData = await response.json();
+        if (!resumeData || typeof resumeData !== "object") {
+          return null;
+        }
+
+        const guidance = typeof resumeData.guidance_priority === "object" ? resumeData.guidance_priority : null;
+        return guidance;
+      } catch (_err) {
+        return null;
+      }
+    }
+
     function updateTimestamp() {
       updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     }
@@ -245,8 +290,21 @@
         }
 
         const data = await response.json();
+        const guidancePriority = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
         const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
         const display = data && typeof data.glasses_display === "object" ? data.glasses_display : null;
+
+        if (guidancePriority) {
+          renderGuidancePriority(guidancePriority);
+          return;
+        }
+
+        const fallbackGuidance = await fetchResumeFallback();
+        if (fallbackGuidance) {
+          renderGuidancePriority(fallbackGuidance);
+          connectionEl.textContent = "Connected (resume fallback)";
+          return;
+        }
 
         if (priority) {
           renderPriority(priority);
