@@ -152,6 +152,52 @@ def _build_session_memory_summary() -> dict[str, Any] | None:
     }
 
 
+def _iter_context_files() -> list[Path]:
+    files: list[Path] = []
+    for path in BASE_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        if "results" in path.parts:
+            continue
+        files.append(path)
+    return files
+
+
+def _to_repo_relative(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _build_vscode_context() -> dict[str, Any]:
+    candidate_files = _iter_context_files()
+    python_files = [path for path in candidate_files if path.suffix.lower() == ".py"]
+
+    python_sorted = sorted(
+        python_files,
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    modified_sorted = sorted(
+        candidate_files,
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    current_file_path = python_sorted[0] if python_sorted else None
+    current_directory = current_file_path.parent if current_file_path else BASE_DIR
+
+    return {
+        "current_file": _to_repo_relative(current_file_path) if current_file_path else "",
+        "current_directory": _to_repo_relative(current_directory),
+        "recent_python_files": [_to_repo_relative(path) for path in python_sorted[:5]],
+        "recent_modified_files": [_to_repo_relative(path) for path in modified_sorted[:5]],
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
@@ -162,6 +208,7 @@ def _build_context_pack() -> dict[str, Any]:
         "changed_files": changed_files,
         "latest_response_summary": _build_latest_response_summary(),
         "session_memory_summary": _build_session_memory_summary(),
+        "vscode_context": _build_vscode_context(),
     }
     return pack
 
@@ -215,6 +262,24 @@ def _print_summary(pack: dict[str, Any]) -> None:
         print(f"Observation count: {memory.get('observation_count', 0)}")
     else:
         print("Session memory: unavailable")
+
+    vscode_context = pack.get("vscode_context")
+    if isinstance(vscode_context, dict):
+        print("VS Code context:")
+        print(f"- Current file: {vscode_context.get('current_file', '')}")
+        print(f"- Current directory: {vscode_context.get('current_directory', '')}")
+
+        python_files = vscode_context.get("recent_python_files", [])
+        if isinstance(python_files, list) and python_files:
+            print(f"- Recent Python files: {', '.join(str(item) for item in python_files[:5])}")
+        else:
+            print("- Recent Python files: none")
+
+        modified_files = vscode_context.get("recent_modified_files", [])
+        if isinstance(modified_files, list) and modified_files:
+            print(f"- Recent modified files: {', '.join(str(item) for item in modified_files[:5])}")
+        else:
+            print("- Recent modified files: none")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
