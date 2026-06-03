@@ -2,6 +2,7 @@ from pathlib import Path
 from datetime import datetime
 import re
 import json
+from difflib import SequenceMatcher
 
 
 SECTION_ORDER = [
@@ -237,6 +238,79 @@ def _build_glasses_guidance(current_task, next_action, risk, confidence):
     return _truncate(compressed, 150)
 
 
+def _normalize_similarity_text(text):
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+def _steps_similar(step_a, step_b):
+    a = _normalize_similarity_text(step_a)
+    b = _normalize_similarity_text(step_b)
+    if not a or not b:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    return SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+def _extract_task_and_next_step(analysis_text):
+    task = _extract_line_field(analysis_text, "Current task", default="Unknown")
+    next_step = _extract_section_value(analysis_text, "NEXT ACTION", default="")
+    if not next_step:
+        next_step = _extract_section_value(analysis_text, "NEXT", default="")
+    return task, next_step
+
+
+def _build_stuck_status(current_task, current_next_step):
+    session_memory_path = Path(__file__).resolve().parent / "results" / "session_memory.json"
+    current_task_norm = _normalize_similarity_text(current_task)
+    repeated_count = 1 if current_next_step else 0
+
+    if not session_memory_path.exists() or not current_task_norm or not current_next_step:
+        return {
+            "is_stuck": False,
+            "reason": "Insufficient history for repeated next-step detection.",
+            "repeated_next_step_count": repeated_count,
+        }
+
+    try:
+        memory_payload = json.loads(session_memory_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {
+            "is_stuck": False,
+            "reason": "Unable to read session history for stuck detection.",
+            "repeated_next_step_count": repeated_count,
+        }
+
+    observations = memory_payload.get("observations", []) if isinstance(memory_payload, dict) else []
+    if not isinstance(observations, list):
+        observations = []
+
+    for item in observations:
+        if not isinstance(item, dict):
+            continue
+        prior_analysis = item.get("analysis", "")
+        if not isinstance(prior_analysis, str):
+            continue
+
+        prior_task, prior_next_step = _extract_task_and_next_step(prior_analysis)
+        if _normalize_similarity_text(prior_task) != current_task_norm:
+            continue
+        if _steps_similar(prior_next_step, current_next_step):
+            repeated_count += 1
+
+    is_stuck = repeated_count >= 2
+    reason = (
+        "Same or very similar next action is repeating for the current task."
+        if is_stuck
+        else "No repeated next action detected for the current task."
+    )
+    return {
+        "is_stuck": is_stuck,
+        "reason": reason,
+        "repeated_next_step_count": repeated_count,
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -266,6 +340,7 @@ def save_latest_fix(image_name, analysis_text):
         "next_step": next_step_for_progress,
         "step_count": len(completed_steps),
     }
+    stuck_status = _build_stuck_status(current_task, next_step_for_progress)
 
     glasses_guidance = _build_glasses_guidance(
         current_task,
@@ -324,6 +399,7 @@ def save_latest_fix(image_name, analysis_text):
         "next_action": parsed_sections["Next Action"],
         "completed_steps": completed_steps,
         "task_progress": task_progress,
+        "stuck_status": stuck_status,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,

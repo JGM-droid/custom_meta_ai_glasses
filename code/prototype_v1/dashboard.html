@@ -331,6 +331,10 @@
         <div class="label">Task Progress</div>
         <div id="task_progress" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Stuck Status</div>
+        <div id="stuck_status" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -356,6 +360,7 @@
       "next_action",
       "completed_steps",
       "task_progress",
+      "stuck_status",
       "full_analysis"
     ];
 
@@ -415,6 +420,12 @@
           const nextStep = normalize(progress.next_step);
           const stepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
           el.textContent = `Next step: ${nextStep}\nStep count: ${stepCount}`;
+        } else if (field === "stuck_status") {
+          const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+          const isStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
+          const reason = normalize(status.reason);
+          const count = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
+          el.textContent = `Is stuck: ${isStuck ? "Yes" : "No"}\nReason: ${reason}\nRepeated next step count: ${count}`;
         } else {
           el.textContent = normalize(data[field]);
         }
