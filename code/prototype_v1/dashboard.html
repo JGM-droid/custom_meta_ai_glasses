@@ -327,6 +327,10 @@
         <div class="label">Completed Steps</div>
         <div id="completed_steps" class="value muted">No data yet</div>
       </article>
+      <article class="card">
+        <div class="label">Task Progress</div>
+        <div id="task_progress" class="value muted">No data yet</div>
+      </article>
     </section>
 
     <section class="grid" style="margin-top: 12px;">
@@ -351,6 +355,7 @@
       "validation_step",
       "next_action",
       "completed_steps",
+      "task_progress",
       "full_analysis"
     ];
 
@@ -405,6 +410,11 @@
         if (field === "completed_steps") {
           const steps = Array.isArray(data.completed_steps) ? data.completed_steps : [];
           el.textContent = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps yet";
+        } else if (field === "task_progress") {
+          const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
+          const nextStep = normalize(progress.next_step);
+          const stepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
+          el.textContent = `Next step: ${nextStep}\nStep count: ${stepCount}`;
         } else {
           el.textContent = normalize(data[field]);
         }

@@ -255,6 +255,18 @@ def save_latest_fix(image_name, analysis_text):
     risk = _extract_line_field(analysis_text, "RISK", default="No major risk.")
     completed_steps = _extract_completed_steps(analysis_text)
     next_action_for_guidance = _extract_section_value(analysis_text, "NEXT ACTION")
+    next_step_for_progress = _extract_section_value(analysis_text, "NEXT ACTION", default="")
+    if not next_step_for_progress:
+        next_step_for_progress = _extract_section_value(analysis_text, "NEXT", default="")
+    if not next_step_for_progress:
+        next_step_for_progress = "Unknown"
+
+    task_progress = {
+        "completed_steps": completed_steps,
+        "next_step": next_step_for_progress,
+        "step_count": len(completed_steps),
+    }
+
     glasses_guidance = _build_glasses_guidance(
         current_task,
         next_action_for_guidance,
@@ -311,6 +323,7 @@ def save_latest_fix(image_name, analysis_text):
         "validation_step": parsed_sections["Validation Step"],
         "next_action": parsed_sections["Next Action"],
         "completed_steps": completed_steps,
+        "task_progress": task_progress,
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "full_analysis": raw_text,

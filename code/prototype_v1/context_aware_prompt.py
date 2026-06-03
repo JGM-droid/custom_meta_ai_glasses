@@ -56,8 +56,10 @@ Task continuity rules:
 - "Task switch" = different workflow but still an intentional user task.
 - "New task" = unrelated content with no active workflow connection.
 - "Unclear" = insufficient visual evidence to confidently classify continuity.
-- Only continue the active task if the image clearly relates to it.
-- If the image appears unrelated, create a new task.
+- Use "Continuation" only when the current screen clearly supports the same objective, same application workflow, or same next step as the active task.
+- Use "Task switch" when the current screen is a different application, browser page, coding environment, documentation page, cloud console, terminal, or workflow from the active task, but still appears to be purposeful work.
+- Use "New task" for non-work/unrelated content, casual images, scenery, food, personal photos, or anything that does not look like an active workflow.
+- If the image appears unrelated, use "New task".
 - If confidence is low, use "Unclear" instead of forcing continuity.
 - Visual evidence is more important than memory.
 - Repository context is supporting evidence, not proof of what is on screen.
