@@ -91,43 +91,22 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
 
 
 def _build_conversational_spoken_message(payload: dict[str, Any]) -> str:
-    task = _as_text(payload.get("current_task"), fallback="an unknown task")
-    current_file = _as_text(payload.get("current_file"), fallback="unknown")
-    git_state = _as_text(payload.get("git_state"), fallback="no git recommendation available")
-    next_step = _as_text(payload.get("recommended_next_action"), fallback="continue with the next implementation step")
     guidance_priority = payload.get("guidance_priority", {}) if isinstance(payload.get("guidance_priority"), dict) else {}
     guidance_level = _as_text(guidance_priority.get("level"), fallback="").lower()
-    guidance_headline = _as_text(guidance_priority.get("headline"), fallback="")
-    guidance_source = _as_text(guidance_priority.get("source"), fallback="")
     guidance_action = str(guidance_priority.get("recommended_action", "") or "").strip()
+    fallback_action = _as_text(payload.get("recommended_next_action"), fallback="Continue current implementation.")
+    recommended_action = guidance_action if guidance_action else fallback_action
 
-    possible_task_switch = bool(payload.get("possible_task_switch", False))
-    has_error_signals = bool(payload.get("has_error_signals", False))
-    git_risk = _as_text(payload.get("git_risk"), fallback="low").lower()
+    if guidance_level == "critical":
+        return "Resolve the current error first."
+    if guidance_level == "high":
+        return "Review your git changes before continuing."
+    if guidance_level == "medium":
+        return "You may be stuck. Break the task into a smaller step."
+    if guidance_level == "low":
+        return "Possible task switch detected. Confirm your next task."
 
-    sentences = [
-        "Welcome back.",
-        f"You were working on {task}.",
-        f"Your current file is {current_file}.",
-    ]
-
-    if guidance_action:
-        if guidance_headline and guidance_source and guidance_level:
-            sentences.append(
-                f"Priority {guidance_level} guidance from {guidance_source}: {guidance_headline}. Your next step is {guidance_action}."
-            )
-        else:
-            sentences.append(f"Your next step is {guidance_action}.")
-    elif possible_task_switch:
-        sentences.append("You may have switched tasks. Confirm whether you want to continue before making changes.")
-    elif has_error_signals:
-        sentences.append("Before continuing, review the error context first and resolve the blocker.")
-    elif git_risk in {"medium", "high"}:
-        sentences.append("Before continuing, review your git state before resuming implementation.")
-    else:
-        sentences.append(f"Your git status is {git_state}, and your next step is {next_step}.")
-
-    return " ".join(sentences)
+    return f"Next step: {recommended_action}"
 
 
 def _speak_recommendation(payload: dict[str, Any]) -> None:
