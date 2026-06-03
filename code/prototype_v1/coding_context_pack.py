@@ -198,14 +198,62 @@ def _build_vscode_context() -> dict[str, Any]:
     }
 
 
+def _build_git_intelligence(git_status_summary: dict[str, Any], changed_files: list[dict[str, str]]) -> dict[str, str]:
+    is_clean = bool(git_status_summary.get("is_clean", True))
+    staged_count = int(git_status_summary.get("staged_count", 0) or 0)
+    untracked_count = int(git_status_summary.get("untracked_count", 0) or 0)
+
+    if staged_count > 0:
+        return {
+            "recommendation": "Verify staged changes before commit",
+            "reason": "Staged files exist and should be checked before finalizing the commit.",
+            "risk_level": "medium",
+            "next_command": "git diff --staged",
+        }
+
+    if is_clean:
+        return {
+            "recommendation": "Ready for next feature",
+            "reason": "Working tree is clean with no pending changes.",
+            "risk_level": "low",
+            "next_command": "",
+        }
+
+    if untracked_count > 0:
+        return {
+            "recommendation": "Review untracked files before committing",
+            "reason": "Untracked files can be accidentally omitted or unintentionally included.",
+            "risk_level": "medium",
+            "next_command": "git status",
+        }
+
+    modified_count = len(changed_files)
+    if modified_count <= 2:
+        return {
+            "recommendation": "Review changes, then commit",
+            "reason": "Only a small number of files are modified.",
+            "risk_level": "low",
+            "next_command": "git diff",
+        }
+
+    return {
+        "recommendation": "Review carefully before committing",
+        "reason": "Many files are modified, which increases the chance of unintended changes.",
+        "risk_level": "medium",
+        "next_command": "git status && git diff",
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
+    git_intelligence = _build_git_intelligence(git_status_summary, changed_files)
 
     pack = {
         "branch": branch,
         "git_status_summary": git_status_summary,
         "changed_files": changed_files,
+        "git_intelligence": git_intelligence,
         "latest_response_summary": _build_latest_response_summary(),
         "session_memory_summary": _build_session_memory_summary(),
         "vscode_context": _build_vscode_context(),
@@ -235,6 +283,15 @@ def _print_summary(pack: dict[str, Any]) -> None:
             print(f"- {item.get('path', 'unknown')} ({item.get('state', 'unknown')})")
     else:
         print("Changed files: none")
+
+    git_intelligence = pack.get("git_intelligence")
+    if isinstance(git_intelligence, dict):
+        print("Git intelligence:")
+        print(f"- Recommendation: {git_intelligence.get('recommendation', '')}")
+        print(f"- Risk: {git_intelligence.get('risk_level', '')}")
+        print(f"- Reason: {git_intelligence.get('reason', '')}")
+        next_command = str(git_intelligence.get("next_command", "") or "").strip()
+        print(f"- Next command: {next_command if next_command else '<none>'}")
 
     latest = pack.get("latest_response_summary")
     if isinstance(latest, dict):
