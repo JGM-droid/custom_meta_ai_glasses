@@ -156,13 +156,18 @@
     <section class="footer">
       <span id="connection">Waiting for API</span>
       <span id="updated">Last updated: never</span>
+      <span id="api_url" style="opacity:0.5;font-size:0.75rem;width:100%;margin-top:2px;"></span>
     </section>
   </main>
 
   <script>
-    const API_LATEST_URL = "http://127.0.0.1:8001/latest";
+    const _currentHost = window.location.hostname;
+    const _apiHost = (!_currentHost || _currentHost === "localhost") ? "127.0.0.1" : _currentHost;
+    const API_LATEST_URL = `http://${_apiHost}:8001/latest`;
     const LOCAL_RESUME_FALLBACK_URL = "./results/resume_now.json";
-    const POLL_MS = 3000;
+    const POLL_MS = 2000;
+
+    let _lastPayloadKey = null;
 
     const titleEl = document.getElementById("title");
     const actionEl = document.getElementById("primary_action");
@@ -170,6 +175,8 @@
     const statusEl = document.getElementById("status");
     const connectionEl = document.getElementById("connection");
     const updatedEl = document.getElementById("updated");
+    const apiUrlEl = document.getElementById("api_url");
+    if (apiUrlEl) { apiUrlEl.textContent = `API: ${API_LATEST_URL}`; }
 
     function normalize(value, fallback = "No data") {
       if (value === null || value === undefined || value === "") {
@@ -279,10 +286,14 @@
 
     function updateTimestamp() {
       updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+      if (apiUrlEl) { apiUrlEl.textContent = `API: ${API_LATEST_URL}`; }
+    }
+
+    function _payloadKey(data) {
+      try { return JSON.stringify(data); } catch (_) { return String(data); }
     }
 
     async function fetchLatest() {
-      updateTimestamp();
       try {
         const response = await fetch(API_LATEST_URL, { cache: "no-store" });
         if (!response.ok) {
@@ -290,6 +301,11 @@
         }
 
         const data = await response.json();
+        const key = _payloadKey(data);
+        if (key === _lastPayloadKey) { return; }
+        _lastPayloadKey = key;
+        updateTimestamp();
+
         const guidancePriority = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
         const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
         const display = data && typeof data.glasses_display === "object" ? data.glasses_display : null;
@@ -320,8 +336,9 @@
         connectionEl.textContent = "Connected";
         renderDisplay(display);
       } catch (_err) {
+        _lastPayloadKey = null;
         connectionEl.textContent = "Waiting for API";
-        setWaiting("Start API server at 127.0.0.1:8001 to stream display payload.");
+        setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`);
       }
     }
 
