@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import re
 import subprocess
 import sys
 from typing import Any
@@ -461,6 +462,98 @@ def _build_task_switch_context(
     }
 
 
+def _build_developer_stuck_context(
+    task_switch_context: dict[str, Any],
+    error_context: dict[str, Any],
+    git_intelligence: dict[str, Any],
+    session_memory_summary: dict[str, Any] | None,
+    latest_response_summary: dict[str, Any] | None,
+    vscode_context: dict[str, Any],
+) -> dict[str, str | bool]:
+    task_switch = task_switch_context if isinstance(task_switch_context, dict) else {}
+    errors = error_context if isinstance(error_context, dict) else {}
+    git = git_intelligence if isinstance(git_intelligence, dict) else {}
+    session = session_memory_summary if isinstance(session_memory_summary, dict) else {}
+    latest = latest_response_summary if isinstance(latest_response_summary, dict) else {}
+    vscode = vscode_context if isinstance(vscode_context, dict) else {}
+
+    has_error_signals = bool(errors.get("has_error_signals", False))
+    latest_stuck = bool(latest.get("stuck", False))
+    possible_task_switch = bool(task_switch.get("possible_task_switch", False))
+
+    active_task = session.get("active_task", {}) if isinstance(session.get("active_task"), dict) else {}
+    current_task = str(active_task.get("current_task", "") or "").strip()
+    next_step = str(active_task.get("next_recommended_step", "") or "").strip()
+    observation_count = int(session.get("observation_count", 0) or 0)
+
+    repeated_task_signal = observation_count >= 3 and bool(current_task) and current_task.lower() != "unknown"
+    repeated_step_signal = observation_count >= 3 and bool(next_step) and next_step.lower() != "unknown"
+
+    current_file = str(vscode.get("current_file", "") or "").strip()
+    same_file_multiple_observations = observation_count >= 2 and bool(current_file)
+
+    git_risk = str(git.get("risk_level", "low") or "low").strip().lower()
+    no_progress_indicators = (
+        not has_error_signals
+        and not latest_stuck
+        and not possible_task_switch
+        and git_risk == "low"
+    )
+
+    if has_error_signals:
+        return {
+            "possibly_stuck": True,
+            "stuck_reason": "Developer may be stuck due to a possible blocker from current error signals.",
+            "confidence": "high",
+            "recommended_action": "Review and resolve the current error before continuing.",
+        }
+
+    if latest_stuck:
+        return {
+            "possibly_stuck": True,
+            "stuck_reason": "Latest response indicates the developer may be stuck with a possible blocker.",
+            "confidence": "high",
+            "recommended_action": "Consider breaking the task into a smaller next step.",
+        }
+
+    if possible_task_switch:
+        return {
+            "possibly_stuck": True,
+            "stuck_reason": "Developer may be stuck because a possible task switch was detected.",
+            "confidence": "medium",
+            "recommended_action": "Confirm whether you intend to continue the current task.",
+        }
+
+    if repeated_task_signal or repeated_step_signal:
+        reason_parts = []
+        if repeated_task_signal:
+            reason_parts.append("same active task appears repeatedly")
+        if repeated_step_signal:
+            reason_parts.append("same next step appears repeatedly")
+        reason_detail = " and ".join(reason_parts) if reason_parts else "repeated local context signals"
+        return {
+            "possibly_stuck": True,
+            "stuck_reason": f"Developer may be stuck because the {reason_detail}, suggesting a possible blocker.",
+            "confidence": "medium",
+            "recommended_action": "Consider breaking the task into a smaller next step.",
+        }
+
+    if same_file_multiple_observations and no_progress_indicators:
+        return {
+            "possibly_stuck": True,
+            "stuck_reason": "Developer may be stuck because the current file has remained the same with no obvious progress indicators.",
+            "confidence": "low",
+            "recommended_action": "Continue current implementation.",
+        }
+
+    return {
+        "possibly_stuck": False,
+        "stuck_reason": "No strong local signal that the developer may be stuck.",
+        "confidence": "low",
+        "recommended_action": "Continue current implementation.",
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
@@ -476,6 +569,14 @@ def _build_context_pack() -> dict[str, Any]:
         git_intelligence,
         error_context,
     )
+    developer_stuck_context = _build_developer_stuck_context(
+        task_switch_context,
+        error_context,
+        git_intelligence,
+        session_memory_summary,
+        latest_response_summary,
+        vscode_context,
+    )
 
     pack = {
         "branch": branch,
@@ -487,6 +588,7 @@ def _build_context_pack() -> dict[str, Any]:
         "vscode_context": vscode_context,
         "error_context": error_context,
         "task_switch_context": task_switch_context,
+        "developer_stuck_context": developer_stuck_context,
     }
     return pack
 
@@ -592,6 +694,14 @@ def _print_summary(pack: dict[str, Any]) -> None:
         print(f"- Previous task: {task_switch_context.get('previous_task', '')}")
         print(f"- Current context: {task_switch_context.get('current_context', '')}")
         print(f"- Suggested action: {task_switch_context.get('suggested_action', '')}")
+
+    developer_stuck_context = pack.get("developer_stuck_context")
+    if isinstance(developer_stuck_context, dict):
+        print("Developer stuck context:")
+        print(f"- Possibly stuck: {developer_stuck_context.get('possibly_stuck', False)}")
+        print(f"- Confidence: {developer_stuck_context.get('confidence', 'low')}")
+        print(f"- Reason: {developer_stuck_context.get('stuck_reason', '')}")
+        print(f"- Recommended action: {developer_stuck_context.get('recommended_action', '')}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
