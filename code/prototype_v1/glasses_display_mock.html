@@ -124,6 +124,14 @@
       flex-wrap: wrap;
     }
 
+    .debug-line {
+      width: 100%;
+      opacity: 0.8;
+      font-size: 0.74rem;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
     .waiting {
       color: var(--muted);
       font-size: 1rem;
@@ -155,15 +163,19 @@
 
     <section class="footer">
       <span id="connection">Waiting for API</span>
-      <span id="updated">Last updated: never</span>
-      <span id="api_url" style="opacity:0.5;font-size:0.75rem;width:100%;margin-top:2px;"></span>
+      <span id="updated">Last successful fetch: never</span>
+      <span id="debug_line" class="debug-line">Web app mode | Source: local-network-default | API: pending | Last success: never</span>
     </section>
   </main>
 
   <script>
     const _currentHost = window.location.hostname;
     const _apiHost = (!_currentHost || _currentHost === "localhost") ? "127.0.0.1" : _currentHost;
-    const API_LATEST_URL = `http://${_apiHost}:8001/latest`;
+    const DEFAULT_API_LATEST_URL = `http://${_apiHost}:8001/latest`;
+    const _queryParams = new URLSearchParams(window.location.search);
+    const _apiOverride = _queryParams.get("api");
+    const API_LATEST_URL = _apiOverride || DEFAULT_API_LATEST_URL;
+    const DISPLAY_SOURCE = _apiOverride ? "query-override" : "local-network-default";
     const LOCAL_RESUME_FALLBACK_URL = "./results/resume_now.json";
     const POLL_MS = 2000;
 
@@ -175,8 +187,17 @@
     const statusEl = document.getElementById("status");
     const connectionEl = document.getElementById("connection");
     const updatedEl = document.getElementById("updated");
-    const apiUrlEl = document.getElementById("api_url");
-    if (apiUrlEl) { apiUrlEl.textContent = `API: ${API_LATEST_URL}`; }
+    const debugLineEl = document.getElementById("debug_line");
+
+    function updateDebugLine(lastSuccessText = "never") {
+      if (!debugLineEl) {
+        return;
+      }
+
+      debugLineEl.textContent = `Web app mode | Source: ${DISPLAY_SOURCE} | API: ${API_LATEST_URL} | Last success: ${lastSuccessText}`;
+    }
+
+    updateDebugLine();
 
     function normalize(value, fallback = "No data") {
       if (value === null || value === undefined || value === "") {
@@ -285,8 +306,9 @@
     }
 
     function updateTimestamp() {
-      updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-      if (apiUrlEl) { apiUrlEl.textContent = `API: ${API_LATEST_URL}`; }
+      const lastSuccessText = new Date().toLocaleTimeString();
+      updatedEl.textContent = `Last successful fetch: ${lastSuccessText}`;
+      updateDebugLine(lastSuccessText);
     }
 
     function _payloadKey(data) {
@@ -301,10 +323,10 @@
         }
 
         const data = await response.json();
+        updateTimestamp();
         const key = _payloadKey(data);
         if (key === _lastPayloadKey) { return; }
         _lastPayloadKey = key;
-        updateTimestamp();
 
         const guidancePriority = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
         const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
@@ -338,6 +360,7 @@
       } catch (_err) {
         _lastPayloadKey = null;
         connectionEl.textContent = "Waiting for API";
+        updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
         setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`);
       }
     }
