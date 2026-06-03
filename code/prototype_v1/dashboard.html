@@ -55,6 +55,52 @@
       margin-bottom: 16px;
     }
 
+    .demo-mode {
+      background: linear-gradient(145deg, #fffdf6 0%, #fff8e8 100%);
+      border: 1px solid #ecd9aa;
+      border-left: 6px solid #d9822b;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+
+    .demo-mode h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    @media (min-width: 900px) {
+      .demo-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .demo-item {
+      background: #fff;
+      border: 1px solid #eddcb2;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .demo-item .label {
+      margin-bottom: 4px;
+      font-size: 0.72rem;
+    }
+
+    .demo-item .value {
+      font-size: 0.96rem;
+      white-space: pre-wrap;
+    }
+
     .glasses-view h2 {
       margin: 0 0 10px;
       font-size: 1rem;
@@ -294,6 +340,36 @@
       </div>
     </section>
 
+    <section class="demo-mode">
+      <h2>Demo Mode</h2>
+      <div class="demo-grid">
+        <article class="demo-item">
+          <div class="label">Current Task</div>
+          <div id="demo_current_task" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Task Continuity</div>
+          <div id="demo_task_continuity" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Task Progress / Step Count</div>
+          <div id="demo_task_progress" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Stuck Status</div>
+          <div id="demo_stuck_status" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Intervention Message</div>
+          <div id="demo_intervention_message" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Glasses Guidance</div>
+          <div id="demo_glasses_guidance" class="value muted">No data yet</div>
+        </article>
+      </div>
+    </section>
+
     <section class="grid two">
       <article class="card">
         <div class="label">Timestamp</div>
@@ -391,6 +467,12 @@
     const glassesNextAction = document.getElementById("glasses_next_action");
     const glassesRisk = document.getElementById("glasses_risk");
     const glassesConfidence = document.getElementById("glasses_confidence");
+    const demoCurrentTask = document.getElementById("demo_current_task");
+    const demoTaskContinuity = document.getElementById("demo_task_continuity");
+    const demoTaskProgress = document.getElementById("demo_task_progress");
+    const demoStuckStatus = document.getElementById("demo_stuck_status");
+    const demoInterventionMessage = document.getElementById("demo_intervention_message");
+    const demoGlassesGuidance = document.getElementById("demo_glasses_guidance");
 
     function setStatus(connected) {
       statusPill.classList.remove("connected", "waiting");
@@ -486,7 +568,30 @@
       glassesRisk.textContent = normalize(risk);
       glassesConfidence.textContent = normalize(confidence);
 
+      const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
+      const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
+      const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+      const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
+
+      const demoTaskName = normalize(resume.task);
+      const demoStepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
+      const demoNextStep = normalize(progress.next_step);
+      const demoIsStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
+      const demoRepeatedCount = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
+      const demoInterventionRecommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
+
+      demoCurrentTask.textContent = demoTaskName;
+      demoTaskContinuity.textContent = normalize(data.task_continuity);
+      demoTaskProgress.textContent = `Step count: ${demoStepCount}\nNext step: ${demoNextStep}`;
+      demoStuckStatus.textContent = `${demoIsStuck ? "Stuck" : "Not stuck"}\nRepeated next-step count: ${demoRepeatedCount}`;
+      demoInterventionMessage.textContent = `${demoInterventionRecommended ? "Intervention recommended" : "No intervention needed"}\n${normalize(intervention.message)}`;
+      demoGlassesGuidance.textContent = normalize(data.glasses_guidance);
+
       [glassesGuidance, glassesCurrentTask, glassesTaskContinuity, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
+        el.classList.remove("muted");
+      });
+
+      [demoCurrentTask, demoTaskContinuity, demoTaskProgress, demoStuckStatus, demoInterventionMessage, demoGlassesGuidance].forEach((el) => {
         el.classList.remove("muted");
       });
     }
