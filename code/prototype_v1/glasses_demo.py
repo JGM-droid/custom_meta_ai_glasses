@@ -15,6 +15,7 @@ RESUME_NOW_SCRIPT = BASE_DIR / "resume_now.py"
 RESUME_NOW_OUTPUT = RESULTS_DIR / "resume_now.json"
 OUTPUT_PATH = RESULTS_DIR / "glasses_demo.json"
 DISPLAY_MOCK_PATH = BASE_DIR / "glasses_display_mock.html"
+TERMINAL_ERROR_OUTPUT = RESULTS_DIR / "terminal_error_context.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -136,6 +137,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate demo guidance payloads for glasses display testing.")
     parser.add_argument("--speak", action="store_true", help="Enable spoken guidance in default mode.")
     parser.add_argument(
+        "--use-real-errors",
+        action="store_true",
+        help="Use guidance from results/terminal_error_context.json when a terminal error is present.",
+    )
+    parser.add_argument(
         "--scenario",
         choices=sorted(SCENARIO_GUIDANCE.keys()),
         help="Generate deterministic resume payload for a specific scenario.",
@@ -156,10 +162,65 @@ def _build_scenario_resume_payload(scenario: str) -> dict[str, Any]:
     }
 
 
+def _build_terminal_error_resume_payload() -> dict[str, Any] | None:
+    payload = _safe_load_json(TERMINAL_ERROR_OUTPUT)
+    if not payload or payload.get("has_terminal_error") is not True:
+        return None
+
+    guidance = payload.get("guidance_priority")
+    if not isinstance(guidance, dict):
+        return None
+
+    level = _as_text(guidance.get("level"), fallback="critical")
+    headline = _as_text(guidance.get("headline"), fallback="Resolve Error First")
+    recommended_action = _as_text(
+        guidance.get("recommended_action"),
+        fallback=_as_text(payload.get("recommended_action"), fallback="Review and resolve the current error before continuing."),
+    )
+
+    return {
+        "recommended_next_action": recommended_action,
+        "current_file": "",
+        "guidance_priority": {
+            "level": level,
+            "headline": headline,
+            "recommended_action": recommended_action,
+        },
+    }
+
+
 def main() -> None:
     args = _parse_args()
     speak_enabled = bool(args.speak)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.use_real_errors:
+        real_error_resume_payload = _build_terminal_error_resume_payload()
+        if real_error_resume_payload:
+            RESUME_NOW_OUTPUT.write_text(json.dumps(real_error_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            demo_payload = _build_demo_payload(
+                script_results=[
+                    {
+                        "script": "terminal_error_context",
+                        "ok": True,
+                        "returncode": 0,
+                    }
+                ],
+                resume_payload=real_error_resume_payload,
+                speak_enabled=speak_enabled,
+            )
+            demo_payload["source"] = "terminal_error_context"
+            OUTPUT_PATH.write_text(json.dumps(demo_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            print("Source: terminal_error_context")
+            _print_demo_summary(demo_payload)
+            print()
+            print(f"Wrote: {RESUME_NOW_OUTPUT}")
+            print(f"Wrote: {OUTPUT_PATH}")
+            return
+
+        print("Source: fallback")
 
     if args.scenario:
         resume_payload = _build_scenario_resume_payload(args.scenario)
