@@ -554,6 +554,71 @@ def _build_developer_stuck_context(
     }
 
 
+def _build_guidance_priority(
+    error_context: dict[str, Any],
+    git_intelligence: dict[str, Any],
+    task_switch_context: dict[str, Any],
+    developer_stuck_context: dict[str, Any],
+    session_memory_summary: dict[str, Any] | None,
+    latest_response_summary: dict[str, Any] | None,
+) -> dict[str, str]:
+    errors = error_context if isinstance(error_context, dict) else {}
+    git = git_intelligence if isinstance(git_intelligence, dict) else {}
+    task_switch = task_switch_context if isinstance(task_switch_context, dict) else {}
+    stuck = developer_stuck_context if isinstance(developer_stuck_context, dict) else {}
+
+    has_error_signals = bool(errors.get("has_error_signals", False))
+    git_risk = str(git.get("risk_level", "low") or "low").strip().lower()
+    possible_task_switch = bool(task_switch.get("possible_task_switch", False))
+    possibly_stuck = bool(stuck.get("possibly_stuck", False))
+
+    if has_error_signals:
+        return {
+            "level": "critical",
+            "source": "error_context",
+            "headline": "Resolve Error First",
+            "message": "Potential error signals detected.",
+            "recommended_action": "Review and resolve the current error before continuing.",
+        }
+
+    if git_risk == "high":
+        return {
+            "level": "high",
+            "source": "git_intelligence",
+            "headline": "Review Git State",
+            "message": "Git risk requires attention.",
+            "recommended_action": "Review git status before continuing.",
+        }
+
+    if possibly_stuck and not possible_task_switch:
+        return {
+            "level": "medium",
+            "source": "developer_stuck_context",
+            "headline": "Possible Blocker",
+            "message": "You may be stuck.",
+            "recommended_action": "Break the task into a smaller next step.",
+        }
+
+    if possible_task_switch:
+        return {
+            "level": "low",
+            "source": "task_switch_context",
+            "headline": "Possible Task Switch",
+            "message": "You may have switched tasks.",
+            "recommended_action": "Confirm whether you intend to continue.",
+        }
+
+    _ = session_memory_summary
+    _ = latest_response_summary
+    return {
+        "level": "info",
+        "source": "continuation",
+        "headline": "Continue Implementation",
+        "message": "No significant blockers detected.",
+        "recommended_action": "Continue current implementation.",
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
@@ -577,6 +642,14 @@ def _build_context_pack() -> dict[str, Any]:
         latest_response_summary,
         vscode_context,
     )
+    guidance_priority = _build_guidance_priority(
+        error_context,
+        git_intelligence,
+        task_switch_context,
+        developer_stuck_context,
+        session_memory_summary,
+        latest_response_summary,
+    )
 
     pack = {
         "branch": branch,
@@ -589,6 +662,7 @@ def _build_context_pack() -> dict[str, Any]:
         "error_context": error_context,
         "task_switch_context": task_switch_context,
         "developer_stuck_context": developer_stuck_context,
+        "guidance_priority": guidance_priority,
     }
     return pack
 
@@ -702,6 +776,14 @@ def _print_summary(pack: dict[str, Any]) -> None:
         print(f"- Confidence: {developer_stuck_context.get('confidence', 'low')}")
         print(f"- Reason: {developer_stuck_context.get('stuck_reason', '')}")
         print(f"- Recommended action: {developer_stuck_context.get('recommended_action', '')}")
+
+    guidance_priority = pack.get("guidance_priority")
+    if isinstance(guidance_priority, dict):
+        print("Guidance Priority:")
+        print(f"- Level: {guidance_priority.get('level', 'info')}")
+        print(f"- Source: {guidance_priority.get('source', 'continuation')}")
+        print(f"- Headline: {guidance_priority.get('headline', '')}")
+        print(f"- Recommended action: {guidance_priority.get('recommended_action', '')}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
