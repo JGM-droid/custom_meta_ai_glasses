@@ -502,6 +502,61 @@ def _build_glasses_display(current_task, next_action, confidence, stuck_status):
     }
 
 
+def _build_display_priority(
+    task_continuity,
+    current_task,
+    task_progress,
+    stuck_status,
+    intervention,
+    resume_previous_task,
+    glasses_display,
+    confidence,
+):
+    continuity = str(task_continuity or "").strip().lower()
+    progress = task_progress if isinstance(task_progress, dict) else {}
+    status_payload = stuck_status if isinstance(stuck_status, dict) else {}
+    intervention_payload = intervention if isinstance(intervention, dict) else {}
+    resume_payload = resume_previous_task if isinstance(resume_previous_task, dict) else {}
+    glasses_payload = glasses_display if isinstance(glasses_display, dict) else {}
+
+    progress_next = str(progress.get("next_step", "") or "").strip()
+    intervention_message = str(intervention_payload.get("message", "") or "").strip()
+    resume_task = str(resume_payload.get("task", "") or "").strip()
+    glasses_title = str(glasses_payload.get("title", "") or "").strip()
+    glasses_primary = str(glasses_payload.get("primary_action", "") or "").strip()
+    task_value = str(current_task or "").strip()
+    confidence_value = _truncate(str(confidence or "Unknown"), 20)
+
+    if bool(status_payload.get("is_stuck", False)):
+        mode = "stuck"
+        headline = "YOU MAY BE STUCK"
+        primary = intervention_message or progress_next or "Review previous step."
+        status = "STUCK"
+    elif continuity == "task switch":
+        mode = "task_switch"
+        headline = "TASK SWITCH"
+        primary = task_value or resume_task or "Switching tasks"
+        status = "SWITCH"
+    elif continuity == "new task":
+        mode = "new_task"
+        headline = "NEW TASK"
+        primary = task_value or glasses_title or "New task detected"
+        status = "NEW"
+    else:
+        mode = "active"
+        headline = "NEXT STEP"
+        primary = progress_next or glasses_primary or "Continue current step."
+        status = "ACTIVE"
+
+    return {
+        "mode": mode,
+        "headline": _truncate(headline, 28),
+        "primary_message": _truncate(primary, 96),
+        "secondary_message": _truncate(f"Confidence {confidence_value}", 48),
+        "status": status,
+    }
+
+
 def save_latest_fix(image_name, analysis_text):
     """Save the latest analysis in a developer-friendly markdown report."""
     results_dir = Path(__file__).resolve().parent / "results"
@@ -562,6 +617,16 @@ def save_latest_fix(image_name, analysis_text):
         confidence,
         stuck_status,
     )
+    display_priority = _build_display_priority(
+        task_continuity,
+        current_task,
+        task_progress,
+        stuck_status,
+        intervention,
+        resume_previous_task,
+        glasses_display,
+        confidence,
+    )
 
     # If no structured sections were detected, preserve raw analysis text.
     if not any(parsed_sections.values()) and raw_text:
@@ -620,6 +685,7 @@ def save_latest_fix(image_name, analysis_text):
         "task_continuity": task_continuity,
         "glasses_guidance": glasses_guidance,
         "glasses_display": glasses_display,
+        "display_priority": display_priority,
         "full_analysis": raw_text,
     }
     response_json_path.write_text(

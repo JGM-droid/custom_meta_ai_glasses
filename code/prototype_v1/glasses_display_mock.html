@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glasses Display Mock</title>
+  <style>
+    :root {
+      --bg: #050608;
+      --panel: #0b0f14;
+      --line: #1d2633;
+      --text: #f4f8ff;
+      --muted: #9fb0c9;
+      --active: #22c55e;
+      --stuck: #ef4444;
+      --accent: #5eead4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(94, 234, 212, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(34, 197, 94, 0.08), transparent 40%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      padding: 16px;
+    }
+
+    .frame {
+      width: 600px;
+      height: 600px;
+      max-width: 100%;
+      max-height: calc(100vh - 32px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(180deg, #0b0f14 0%, #080b10 100%);
+      padding: 24px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto auto;
+      gap: 14px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.8rem;
+      margin-bottom: 4px;
+    }
+
+    .title {
+      font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .action {
+      font-size: clamp(1.6rem, 3.3vw, 2.2rem);
+      line-height: 1.2;
+      font-weight: 800;
+      color: var(--accent);
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .confidence {
+      font-size: clamp(1.15rem, 2.2vw, 1.5rem);
+      font-weight: 700;
+    }
+
+    .status {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      justify-self: end;
+    }
+
+    .status.active {
+      color: #02240f;
+      background: var(--active);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+
+    .status.stuck {
+      color: #2e0000;
+      background: var(--stuck);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .status.switch {
+      color: #071826;
+      background: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+
+    .status.new {
+      color: #2a1a00;
+      background: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 0.84rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .waiting {
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <main class="frame" aria-live="polite">
+    <section>
+      <div class="label">Title</div>
+      <div id="title" class="title">Waiting for glasses display data...</div>
+    </section>
+
+    <section>
+      <div class="label">Primary Action</div>
+      <div id="primary_action" class="action waiting">Run analysis and ensure API is available.</div>
+    </section>
+
+    <div></div>
+
+    <section class="meta">
+      <div>
+        <div class="label">Confidence</div>
+        <div id="confidence" class="confidence">No data</div>
+      </div>
+      <div id="status" class="status">No data</div>
+    </section>
+
+    <section class="footer">
+      <span id="connection">Waiting for API</span>
+      <span id="updated">Last updated: never</span>
+    </section>
+  </main>
+
+  <script>
+    const API_LATEST_URL = "http://127.0.0.1:8001/latest";
+    const POLL_MS = 3000;
+
+    const titleEl = document.getElementById("title");
+    const actionEl = document.getElementById("primary_action");
+    const confidenceEl = document.getElementById("confidence");
+    const statusEl = document.getElementById("status");
+    const connectionEl = document.getElementById("connection");
+    const updatedEl = document.getElementById("updated");
+
+    function normalize(value, fallback = "No data") {
+      if (value === null || value === undefined || value === "") {
+        return fallback;
+      }
+      return String(value);
+    }
+
+    function setWaiting(message) {
+      titleEl.textContent = "Waiting for glasses display data...";
+      actionEl.textContent = message;
+      actionEl.classList.add("waiting");
+      confidenceEl.textContent = "No data";
+      statusEl.textContent = "No data";
+      statusEl.classList.remove("active", "stuck", "switch", "new");
+    }
+
+    function renderDisplay(display) {
+      const title = normalize(display.title, "No title");
+      const primaryAction = normalize(display.primary_action, "No primary action");
+      const confidence = normalize(display.confidence, "Unknown");
+      const status = normalize(display.status, "No data").toUpperCase();
+
+      titleEl.textContent = title;
+      actionEl.textContent = primaryAction;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = confidence;
+      statusEl.textContent = status;
+      statusEl.classList.remove("active", "stuck", "switch", "new");
+      if (status === "STUCK") {
+        statusEl.classList.add("stuck");
+      } else if (status === "ACTIVE") {
+        statusEl.classList.add("active");
+      }
+    }
+
+    function renderPriority(priority) {
+      const headline = normalize(priority.headline, "No headline");
+      const primaryMessage = normalize(priority.primary_message, "No message");
+      const secondaryMessage = normalize(priority.secondary_message, "No details");
+      const status = normalize(priority.status, "No data").toUpperCase();
+      const mode = normalize(priority.mode, "active").toLowerCase();
+
+      titleEl.textContent = headline;
+      actionEl.textContent = primaryMessage;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = secondaryMessage;
+      statusEl.textContent = status;
+      statusEl.classList.remove("active", "stuck", "switch", "new");
+
+      if (status === "STUCK") {
+        statusEl.classList.add("stuck");
+      } else if (status === "SWITCH") {
+        statusEl.classList.add("switch");
+      } else if (status === "NEW") {
+        statusEl.classList.add("new");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      connectionEl.textContent = `Connected (${mode})`;
+    }
+
+    function updateTimestamp() {
+      updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+    }
+
+    async function fetchLatest() {
+      updateTimestamp();
+      try {
+        const response = await fetch(API_LATEST_URL, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
+        const display = data && typeof data.glasses_display === "object" ? data.glasses_display : null;
+
+        if (priority) {
+          renderPriority(priority);
+          return;
+        }
+
+        if (!display) {
+          connectionEl.textContent = "Connected, waiting for glasses_display";
+          setWaiting("Analyze an image to populate display_priority or glasses_display.");
+          return;
+        }
+
+        connectionEl.textContent = "Connected";
+        renderDisplay(display);
+      } catch (_err) {
+        connectionEl.textContent = "Waiting for API";
+        setWaiting("Start API server at 127.0.0.1:8001 to stream display payload.");
+      }
+    }
+
+    fetchLatest();
+    setInterval(fetchLatest, POLL_MS);
+  </script>
+</body>
+</html>
