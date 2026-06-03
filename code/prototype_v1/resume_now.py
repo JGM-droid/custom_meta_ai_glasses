@@ -49,6 +49,7 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
     git_intelligence = coding_pack.get("git_intelligence", {}) if isinstance(coding_pack.get("git_intelligence"), dict) else {}
     error_context = coding_pack.get("error_context", {}) if isinstance(coding_pack.get("error_context"), dict) else {}
     task_switch_context = coding_pack.get("task_switch_context", {}) if isinstance(coding_pack.get("task_switch_context"), dict) else {}
+    guidance_priority = coding_pack.get("guidance_priority", {}) if isinstance(coding_pack.get("guidance_priority"), dict) else {}
 
     current_task = _as_text(session_recovery.get("last_active_task"), fallback="Unknown task")
     current_file = _as_text(session_recovery.get("current_file"), fallback="")
@@ -60,8 +61,11 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
     error_summary = _as_text(error_context.get("summary"), fallback="No error context available")
 
     possible_task_switch = bool(task_switch_context.get("possible_task_switch", False))
+    guidance_action = str(guidance_priority.get("recommended_action", "") or "").strip()
 
-    if has_error_signals:
+    if guidance_action:
+        recommended_next_action = guidance_action
+    elif has_error_signals:
         recommended_next_action = "Review error context first and resolve the blocker before continuing development."
     elif git_risk in {"medium", "high"}:
         recommended_next_action = "Review git state first (status/diff) before resuming implementation."
@@ -82,6 +86,7 @@ def _build_resume_now_payload(coding_pack: dict[str, Any], session_recovery: dic
         "has_error_signals": has_error_signals,
         "error_context": error_summary,
         "recommended_next_action": recommended_next_action,
+        "guidance_priority": guidance_priority,
     }
 
 
@@ -90,6 +95,11 @@ def _build_conversational_spoken_message(payload: dict[str, Any]) -> str:
     current_file = _as_text(payload.get("current_file"), fallback="unknown")
     git_state = _as_text(payload.get("git_state"), fallback="no git recommendation available")
     next_step = _as_text(payload.get("recommended_next_action"), fallback="continue with the next implementation step")
+    guidance_priority = payload.get("guidance_priority", {}) if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_level = _as_text(guidance_priority.get("level"), fallback="").lower()
+    guidance_headline = _as_text(guidance_priority.get("headline"), fallback="")
+    guidance_source = _as_text(guidance_priority.get("source"), fallback="")
+    guidance_action = str(guidance_priority.get("recommended_action", "") or "").strip()
 
     possible_task_switch = bool(payload.get("possible_task_switch", False))
     has_error_signals = bool(payload.get("has_error_signals", False))
@@ -101,7 +111,14 @@ def _build_conversational_spoken_message(payload: dict[str, Any]) -> str:
         f"Your current file is {current_file}.",
     ]
 
-    if possible_task_switch:
+    if guidance_action:
+        if guidance_headline and guidance_source and guidance_level:
+            sentences.append(
+                f"Priority {guidance_level} guidance from {guidance_source}: {guidance_headline}. Your next step is {guidance_action}."
+            )
+        else:
+            sentences.append(f"Your next step is {guidance_action}.")
+    elif possible_task_switch:
         sentences.append("You may have switched tasks. Confirm whether you want to continue before making changes.")
     elif has_error_signals:
         sentences.append("Before continuing, review the error context first and resolve the blocker.")
@@ -131,6 +148,8 @@ def _speak_recommendation(payload: dict[str, Any]) -> None:
 
 
 def _print_resume_now(payload: dict[str, Any]) -> None:
+    guidance_priority = payload.get("guidance_priority", {}) if isinstance(payload.get("guidance_priority"), dict) else {}
+
     print("RESUME NOW")
     print()
     print("Current task:")
@@ -150,6 +169,15 @@ def _print_resume_now(payload: dict[str, Any]) -> None:
     print()
     print("Recommended next action:")
     print(payload.get("recommended_next_action", "Continue current workflow."))
+    print()
+    print("Guidance level:")
+    print(guidance_priority.get("level", "info"))
+    print()
+    print("Guidance headline:")
+    print(guidance_priority.get("headline", ""))
+    print()
+    print("Guidance source:")
+    print(guidance_priority.get("source", "continuation"))
 
 
 def main() -> None:
