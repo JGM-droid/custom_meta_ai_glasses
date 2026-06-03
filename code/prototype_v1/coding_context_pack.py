@@ -14,6 +14,7 @@ RESULTS_DIR = BASE_DIR / "results"
 OUTPUT_PATH = RESULTS_DIR / "coding_context_pack.json"
 LATEST_RESPONSE_PATH = RESULTS_DIR / "latest_response.json"
 SESSION_MEMORY_PATH = RESULTS_DIR / "session_memory.json"
+MILESTONE_HISTORY_PATH = RESULTS_DIR / "milestone_history.json"
 
 ERROR_SIGNALS = [
     "Traceback",
@@ -700,6 +701,87 @@ def _build_progress_context(
     }
 
 
+def _load_milestone_history() -> list[str]:
+    payload = _safe_load_json(MILESTONE_HISTORY_PATH)
+    if not isinstance(payload, dict):
+        return []
+    items = payload.get("completed_milestones", [])
+    if not isinstance(items, list):
+        return []
+
+    cleaned: list[str] = []
+    seen = set()
+    for item in items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+    return cleaned
+
+
+def _save_milestone_history(completed_milestones: list[str]) -> None:
+    payload = {
+        "completed_milestones": completed_milestones,
+        "milestone_count": len(completed_milestones),
+    }
+    MILESTONE_HISTORY_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _build_milestone_context(
+    progress_context: dict[str, Any],
+    session_memory_summary: dict[str, Any] | None,
+    guidance_priority: dict[str, Any],
+    git_intelligence: dict[str, Any],
+    latest_response_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    progress = progress_context if isinstance(progress_context, dict) else {}
+    session = session_memory_summary if isinstance(session_memory_summary, dict) else {}
+    guidance = guidance_priority if isinstance(guidance_priority, dict) else {}
+    git = git_intelligence if isinstance(git_intelligence, dict) else {}
+    latest = latest_response_summary if isinstance(latest_response_summary, dict) else {}
+
+    active_task = session.get("active_task", {}) if isinstance(session.get("active_task"), dict) else {}
+    current_milestone = str(active_task.get("current_task", "") or "").strip() or "Unknown milestone"
+
+    progress_detected = bool(progress.get("progress_detected", False))
+    completed_step = str(progress.get("completed_step", "") or "").strip()
+    next_step = str(active_task.get("next_recommended_step", "") or "").strip()
+
+    major_wording = bool(re.search(r"\b(implement|integration|engine|detection|tracking|recovery|priority|context|milestone)\b", completed_step.lower()))
+    task_advancement = bool(completed_step and next_step and completed_step.lower() != next_step.lower())
+    reduced_blocker_pressure = (
+        str(guidance.get("level", "info") or "info").strip().lower() == "info"
+        and str(git.get("risk_level", "low") or "low").strip().lower() == "low"
+        and not bool(latest.get("stuck", False))
+    )
+
+    completed_milestones = _load_milestone_history()
+    candidate_milestone = ""
+    if progress_detected and completed_step and (major_wording or task_advancement or reduced_blocker_pressure):
+        candidate_milestone = completed_step
+
+    if candidate_milestone:
+        existing = {item.lower() for item in completed_milestones}
+        if candidate_milestone.lower() not in existing:
+            completed_milestones.append(candidate_milestone)
+
+    _save_milestone_history(completed_milestones)
+
+    milestone_count = len(completed_milestones)
+    project_progress_summary = f"{milestone_count} milestone completed." if milestone_count == 1 else f"{milestone_count} milestones completed."
+
+    return {
+        "current_milestone": current_milestone,
+        "completed_milestones": completed_milestones,
+        "milestone_count": milestone_count,
+        "project_progress_summary": project_progress_summary,
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
@@ -738,6 +820,13 @@ def _build_context_pack() -> dict[str, Any]:
         latest_response_summary,
         guidance_priority,
     )
+    milestone_context = _build_milestone_context(
+        progress_context,
+        session_memory_summary,
+        guidance_priority,
+        git_intelligence,
+        latest_response_summary,
+    )
 
     pack = {
         "branch": branch,
@@ -752,6 +841,7 @@ def _build_context_pack() -> dict[str, Any]:
         "developer_stuck_context": developer_stuck_context,
         "guidance_priority": guidance_priority,
         "progress_context": progress_context,
+        "milestone_context": milestone_context,
     }
     return pack
 
@@ -882,6 +972,17 @@ def _print_summary(pack: dict[str, Any]) -> None:
         print(f"- Reason: {progress_context.get('reason', '')}")
         print(f"- Completed step: {progress_context.get('completed_step', '')}")
         print(f"- Next expected action: {progress_context.get('next_expected_action', '')}")
+
+    milestone_context = pack.get("milestone_context")
+    if isinstance(milestone_context, dict):
+        completed = milestone_context.get("completed_milestones", [])
+        latest_completed = ""
+        if isinstance(completed, list) and completed:
+            latest_completed = str(completed[-1])
+        print("Milestone Context:")
+        print(f"- Current milestone: {milestone_context.get('current_milestone', '')}")
+        print(f"- Milestone count: {milestone_context.get('milestone_count', 0)}")
+        print(f"- Latest completed milestone: {latest_completed}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
