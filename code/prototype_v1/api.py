@@ -24,8 +24,33 @@ app.add_middleware(
 BASE_DIR = Path(__file__).resolve().parent
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"
 LATEST_RESPONSE_JSON = BASE_DIR / "results" / "latest_response.json"
+RESUME_NOW_JSON = BASE_DIR / "results" / "resume_now.json"
 
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _load_resume_guidance() -> dict[str, str | dict[str, object]]:
+    if not RESUME_NOW_JSON.exists() or not RESUME_NOW_JSON.is_file():
+        return {}
+
+    try:
+        payload = json.loads(RESUME_NOW_JSON.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    merged: dict[str, str | dict[str, object]] = {}
+    guidance_priority = payload.get("guidance_priority")
+    if isinstance(guidance_priority, dict):
+        merged["guidance_priority"] = guidance_priority
+
+    recommended_next_action = payload.get("recommended_next_action")
+    if isinstance(recommended_next_action, str) and recommended_next_action.strip():
+        merged["resume_recommended_action"] = recommended_next_action.strip()
+
+    return merged
 
 
 @app.get("/latest")
@@ -37,12 +62,21 @@ async def latest():
         )
 
     try:
-        return json.loads(LATEST_RESPONSE_JSON.read_text(encoding="utf-8"))
+        payload = json.loads(LATEST_RESPONSE_JSON.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=500,
             detail=f"latest_response.json is not valid JSON: {exc}",
         ) from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="latest_response.json must contain a JSON object.",
+        )
+
+    payload.update(_load_resume_guidance())
+    return payload
 
 
 @app.post("/analyze")
