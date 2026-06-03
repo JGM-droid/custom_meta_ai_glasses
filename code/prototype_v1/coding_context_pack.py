@@ -14,6 +14,40 @@ OUTPUT_PATH = RESULTS_DIR / "coding_context_pack.json"
 LATEST_RESPONSE_PATH = RESULTS_DIR / "latest_response.json"
 SESSION_MEMORY_PATH = RESULTS_DIR / "session_memory.json"
 
+ERROR_SIGNALS = [
+    "Traceback",
+    "Exception",
+    "Error",
+    "Failed",
+    "ModuleNotFoundError",
+    "ImportError",
+    "SyntaxError",
+    "Port already in use",
+    "No module named",
+    "Permission denied",
+]
+
+TEXT_SCAN_SUFFIXES = {
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".log",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".html",
+    ".js",
+    ".ts",
+    ".ps1",
+    ".bat",
+    ".sh",
+}
+
+MAX_SCAN_FILE_BYTES = 512_000
+
 
 def _run_git(args: list[str]) -> tuple[bool, str]:
     command = ["git", "-C", str(REPO_ROOT), *args]
@@ -244,10 +278,120 @@ def _build_git_intelligence(git_status_summary: dict[str, Any], changed_files: l
     }
 
 
+def _is_scannable_text_file(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    if "__pycache__" in path.parts:
+        return False
+    if path.suffix.lower() not in TEXT_SCAN_SUFFIXES:
+        return False
+    try:
+        if path.stat().st_size > MAX_SCAN_FILE_BYTES:
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def _collect_recent_result_like_files(limit: int = 5) -> list[Path]:
+    candidates: list[Path] = []
+    relevant_dirs = [
+        RESULTS_DIR,
+        REPO_ROOT / "testing_logs",
+    ]
+    for base in relevant_dirs:
+        if not base.exists() or not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if _is_scannable_text_file(path):
+                candidates.append(path)
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[:limit]
+
+
+def _build_error_context(changed_files: list[dict[str, str]], vscode_context: dict[str, Any]) -> dict[str, Any]:
+    candidate_paths: list[Path] = []
+
+    for item in changed_files:
+        if not isinstance(item, dict):
+            continue
+        rel = str(item.get("path", "") or "").strip()
+        if not rel:
+            continue
+        candidate_paths.append(REPO_ROOT / rel)
+
+    recent_modified = vscode_context.get("recent_modified_files", []) if isinstance(vscode_context, dict) else []
+    if isinstance(recent_modified, list):
+        for rel in recent_modified[:5]:
+            rel_text = str(rel or "").strip()
+            if not rel_text:
+                continue
+            candidate_paths.append(REPO_ROOT / rel_text)
+
+    candidate_paths.extend(_collect_recent_result_like_files(limit=5))
+
+    unique_paths: list[Path] = []
+    seen = set()
+    for path in candidate_paths:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(path)
+
+    found_files: list[str] = []
+    found_keywords: list[str] = []
+    signal_map = {signal.lower(): signal for signal in ERROR_SIGNALS}
+
+    for path in unique_paths:
+        if not _is_scannable_text_file(path):
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        lowered = content.lower()
+        matched_here = []
+        for key, signal in signal_map.items():
+            if key in lowered:
+                matched_here.append(signal)
+
+        if matched_here:
+            found_files.append(_to_repo_relative(path))
+            for signal in matched_here:
+                if signal not in found_keywords:
+                    found_keywords.append(signal)
+
+    has_error_signals = bool(found_keywords)
+    if has_error_signals:
+        file_preview = ", ".join(found_files[:3])
+        keyword_preview = ", ".join(found_keywords[:4])
+        summary = _truncate(
+            f"Potential error signals found in {len(found_files)} file(s): {keyword_preview}."
+            f" First files: {file_preview}.",
+            220,
+        )
+        suggested_next_step = "Open flagged files, confirm current failure, and run the suggested git/repro command."
+    else:
+        summary = "No common error signals detected in recent local context files."
+        suggested_next_step = "Continue with current workflow and rerun context pack after any failures."
+
+    return {
+        "has_error_signals": has_error_signals,
+        "error_files": found_files,
+        "error_keywords": found_keywords,
+        "summary": summary,
+        "suggested_next_step": suggested_next_step,
+    }
+
+
 def _build_context_pack() -> dict[str, Any]:
     branch = _get_branch()
     git_status_summary, changed_files = _get_git_status_summary()
     git_intelligence = _build_git_intelligence(git_status_summary, changed_files)
+    vscode_context = _build_vscode_context()
+    error_context = _build_error_context(changed_files, vscode_context)
 
     pack = {
         "branch": branch,
@@ -256,7 +400,8 @@ def _build_context_pack() -> dict[str, Any]:
         "git_intelligence": git_intelligence,
         "latest_response_summary": _build_latest_response_summary(),
         "session_memory_summary": _build_session_memory_summary(),
-        "vscode_context": _build_vscode_context(),
+        "vscode_context": vscode_context,
+        "error_context": error_context,
     }
     return pack
 
@@ -337,6 +482,23 @@ def _print_summary(pack: dict[str, Any]) -> None:
             print(f"- Recent modified files: {', '.join(str(item) for item in modified_files[:5])}")
         else:
             print("- Recent modified files: none")
+
+    error_context = pack.get("error_context")
+    if isinstance(error_context, dict):
+        print("Error context:")
+        print(f"- Has signals: {error_context.get('has_error_signals', False)}")
+        error_keywords = error_context.get("error_keywords", [])
+        if isinstance(error_keywords, list) and error_keywords:
+            print(f"- Keywords: {', '.join(str(item) for item in error_keywords[:5])}")
+        else:
+            print("- Keywords: none")
+        error_files = error_context.get("error_files", [])
+        if isinstance(error_files, list) and error_files:
+            print(f"- Files: {', '.join(str(item) for item in error_files[:3])}")
+        else:
+            print("- Files: none")
+        print(f"- Summary: {error_context.get('summary', '')}")
+        print(f"- Next step: {error_context.get('suggested_next_step', '')}")
 
     print(f"Wrote: {OUTPUT_PATH}")
 
