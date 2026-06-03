@@ -46,6 +46,14 @@ SCENARIO_GUIDANCE = {
     },
 }
 
+GUIDANCE_PRIORITY_RANK = {
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "info": 1,
+}
+
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
@@ -138,6 +146,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate demo guidance payloads for glasses display testing.")
     parser.add_argument("--speak", action="store_true", help="Enable spoken guidance in default mode.")
     parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Select highest-priority guidance from available real sources.",
+    )
+    parser.add_argument(
         "--use-real-git",
         action="store_true",
         help="Use guidance from results/coding_context_pack.json when git risk is medium/high.",
@@ -222,10 +235,86 @@ def _build_git_intelligence_resume_payload() -> dict[str, Any] | None:
     }
 
 
+def _guidance_level(payload: dict[str, Any]) -> str:
+    guidance = payload.get("guidance_priority") if isinstance(payload, dict) else None
+    if not isinstance(guidance, dict):
+        return "info"
+    return _as_text(guidance.get("level"), fallback="info").lower()
+
+
+def _guidance_rank(payload: dict[str, Any]) -> int:
+    return GUIDANCE_PRIORITY_RANK.get(_guidance_level(payload), 1)
+
+
 def main() -> None:
     args = _parse_args()
     speak_enabled = bool(args.speak)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.auto:
+        candidates: list[dict[str, Any]] = []
+
+        terminal_resume_payload = _build_terminal_error_resume_payload()
+        if terminal_resume_payload:
+            terminal_guidance = terminal_resume_payload.get("guidance_priority", {})
+            if isinstance(terminal_guidance, dict):
+                terminal_guidance["level"] = "critical"
+                terminal_guidance["source"] = "terminal_error_context"
+            candidates.append(
+                {
+                    "source": "terminal_error_context",
+                    "script": "terminal_error_context",
+                    "resume_payload": terminal_resume_payload,
+                }
+            )
+
+        git_resume_payload = _build_git_intelligence_resume_payload()
+        if git_resume_payload:
+            candidates.append(
+                {
+                    "source": "git_intelligence",
+                    "script": "git_intelligence",
+                    "resume_payload": git_resume_payload,
+                }
+            )
+
+        if args.scenario:
+            scenario_resume_payload = _build_scenario_resume_payload(args.scenario)
+            candidates.append(
+                {
+                    "source": "scenario",
+                    "script": f"scenario:{args.scenario}",
+                    "resume_payload": scenario_resume_payload,
+                }
+            )
+
+        if candidates:
+            selected = max(candidates, key=lambda item: _guidance_rank(item["resume_payload"]))
+            selected_resume_payload = selected["resume_payload"]
+
+            RESUME_NOW_OUTPUT.write_text(json.dumps(selected_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            demo_payload = _build_demo_payload(
+                script_results=[
+                    {
+                        "script": selected["script"],
+                        "ok": True,
+                        "returncode": 0,
+                    }
+                ],
+                resume_payload=selected_resume_payload,
+                speak_enabled=speak_enabled,
+            )
+            demo_payload["source"] = selected["source"]
+            OUTPUT_PATH.write_text(json.dumps(demo_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            print(f"Selected Source: {selected['source']}")
+            _print_demo_summary(demo_payload)
+            print()
+            print(f"Wrote: {RESUME_NOW_OUTPUT}")
+            print(f"Wrote: {OUTPUT_PATH}")
+            return
+
+        print("Source: fallback")
 
     if args.use_real_git:
         real_git_resume_payload = _build_git_intelligence_resume_payload()
