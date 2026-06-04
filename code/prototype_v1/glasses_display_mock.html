@@ -222,6 +222,36 @@
       gap: 8px;
     }
 
+    .prompt-selector {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .prompt-selector-btn {
+      border: 1px solid var(--line);
+      background: #0d141d;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 0.74rem;
+      cursor: pointer;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .prompt-selector-btn.active {
+      border-color: rgba(94, 234, 212, 0.7);
+      box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.25);
+      background: #11202a;
+      color: #d7fff8;
+    }
+
+    .prompt-selector-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     .prompt-title {
       color: var(--muted);
       font-size: 0.78rem;
@@ -346,6 +376,12 @@
       <span class="prompt-title">Desktop Prompt Panel</span>
       <button id="copy_prompt_btn" class="copy-btn" type="button">Copy Prompt</button>
     </div>
+    <div id="prompt_selector" class="prompt-selector" hidden>
+      <button id="prompt_btn_implementation" class="prompt-selector-btn" type="button" data-prompt-key="implementation_prompt">Implementation</button>
+      <button id="prompt_btn_validation" class="prompt-selector-btn" type="button" data-prompt-key="validation_prompt">Validation</button>
+      <button id="prompt_btn_architecture" class="prompt-selector-btn" type="button" data-prompt-key="architecture_prompt">Architecture</button>
+      <button id="prompt_btn_git" class="prompt-selector-btn" type="button" data-prompt-key="git_review_prompt">Git Review</button>
+    </div>
     <textarea id="ai_prompt_text" class="prompt-text" readonly>Prompt unavailable</textarea>
     <div id="prompt_copy_status" class="prompt-status"></div>
   </section>
@@ -387,6 +423,76 @@
     const aiPromptTextEl = document.getElementById("ai_prompt_text");
     const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
     const promptCopyStatusEl = document.getElementById("prompt_copy_status");
+    const promptSelectorEl = document.getElementById("prompt_selector");
+    const promptSelectorButtons = promptSelectorEl
+      ? Array.from(promptSelectorEl.querySelectorAll(".prompt-selector-btn"))
+      : [];
+
+    const PROMPT_KEYS = [
+      "implementation_prompt",
+      "validation_prompt",
+      "architecture_prompt",
+      "git_review_prompt",
+    ];
+
+    let _selectedPromptKey = "implementation_prompt";
+    let _currentPromptLibrary = null;
+    let _currentAiPromptFallback = "Prompt unavailable";
+
+    function _promptValueByKey(key) {
+      if (!_currentPromptLibrary || typeof _currentPromptLibrary !== "object") {
+        return "";
+      }
+
+      const value = _currentPromptLibrary[key];
+      return typeof value === "string" && value.trim() ? value.trim() : "";
+    }
+
+    function _firstAvailablePromptKey() {
+      for (const key of PROMPT_KEYS) {
+        if (_promptValueByKey(key)) {
+          return key;
+        }
+      }
+      return "";
+    }
+
+    function _activePromptText() {
+      const selectedText = _promptValueByKey(_selectedPromptKey);
+      if (selectedText) {
+        return selectedText;
+      }
+
+      const implementation = _promptValueByKey("implementation_prompt");
+      if (implementation) {
+        _selectedPromptKey = "implementation_prompt";
+        return implementation;
+      }
+
+      const firstKey = _firstAvailablePromptKey();
+      if (firstKey) {
+        _selectedPromptKey = firstKey;
+        return _promptValueByKey(firstKey);
+      }
+
+      return _currentAiPromptFallback;
+    }
+
+    function _updatePromptSelectorUi() {
+      if (!promptSelectorEl) {
+        return;
+      }
+
+      const hasLibrary = _currentPromptLibrary && typeof _currentPromptLibrary === "object" && !!_firstAvailablePromptKey();
+      promptSelectorEl.hidden = !hasLibrary;
+
+      for (const button of promptSelectorButtons) {
+        const key = button.dataset.promptKey || "";
+        const hasPrompt = hasLibrary && !!_promptValueByKey(key);
+        button.disabled = !hasPrompt;
+        button.classList.toggle("active", hasPrompt && key === _selectedPromptKey);
+      }
+    }
 
     function renderActiveFileContext(data) {
       if (!activeFileLineEl) {
@@ -412,9 +518,23 @@
         return;
       }
 
-      const prompt = data && typeof data.ai_prompt === "string" && data.ai_prompt.trim()
+      const library = data && typeof data.prompt_library === "object" ? data.prompt_library : null;
+      _currentPromptLibrary = library;
+
+      _currentAiPromptFallback = data && typeof data.ai_prompt === "string" && data.ai_prompt.trim()
         ? data.ai_prompt.trim()
         : "Prompt unavailable";
+
+      if (!_promptValueByKey("implementation_prompt") && _firstAvailablePromptKey()) {
+        _selectedPromptKey = _firstAvailablePromptKey();
+      }
+
+      if (!_firstAvailablePromptKey()) {
+        _selectedPromptKey = "implementation_prompt";
+      }
+
+      _updatePromptSelectorUi();
+      const prompt = _activePromptText() || "Prompt unavailable";
 
       aiPromptTextEl.value = prompt;
       copyPromptBtnEl.disabled = prompt === "Prompt unavailable";
@@ -522,6 +642,28 @@
     if (copyPromptBtnEl) {
       copyPromptBtnEl.addEventListener("click", () => {
         copyPromptToClipboard();
+      });
+    }
+
+    for (const button of promptSelectorButtons) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.promptKey || "";
+        if (!key) {
+          return;
+        }
+        _selectedPromptKey = key;
+        _updatePromptSelectorUi();
+
+        const prompt = _activePromptText() || "Prompt unavailable";
+        if (aiPromptTextEl) {
+          aiPromptTextEl.value = prompt;
+        }
+        if (copyPromptBtnEl) {
+          copyPromptBtnEl.disabled = prompt === "Prompt unavailable";
+        }
+        if (promptCopyStatusEl) {
+          promptCopyStatusEl.textContent = "";
+        }
       });
     }
 
