@@ -12,6 +12,10 @@ from urllib.request import urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parent
+NGROK_FALLBACK = Path(
+    r"C:\Users\jesse\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe"
+)
+
 API_COMMAND = [
     sys.executable,
     "-m",
@@ -32,8 +36,8 @@ DISPLAY_COMMAND = [
     "--directory",
     str(BASE_DIR),
 ]
-API_TUNNEL_COMMAND = ["ngrok", "http", "8001"]
-DISPLAY_TUNNEL_COMMAND = ["ngrok", "http", "8002"]
+# Tunnel commands are built at runtime once the ngrok executable is resolved.
+# See _find_ngrok() and main().
 DEMO_NORMAL_COMMAND = [
     sys.executable,
     str(BASE_DIR / "glasses_demo.py"),
@@ -41,6 +45,16 @@ DEMO_NORMAL_COMMAND = [
     "normal",
 ]
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
+
+
+def _find_ngrok() -> str | None:
+    """Return the resolved ngrok executable path, or None if not found."""
+    on_path = shutil.which("ngrok")
+    if on_path:
+        return on_path
+    if NGROK_FALLBACK.is_file():
+        return str(NGROK_FALLBACK)
+    return None
 
 
 def _start_process(command: list[str]) -> subprocess.Popen[str]:
@@ -118,9 +132,17 @@ def _fetch_tunnel_urls() -> tuple[str, str]:
 
 
 def main() -> int:
-    if shutil.which("ngrok") is None:
-        print("ngrok is not available on PATH. Install ngrok separately, ensure it is on PATH, and rerun this launcher.")
+    ngrok_exe = _find_ngrok()
+    if ngrok_exe is None:
+        print(
+            "ngrok was not found on PATH or at the fallback location:\n"
+            f"  {NGROK_FALLBACK}\n"
+            "Install ngrok separately, place ngrok.exe on PATH or at the fallback path, and rerun this launcher."
+        )
         return 1
+
+    api_tunnel_command = [ngrok_exe, "http", "8001"]
+    display_tunnel_command = [ngrok_exe, "http", "8002"]
 
     api_process: subprocess.Popen[str] | None = None
     display_process: subprocess.Popen[str] | None = None
@@ -130,8 +152,8 @@ def main() -> int:
     try:
         api_process = _start_process(API_COMMAND)
         display_process = _start_process(DISPLAY_COMMAND)
-        api_tunnel_process = _start_process(API_TUNNEL_COMMAND)
-        display_tunnel_process = _start_process(DISPLAY_TUNNEL_COMMAND)
+        api_tunnel_process = _start_process(api_tunnel_command)
+        display_tunnel_process = _start_process(display_tunnel_command)
 
         time.sleep(3)
         api_tunnel_url, display_tunnel_url = _fetch_tunnel_urls()
