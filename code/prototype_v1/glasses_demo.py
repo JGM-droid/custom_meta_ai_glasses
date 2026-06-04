@@ -21,6 +21,7 @@ TERMINAL_ERROR_OUTPUT = RESULTS_DIR / "terminal_error_context.json"
 CODING_CONTEXT_OUTPUT = RESULTS_DIR / "coding_context_pack.json"
 CONTEXT_FUSION_OUTPUT = RESULTS_DIR / "context_fusion.json"
 PROJECT_MEMORY_PATH = PROJECT_ROOT / "AGENTS.md"
+PROJECT_PROGRESS_PATH = RESULTS_DIR / "project_progress.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -111,6 +112,20 @@ GENERIC_FILE_FOCUS = {
 }
 
 REPO_NAME = "custom_meta_ai_glasses"
+
+MILESTONE_SEQUENCE = [
+    "V8.1 Project Memory",
+    "V8.2 Smarter Prompt Generation",
+    "V8.3 One-Command Refresh",
+    "V8.4 Live Auto Refresh",
+    "V8.5 Decision Engine",
+    "V8.6 Task Continuity",
+    "V8.7 Prompt Library",
+    "V8.8 Architecture-Aware Decisions",
+    "V8.9 Multi-Step Task Tracking",
+]
+
+DEFAULT_CURRENT_MILESTONE = "V8.6 Task Continuity"
 
 
 def _load_project_memory_summary() -> dict[str, str]:
@@ -293,6 +308,10 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
     )
     next_step_decision = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
     decision_reason = _as_text(payload.get("decision_reason"), fallback="No explicit decision reason available.")
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    last_completed_milestone = _as_text(project_progress.get("last_completed_milestone"), fallback="Unknown")
+    current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
+    suggested_next_milestone = _as_text(project_progress.get("suggested_next_milestone"), fallback="Unknown")
     current_focus = _as_text(payload.get("current_focus"), fallback="General development")
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable")
     checks = payload.get("suggested_checks") if isinstance(payload.get("suggested_checks"), list) else []
@@ -309,6 +328,10 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         f"Recommended next action: {recommended_next_action}\n\n"
         f"Recommended next step: {next_step_decision}\n"
         f"Reason: {decision_reason}\n\n"
+        "Project Progress:\n"
+        f"- Last completed milestone: {last_completed_milestone}\n"
+        f"- Current milestone: {current_milestone}\n"
+        f"- Suggested next milestone: {suggested_next_milestone}\n\n"
     )
 
     safety_block = (
@@ -521,6 +544,64 @@ def _load_active_file_context() -> tuple[bool, dict[str, Any]]:
     }
 
 
+def _milestone_index(name: str) -> int:
+    lowered = name.strip().lower()
+    for index, milestone in enumerate(MILESTONE_SEQUENCE):
+        if milestone.lower() == lowered:
+            return index
+    return -1
+
+
+def _normalize_milestone_name(name: str) -> str:
+    text = _as_text(name, fallback="")
+    if not text:
+        return ""
+
+    exact_index = _milestone_index(text)
+    if exact_index >= 0:
+        return MILESTONE_SEQUENCE[exact_index]
+
+    lowered = text.lower()
+    for milestone in MILESTONE_SEQUENCE:
+        if lowered in milestone.lower() or milestone.lower() in lowered:
+            return milestone
+
+    return ""
+
+
+def _load_project_progress(project_memory: dict[str, str]) -> dict[str, str]:
+    stored = _safe_load_json(PROJECT_PROGRESS_PATH)
+
+    stored_current = _normalize_milestone_name(_as_text(stored.get("current_milestone"), fallback=""))
+    memory_current = _normalize_milestone_name(_as_text(project_memory.get("milestone"), fallback=""))
+
+    current = DEFAULT_CURRENT_MILESTONE
+    current_index = _milestone_index(current)
+
+    for candidate in [stored_current, memory_current]:
+        candidate_index = _milestone_index(candidate)
+        if candidate_index > current_index:
+            current = candidate
+            current_index = candidate_index
+
+    if current_index < 0:
+        current = DEFAULT_CURRENT_MILESTONE
+        current_index = _milestone_index(current)
+
+    last_completed = MILESTONE_SEQUENCE[current_index - 1] if current_index > 0 else ""
+    suggested_next = MILESTONE_SEQUENCE[current_index + 1] if current_index < len(MILESTONE_SEQUENCE) - 1 else current
+
+    progress = {
+        "last_completed_milestone": last_completed,
+        "current_milestone": current,
+        "suggested_next_milestone": suggested_next,
+    }
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECT_PROGRESS_PATH.write_text(json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8")
+    return progress
+
+
 def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
     active_file_available, active_file = _load_active_file_context()
@@ -547,6 +628,7 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
         payload["suggested_checks"] = list(GENERIC_FILE_FOCUS["suggested_checks"])
 
     project_memory = _load_project_memory_summary()
+    payload["project_progress"] = _load_project_progress(project_memory)
 
     payload["prompt_mode"] = _select_prompt_mode(payload)
     decision, reason = _select_next_step_decision(payload)
