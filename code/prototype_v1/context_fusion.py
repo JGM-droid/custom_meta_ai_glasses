@@ -11,6 +11,7 @@ RESULTS_DIR = BASE_DIR / "results"
 TERMINAL_ERROR_PATH = RESULTS_DIR / "terminal_error_context.json"
 CODING_CONTEXT_PATH = RESULTS_DIR / "coding_context_pack.json"
 SESSION_SNAPSHOT_PATH = RESULTS_DIR / "coding_session_snapshot.json"
+ACTIVE_EDITOR_CONTEXT_PATH = RESULTS_DIR / "active_editor_context.json"
 OUTPUT_PATH = RESULTS_DIR / "context_fusion.json"
 
 
@@ -78,6 +79,32 @@ def _load_snapshot_context() -> dict[str, Any]:
     if not payload:
         return {}
     return payload
+
+
+def _load_active_editor_context() -> dict[str, Any]:
+    payload = _safe_load_json(ACTIVE_EDITOR_CONTEXT_PATH)
+    if not payload:
+        return {}
+    return payload
+
+
+def _active_file_payload(active_editor_context: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    if not active_editor_context:
+        return False, {
+            "active_file_name": "",
+            "active_file_path": "",
+            "language_id": "",
+            "is_dirty": False,
+            "event_type": "",
+        }
+
+    return True, {
+        "active_file_name": _as_text(active_editor_context.get("active_file_name"), ""),
+        "active_file_path": _as_text(active_editor_context.get("active_file_path"), ""),
+        "language_id": _as_text(active_editor_context.get("language_id"), ""),
+        "is_dirty": bool(active_editor_context.get("is_dirty", False)),
+        "event_type": _as_text(active_editor_context.get("event_type"), ""),
+    }
 
 
 def _snapshot_guidance(snapshot: dict[str, Any]) -> dict[str, str]:
@@ -171,6 +198,8 @@ def _build_payload() -> dict[str, Any]:
     terminal_error = _load_terminal_error_context()
     coding_context = _load_coding_context()
     snapshot = _load_snapshot_context()
+    active_editor_context = _load_active_editor_context()
+    active_file_available, active_file = _active_file_payload(active_editor_context)
 
     selected_source, guidance_priority = _select_context(terminal_error, coding_context, snapshot)
 
@@ -185,6 +214,8 @@ def _build_payload() -> dict[str, Any]:
         "modified_files": _as_int(snapshot.get("modified_files"), 0),
         "staged_files": _as_int(snapshot.get("staged_files"), 0),
         "has_terminal_error": bool(terminal_error.get("has_terminal_error", False)),
+        "active_file_available": active_file_available,
+        "active_file": active_file,
         "selected_source": selected_source,
         "guidance_priority": guidance_priority,
     }
@@ -198,11 +229,15 @@ def _write_output(payload: dict[str, Any]) -> None:
 def main() -> None:
     payload = _build_payload()
     _write_output(payload)
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), "unavailable")
     print("Context Fusion Engine")
     print(f"Selected source: {payload['selected_source']}")
     print(f"Active branch: {payload['active_branch']}")
     print(f"Modified files: {payload['modified_files']}")
     print(f"Staged files: {payload['staged_files']}")
+    print("Active File:")
+    print(f"- {active_file_name}")
     print(f"Wrote: {OUTPUT_PATH}")
 
 
