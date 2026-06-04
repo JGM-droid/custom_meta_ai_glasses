@@ -108,6 +108,8 @@ GENERIC_FILE_FOCUS = {
     ],
 }
 
+REPO_NAME = "custom_meta_ai_glasses"
+
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
@@ -290,6 +292,33 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload["suggested_checks"] = [str(item).strip() for item in checks if str(item).strip()]
     if not payload["suggested_checks"]:
         payload["suggested_checks"] = list(GENERIC_FILE_FOCUS["suggested_checks"])
+
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_headline = _as_text(guidance.get("headline"), fallback="Resume guidance")
+    recommended_next_action = _as_text(
+        payload.get("recommended_next_action"),
+        fallback=_as_text(guidance.get("recommended_action"), fallback="Continue current implementation."),
+    )
+    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable") if active_file_available else "unavailable"
+    checks_block = "\n".join([f"- {item}" for item in payload["suggested_checks"]])
+
+    payload["ai_prompt"] = (
+        f"Project: {REPO_NAME}\n"
+        "Task: Provide coding guidance and next-step implementation support.\n\n"
+        f"Current active file: {active_file_name}\n"
+        f"Current focus: {current_focus}\n"
+        f"Guidance headline: {guidance_headline}\n"
+        f"Recommended next action: {recommended_next_action}\n\n"
+        "Suggested checks:\n"
+        f"{checks_block}\n\n"
+        "Safety constraints:\n"
+        "- Do not modify unrelated files.\n"
+        "- Report findings before making changes unless explicitly asked.\n"
+        "- Preserve existing architecture.\n"
+        "- Keep changes minimal."
+    )
 
     return payload
 

@@ -32,6 +32,13 @@
       padding: 16px;
     }
 
+    .app-shell {
+      width: 600px;
+      max-width: 100%;
+      display: grid;
+      gap: 12px;
+    }
+
     .frame {
       width: 600px;
       height: 600px;
@@ -146,9 +153,75 @@
       font-size: 1rem;
       line-height: 1.4;
     }
+
+    .prompt-panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #0a0e13 0%, #070a0f 100%);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .prompt-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .prompt-title {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .copy-btn {
+      border: 1px solid var(--line);
+      background: #101721;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .copy-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .prompt-text {
+      width: 100%;
+      min-height: 170px;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #05090f;
+      color: var(--text);
+      padding: 10px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    .prompt-status {
+      color: var(--muted);
+      font-size: 0.74rem;
+      min-height: 1.1em;
+    }
+
+    @media (max-width: 768px) {
+      .prompt-panel {
+        display: none;
+      }
+    }
   </style>
 </head>
 <body>
+  <div class="app-shell">
   <main class="frame" aria-live="polite">
     <section>
       <div class="label">Title</div>
@@ -178,6 +251,16 @@
     </section>
   </main>
 
+  <section class="prompt-panel" aria-live="polite">
+    <div class="prompt-header">
+      <span class="prompt-title">Desktop Prompt Panel</span>
+      <button id="copy_prompt_btn" class="copy-btn" type="button">Copy Prompt</button>
+    </div>
+    <textarea id="ai_prompt_text" class="prompt-text" readonly>Prompt unavailable</textarea>
+    <div id="prompt_copy_status" class="prompt-status"></div>
+  </section>
+  </div>
+
   <script>
     const _currentHost = window.location.hostname;
     const _apiHost = (!_currentHost || _currentHost === "localhost") ? "127.0.0.1" : _currentHost;
@@ -199,6 +282,9 @@
     const updatedEl = document.getElementById("updated");
     const activeFileLineEl = document.getElementById("active_file_line");
     const debugLineEl = document.getElementById("debug_line");
+    const aiPromptTextEl = document.getElementById("ai_prompt_text");
+    const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
+    const promptCopyStatusEl = document.getElementById("prompt_copy_status");
 
     function renderActiveFileContext(data) {
       if (!activeFileLineEl) {
@@ -217,6 +303,54 @@
       const language = normalize(display.language, "Language: unknown");
       const dirty = normalize(display.dirty, "Dirty: false");
       activeFileLineEl.textContent = `${currentFile} | ${language} | ${dirty}`;
+    }
+
+    function renderAiPrompt(data) {
+      if (!aiPromptTextEl || !copyPromptBtnEl) {
+        return;
+      }
+
+      const prompt = data && typeof data.ai_prompt === "string" && data.ai_prompt.trim()
+        ? data.ai_prompt.trim()
+        : "Prompt unavailable";
+
+      aiPromptTextEl.value = prompt;
+      copyPromptBtnEl.disabled = prompt === "Prompt unavailable";
+      if (promptCopyStatusEl) {
+        promptCopyStatusEl.textContent = "";
+      }
+    }
+
+    async function copyPromptToClipboard() {
+      if (!aiPromptTextEl || !promptCopyStatusEl) {
+        return;
+      }
+
+      const text = aiPromptTextEl.value || "";
+      if (!text || text === "Prompt unavailable") {
+        promptCopyStatusEl.textContent = "Prompt unavailable";
+        return;
+      }
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          aiPromptTextEl.focus();
+          aiPromptTextEl.select();
+          document.execCommand("copy");
+          aiPromptTextEl.setSelectionRange(0, 0);
+        }
+        promptCopyStatusEl.textContent = "Prompt copied";
+      } catch (_err) {
+        promptCopyStatusEl.textContent = "Copy failed";
+      }
+    }
+
+    if (copyPromptBtnEl) {
+      copyPromptBtnEl.addEventListener("click", () => {
+        copyPromptToClipboard();
+      });
     }
 
     function updateDebugLine(lastSuccessText = "never") {
@@ -355,6 +489,7 @@
         const data = await response.json();
         updateTimestamp();
         renderActiveFileContext(data);
+        renderAiPrompt(data);
         const key = _payloadKey(data);
         if (key === _lastPayloadKey) { return; }
         _lastPayloadKey = key;
@@ -391,6 +526,7 @@
       } catch (_err) {
         _lastPayloadKey = null;
         renderActiveFileContext(null);
+        renderAiPrompt(null);
         connectionEl.textContent = "Waiting for API";
         updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
         setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`);
