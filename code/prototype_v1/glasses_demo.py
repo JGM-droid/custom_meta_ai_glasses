@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import json
+import os
+import re
 import subprocess
 import sys
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent.parent
+PROJECT_DOTENV_PATH = PROJECT_ROOT / ".env"
 RESULTS_DIR = BASE_DIR / "results"
 CODING_CONTEXT_SCRIPT = BASE_DIR / "coding_context_pack.py"
 RESUME_NOW_SCRIPT = BASE_DIR / "resume_now.py"
@@ -24,6 +31,17 @@ PROJECT_MEMORY_PATH = PROJECT_ROOT / "AGENTS.md"
 PROJECT_PROGRESS_PATH = RESULTS_DIR / "project_progress.json"
 TASK_STATE_PATH = RESULTS_DIR / "task_state.json"
 TASK_COMPLETION_PATH = RESULTS_DIR / "task_completion.json"
+CHATGPT_CONTEXT_PAYLOAD_PATH = RESULTS_DIR / "chatgpt_context_payload.json"
+GUIDANCE_RESPONSE_PATH = RESULTS_DIR / "guidance_response.json"
+CHATGPT_REQUEST_PATH = RESULTS_DIR / "chatgpt_request.json"
+CHATGPT_RESPONSE_RAW_PATH = RESULTS_DIR / "chatgpt_response_raw.json"
+
+# Load project-root environment variables early so OpenAI settings are available
+# before any guidance request logic executes.
+try:
+    load_dotenv(dotenv_path=PROJECT_DOTENV_PATH, override=False)
+except Exception:
+    pass
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -130,6 +148,14 @@ MILESTONE_SEQUENCE = [
 DEFAULT_CURRENT_MILESTONE = "V8.6 Task Continuity"
 
 VALID_TASK_COMPLETION_STATUSES = {"completed", "in_progress", "blocked", "unknown"}
+VALID_REASON_CODES = {
+    "milestone_validation_passed",
+    "terminal_error_blocker",
+    "active_task_no_completion_evidence",
+    "weak_context",
+    "stale_project_memory",
+    "git_changes_need_review",
+}
 
 ARCHITECTURE_RELATIONSHIPS: dict[str, dict[str, list[str]]] = {
     "active_editor_context.py": {
@@ -621,6 +647,15 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
     completion_evidence_text = "; ".join([str(item).strip() for item in completion_evidence if str(item).strip()])
     if not completion_evidence_text:
         completion_evidence_text = "No completion evidence available"
+    reason_code = _as_text(payload.get("reason_code"), fallback="weak_context")
+    evidence_source = _as_text(payload.get("evidence_source"), fallback="none")
+    evidence_timestamp = _as_text(payload.get("evidence_timestamp"), fallback="unknown")
+    evidence_confidence = payload.get("evidence_confidence", 0.0)
+    try:
+        evidence_confidence_value = float(evidence_confidence)
+    except (TypeError, ValueError):
+        evidence_confidence_value = 0.0
+    evidence_confidence_text = f"{max(0.0, min(1.0, evidence_confidence_value)):.2f}"
 
     project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
     current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
@@ -656,6 +691,10 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
         f"Decision reasoning: {decision_reason}\n"
         f"Confidence percentage: {confidence_pct}%\n\n"
         f"Task completion status: {completion_status}\n"
+        f"Reason code: {reason_code}\n"
+        f"Evidence source: {evidence_source}\n"
+        f"Evidence timestamp: {evidence_timestamp}\n"
+        f"Evidence confidence: {evidence_confidence_text}\n"
         f"Completion evidence: {completion_evidence_text}\n"
         f"{status_guidance}\n\n"
         f"{objective_line}\n\n"
@@ -667,12 +706,379 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
     )
 
 
-def _detect_task_completion(payload: dict[str, Any]) -> tuple[str, list[str], str]:
+def _build_chatgpt_prompt_template() -> str:
+    return (
+        "You are the project guidance engine for Custom Meta AI Glasses.\n"
+        "Use the provided context to produce concise, evidence-backed engineering guidance.\n\n"
+        "Answer all of the following:\n"
+        "1. What is the user currently working on?\n"
+        "2. What was most recently completed?\n"
+        "3. What is the highest-priority next step?\n"
+        "4. Why is it the highest priority?\n"
+        "5. What validation should occur next?\n"
+        "6. Is the user blocked?\n"
+        "7. If blocked, what should be fixed first?\n"
+    )
+
+
+def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict[str, str]) -> dict[str, Any]:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
+    workflow_evidence = payload.get("workflow_evidence") if isinstance(payload.get("workflow_evidence"), dict) else {}
+
+    coding_context = _safe_load_json(CODING_CONTEXT_OUTPUT)
+    git_intelligence = coding_context.get("git_intelligence") if isinstance(coding_context.get("git_intelligence"), dict) else {}
+    terminal_context = _safe_load_json(TERMINAL_ERROR_OUTPUT)
+
+    decision_factors = payload.get("decision_factors") if isinstance(payload.get("decision_factors"), list) else []
+
+    return {
+        "active_file": {
+            "active_file_name": _as_text(active_file.get("active_file_name"), fallback=""),
+            "active_file_path": _as_text(active_file.get("active_file_path"), fallback=""),
+            "language_id": _as_text(active_file.get("language_id"), fallback=""),
+            "is_dirty": bool(active_file.get("is_dirty", False)),
+        },
+        "current_task": _as_text(task_tracking.get("current_task"), fallback="General development"),
+        "task_completion_status": _as_text(payload.get("task_completion_status"), fallback="unknown"),
+        "completion_evidence": [str(item).strip() for item in payload.get("completion_evidence", []) if str(item).strip()] if isinstance(payload.get("completion_evidence"), list) else [],
+        "reason_code": _as_text(payload.get("reason_code"), fallback="weak_context"),
+        "project_progress": project_progress,
+        "architecture_context": architecture_context,
+        "workflow_evidence": workflow_evidence,
+        "git_intelligence": git_intelligence,
+        "terminal_context": terminal_context,
+        "decision_confidence": float(payload.get("decision_confidence", 0.0) or 0.0),
+        "decision_factors": [str(item).strip() for item in decision_factors if str(item).strip()],
+        "prompt_mode": _as_text(payload.get("prompt_mode"), fallback="file_development"),
+        "project_memory": {
+            "project_name": _as_text(project_memory.get("project_name"), fallback=REPO_NAME),
+            "architecture": _as_text(project_memory.get("architecture"), fallback="Architecture summary unavailable"),
+            "milestone": _as_text(project_memory.get("milestone"), fallback="Milestone unavailable"),
+        },
+        "chatgpt_prompt_template": _build_chatgpt_prompt_template(),
+    }
+
+
+def _build_mock_chatgpt_guidance_response(payload: dict[str, Any]) -> dict[str, Any]:
+    status = _as_text(payload.get("task_completion_status"), fallback="unknown").lower()
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="No decision reason available")
+    current_task = _as_text(
+        (payload.get("task_tracking") or {}).get("current_task") if isinstance(payload.get("task_tracking"), dict) else "",
+        fallback=_as_text(payload.get("current_focus"), fallback="General development"),
+    )
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    next_milestone = _as_text(project_progress.get("current_milestone"), fallback="next milestone")
+    recommended_next_step = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
+
+    blocked = status == "blocked"
+
+    if blocked:
+        summary = "User is blocked by a terminal error and needs blocker resolution first."
+        recommended_next_step = "Resolve the terminal error and re-run the failing command before continuing implementation."
+        reasoning = "Terminal evidence has highest priority and indicates an active blocker."
+        validation_steps = [
+            "Re-run the previously failing command and confirm it exits with code 0.",
+            "Refresh context and verify task_completion_status is no longer blocked.",
+            "Run targeted checks for the active file after blocker resolution.",
+        ]
+    elif status == "completed":
+        summary = f"Current milestone work appears complete; move to {next_milestone}."
+        recommended_next_step = f"Advance to {next_milestone} and begin the first implementation step."
+        reasoning = "Milestone completion evidence indicates the current workstream is complete and should advance."
+        validation_steps = [
+            "Confirm milestone advancement in project_progress.json.",
+            "Define the first concrete task for the new milestone.",
+            "Run a smoke validation after the first milestone change.",
+        ]
+    elif status == "in_progress":
+        summary = f"User is actively working on {current_task}."
+        recommended_next_step = "Complete the current recommended task step before starting a new milestone."
+        reasoning = "Active task evidence exists, but completion evidence is not yet present."
+        validation_steps = [
+            "Complete the next_recommended_step for the active task.",
+            "Run focused checks for the active file workflow.",
+            "Capture completion evidence for milestone advancement.",
+        ]
+    else:
+        summary = "Context is weak; gather stronger signals before changing milestones."
+        recommended_next_step = "Re-establish active task context and collect fresh workflow evidence."
+        reasoning = "No strong completion or blocker signals were available."
+        validation_steps = [
+            "Confirm active file and task tracking signals are present.",
+            "Refresh context fusion and verify workflow evidence fields.",
+            "Re-run decision engine with updated signals.",
+        ]
+
+    confidence = float(payload.get("decision_confidence", 0.0) or 0.0)
+    confidence = max(0.0, min(1.0, confidence))
+
+    return {
+        "summary": summary,
+        "recommended_next_step": recommended_next_step,
+        "reasoning": f"{reasoning} {decision_reason}".strip(),
+        "validation_steps": validation_steps,
+        "confidence": confidence,
+        "blocked": blocked,
+    }
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", stripped)
+    if not match:
+        return None
+
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _normalize_guidance_response(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict):
+        return None
+
+    summary = _as_text(candidate.get("summary"), fallback="")
+    recommended_next_step = _as_text(candidate.get("recommended_next_step"), fallback="")
+    reasoning = _as_text(candidate.get("reasoning"), fallback="")
+    validation_steps_raw = candidate.get("validation_steps") if isinstance(candidate.get("validation_steps"), list) else []
+    validation_steps = [str(item).strip() for item in validation_steps_raw if str(item).strip()]
+
+    confidence_raw = candidate.get("confidence", 0.0)
+    try:
+        confidence = float(confidence_raw)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    blocked = bool(candidate.get("blocked", False))
+
+    if not summary or not recommended_next_step or not reasoning:
+        return None
+
+    return {
+        "summary": summary,
+        "recommended_next_step": recommended_next_step,
+        "reasoning": reasoning,
+        "validation_steps": validation_steps,
+        "confidence": confidence,
+        "blocked": blocked,
+    }
+
+
+def _build_chatgpt_request_payload(chatgpt_context_payload: dict[str, Any]) -> dict[str, Any]:
+    model = _as_text(os.getenv("OPENAI_MODEL"), fallback="gpt-4o-mini")
+    prompt_template = _as_text(chatgpt_context_payload.get("chatgpt_prompt_template"), fallback="")
+
+    user_content = (
+        f"{prompt_template}\n\n"
+        "Return JSON only using this exact schema:\n"
+        "{\n"
+        '  "summary": "",\n'
+        '  "recommended_next_step": "",\n'
+        '  "reasoning": "",\n'
+        '  "validation_steps": [],\n'
+        '  "confidence": 0.0,\n'
+        '  "blocked": false\n'
+        "}\n\n"
+        "Context payload JSON:\n"
+        f"{json.dumps(chatgpt_context_payload, ensure_ascii=False, indent=2)}"
+    )
+
+    return {
+        "model": model,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an engineering workflow guidance engine. Respond with valid JSON only.",
+            },
+            {
+                "role": "user",
+                "content": user_content,
+            },
+        ],
+    }
+
+
+def _request_openai_guidance(chatgpt_request_payload: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    api_key = _as_text(os.getenv("OPENAI_API_KEY"), fallback="")
+    if not api_key:
+        return None, {
+            "status": "skipped_no_api_key",
+            "message": "OPENAI_API_KEY was not set",
+        }
+
+    request_body = json.dumps(chatgpt_request_payload, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        url="https://api.openai.com/v1/chat/completions",
+        method="POST",
+        data=request_body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+    )
+
+    try:
+        with urlopen(request, timeout=45) as response:
+            response_text = response.read().decode("utf-8")
+    except HTTPError as exc:
+        raw_text = ""
+        try:
+            raw_text = exc.read().decode("utf-8")
+        except Exception:
+            raw_text = ""
+        return None, {
+            "status": "http_error",
+            "http_status": exc.code,
+            "error": _as_text(raw_text, fallback=str(exc)),
+        }
+    except URLError as exc:
+        return None, {
+            "status": "network_error",
+            "error": _as_text(getattr(exc, "reason", str(exc)), fallback=str(exc)),
+        }
+    except Exception as exc:
+        return None, {
+            "status": "unexpected_error",
+            "error": str(exc),
+        }
+
+    try:
+        parsed = json.loads(response_text)
+    except json.JSONDecodeError:
+        return None, {
+            "status": "invalid_json_response",
+            "raw_text": response_text,
+        }
+
+    if not isinstance(parsed, dict):
+        return None, {
+            "status": "invalid_response_shape",
+            "raw": parsed,
+        }
+
+    choices = parsed.get("choices") if isinstance(parsed.get("choices"), list) else []
+    if not choices:
+        return None, {
+            "status": "missing_choices",
+            "raw": parsed,
+        }
+
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content_text = _as_text(message.get("content"), fallback="")
+    parsed_content = _extract_json_object(content_text)
+    if parsed_content is None:
+        return None, {
+            "status": "content_parse_failed",
+            "raw": parsed,
+        }
+
+    normalized = _normalize_guidance_response(parsed_content)
+    if normalized is None:
+        return None, {
+            "status": "schema_validation_failed",
+            "parsed_content": parsed_content,
+            "raw": parsed,
+        }
+
+    return normalized, {
+        "status": "ok",
+        "raw": parsed,
+    }
+
+
+def _generate_guidance_response(payload: dict[str, Any], chatgpt_context_payload: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    mock_response = _build_mock_chatgpt_guidance_response(payload)
+    chatgpt_request_payload = _build_chatgpt_request_payload(chatgpt_context_payload)
+
+    request_debug = {
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "api_key_present": bool(_as_text(os.getenv("OPENAI_API_KEY"), fallback="")),
+        "model": _as_text(chatgpt_request_payload.get("model"), fallback="gpt-4o-mini"),
+        "request": chatgpt_request_payload,
+    }
+
+    guidance_response, response_debug = _request_openai_guidance(chatgpt_request_payload)
+    if guidance_response is None:
+        return mock_response, "fallback_mock", {
+            "request": request_debug,
+            "response": response_debug,
+            "fallback_reason": _as_text(response_debug.get("status"), fallback="unknown"),
+        }
+
+    return guidance_response, "openai", {
+        "request": request_debug,
+        "response": response_debug,
+    }
+
+
+def _detect_task_completion(payload: dict[str, Any], project_memory: dict[str, str]) -> dict[str, Any]:
     guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
     guidance_source = _as_text(guidance.get("source"), fallback="").lower()
+    workflow_evidence = payload.get("workflow_evidence") if isinstance(payload.get("workflow_evidence"), dict) else {}
+    signal_freshness = payload.get("signal_freshness") if isinstance(payload.get("signal_freshness"), dict) else {}
+
+    evidence_timestamp = _as_text(
+        signal_freshness.get("context_fusion_generated_at"),
+        fallback=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+    validation_evidence_available = bool(payload.get("validation_evidence_available", False))
+    terminal_evidence_available = bool(payload.get("terminal_evidence_available", False))
+    git_evidence_available = bool(payload.get("git_evidence_available", False))
+
+    evidence_source_parts: list[str] = []
+    if terminal_evidence_available:
+        evidence_source_parts.append("terminal_error_context")
+    if validation_evidence_available:
+        evidence_source_parts.append("validation_signals")
+    if git_evidence_available:
+        evidence_source_parts.append("git_intelligence")
+    if _as_text(workflow_evidence.get("selected_source"), fallback=""):
+        evidence_source_parts.append(_as_text(workflow_evidence.get("selected_source"), fallback=""))
+    evidence_source = ",".join(dict.fromkeys(evidence_source_parts)) if evidence_source_parts else "none"
+
     has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
+    completion_evidence: list[str] = []
+
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    runtime_milestone = _normalize_milestone_name(_as_text(project_progress.get("current_milestone"), fallback=""))
+    memory_milestone = _normalize_milestone_name(_as_text(project_memory.get("milestone"), fallback=""))
+    stale_memory = bool(runtime_milestone and memory_milestone and runtime_milestone != memory_milestone)
+    if stale_memory:
+        completion_evidence.append(
+            f"stale_project_memory: AGENTS milestone {memory_milestone} differs from runtime milestone {runtime_milestone}."
+        )
+
     if has_terminal_error:
-        return "blocked", ["Terminal error context is active"], "blocked by terminal error"
+        completion_evidence.append("Terminal error context is active")
+        return {
+            "task_completion_status": "blocked",
+            "completion_evidence": completion_evidence,
+            "reason_code": "terminal_error_blocker" if not stale_memory else "stale_project_memory",
+            "evidence_source": evidence_source or "terminal_error_context",
+            "evidence_timestamp": evidence_timestamp,
+            "evidence_confidence": 0.98,
+            "additional_reason_codes": ["terminal_error_blocker"],
+        }
 
     active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
@@ -681,8 +1087,7 @@ def _detect_task_completion(payload: dict[str, Any]) -> tuple[str, list[str], st
     decision_name = _as_text(payload.get("next_step_decision"), fallback="")
     decision_reason = _as_text(payload.get("decision_reason"), fallback="").lower()
 
-    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
-    current_milestone = _normalize_milestone_name(_as_text(project_progress.get("current_milestone"), fallback=""))
+    current_milestone = runtime_milestone
 
     previous_completion = _safe_load_json(TASK_COMPLETION_PATH)
     recent_validation = previous_completion.get("recent_validation") if isinstance(previous_completion.get("recent_validation"), dict) else {}
@@ -690,25 +1095,62 @@ def _detect_task_completion(payload: dict[str, Any]) -> tuple[str, list[str], st
 
     payload_milestone = _normalize_milestone_name(_as_text(payload.get("milestone_passed"), fallback=""))
 
-    completion_evidence: list[str] = []
     if current_milestone and validation_milestone and validation_milestone == current_milestone:
         completion_evidence.append(f"Validation evidence indicates milestone passed: {current_milestone}")
     if current_milestone and payload_milestone and payload_milestone == current_milestone:
         completion_evidence.append(f"Payload indicates milestone passed: {current_milestone}")
     if current_milestone and any(token in decision_reason for token in ["milestone passed", "validation passed", "verified complete"]):
         completion_evidence.append(f"Decision reason includes completion evidence for {current_milestone}")
-
     if completion_evidence:
-        return "completed", completion_evidence, "completed milestone evidence found"
+        return {
+            "task_completion_status": "completed",
+            "completion_evidence": completion_evidence,
+            "reason_code": "milestone_validation_passed" if not stale_memory else "stale_project_memory",
+            "evidence_source": evidence_source or "validation_signals",
+            "evidence_timestamp": evidence_timestamp,
+            "evidence_confidence": 0.9,
+            "additional_reason_codes": ["milestone_validation_passed"],
+        }
+
+    git_risk = _as_text(workflow_evidence.get("git_risk_level"), fallback="low").lower()
+    if git_evidence_available and git_risk in {"medium", "high"}:
+        completion_evidence.append(f"Git risk level {git_risk} requires review before completion can be asserted")
+        return {
+            "task_completion_status": "in_progress",
+            "completion_evidence": completion_evidence,
+            "reason_code": "git_changes_need_review" if not stale_memory else "stale_project_memory",
+            "evidence_source": evidence_source or "git_intelligence",
+            "evidence_timestamp": evidence_timestamp,
+            "evidence_confidence": 0.82,
+            "additional_reason_codes": ["git_changes_need_review"],
+        }
 
     has_active_context = bool(active_file_name) or bool(current_task)
     if has_active_context:
         in_progress_reason = "active task present without completion evidence"
         if decision_name:
             in_progress_reason = f"{in_progress_reason}; decision={decision_name}"
-        return "in_progress", [in_progress_reason], in_progress_reason
+        completion_evidence.append(in_progress_reason)
+        return {
+            "task_completion_status": "in_progress",
+            "completion_evidence": completion_evidence,
+            "reason_code": "active_task_no_completion_evidence" if not stale_memory else "stale_project_memory",
+            "evidence_source": evidence_source or "active_task_context",
+            "evidence_timestamp": evidence_timestamp,
+            "evidence_confidence": 0.72,
+            "additional_reason_codes": ["active_task_no_completion_evidence"],
+        }
 
-    return "unknown", ["insufficient active file/task context"], "context too weak"
+    completion_evidence.append("insufficient active file/task context")
+    return {
+        "task_completion_status": "unknown",
+        "completion_evidence": completion_evidence,
+        "reason_code": "weak_context" if not stale_memory else "stale_project_memory",
+        "evidence_source": evidence_source or "none",
+        "evidence_timestamp": evidence_timestamp,
+        "evidence_confidence": 0.45,
+        "additional_reason_codes": ["weak_context"],
+    }
 
 
 def _advance_project_progress_if_completed(progress: dict[str, str], status: str, evidence: list[str]) -> dict[str, str]:
@@ -743,10 +1185,13 @@ def _advance_project_progress_if_completed(progress: dict[str, str], status: str
     return updated
 
 
-def _apply_completion_to_decision(payload: dict[str, Any], status: str, evidence: list[str], reason: str) -> None:
+def _apply_completion_to_decision(payload: dict[str, Any], assessment: dict[str, Any]) -> None:
+    status = _as_text(assessment.get("task_completion_status"), fallback="unknown")
+    reason_code = _as_text(assessment.get("reason_code"), fallback="weak_context")
+
     if status == "blocked":
         payload["next_step_decision"] = "fix_error"
-        payload["decision_reason"] = f"Task is blocked: {reason}."
+        payload["decision_reason"] = "Task is blocked by terminal error evidence and must be resolved before implementation continues."
         return
 
     if status == "completed":
@@ -760,6 +1205,11 @@ def _apply_completion_to_decision(payload: dict[str, Any], status: str, evidence
             payload["task_tracking"] = task_tracking
         return
 
+    if reason_code == "git_changes_need_review":
+        payload["next_step_decision"] = "review_git"
+        payload["decision_reason"] = "Git evidence indicates medium/high change risk, so review changes before continuing implementation."
+        return
+
     if status == "in_progress" and _as_text(payload.get("next_step_decision"), fallback="") == "continue_implementation":
         payload["next_step_decision"] = "complete_current_task"
         payload["decision_reason"] = "Active task is in progress with no completion evidence yet; complete the current recommended step first."
@@ -768,12 +1218,36 @@ def _apply_completion_to_decision(payload: dict[str, Any], status: str, evidence
     if status == "unknown":
         payload["decision_reason"] = f"{_as_text(payload.get('decision_reason'), fallback='') or 'No decision reason available'} Context strength is low, so task completion status remains unknown."
 
+    if reason_code == "stale_project_memory":
+        payload["decision_reason"] = f"{payload['decision_reason']} Runtime progress remains source of truth because AGENTS milestone is stale."
 
-def _write_task_completion(status: str, evidence: list[str], payload: dict[str, Any]) -> None:
+
+def _write_task_completion(assessment: dict[str, Any], payload: dict[str, Any]) -> None:
+    status = _as_text(assessment.get("task_completion_status"), fallback="unknown")
     normalized_status = status if status in VALID_TASK_COMPLETION_STATUSES else "unknown"
+    reason_code = _as_text(assessment.get("reason_code"), fallback="weak_context")
+    normalized_reason_code = reason_code if reason_code in VALID_REASON_CODES else "weak_context"
+
+    evidence = assessment.get("completion_evidence") if isinstance(assessment.get("completion_evidence"), list) else []
+    evidence_source = _as_text(assessment.get("evidence_source"), fallback="none")
+    evidence_timestamp = _as_text(
+        assessment.get("evidence_timestamp"),
+        fallback=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    evidence_confidence_raw = assessment.get("evidence_confidence", 0.0)
+    try:
+        evidence_confidence = float(evidence_confidence_raw)
+    except (TypeError, ValueError):
+        evidence_confidence = 0.0
+    evidence_confidence = max(0.0, min(1.0, evidence_confidence))
+
     progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
     record = {
         "task_completion_status": normalized_status,
+        "reason_code": normalized_reason_code,
+        "evidence_source": evidence_source,
+        "evidence_timestamp": evidence_timestamp,
+        "evidence_confidence": evidence_confidence,
         "completion_evidence": [str(item).strip() for item in evidence if str(item).strip()],
         "current_milestone": _as_text(progress.get("current_milestone"), fallback=""),
         "last_completed_milestone": _as_text(progress.get("last_completed_milestone"), fallback=""),
@@ -978,11 +1452,12 @@ def _load_project_progress(project_memory: dict[str, str]) -> dict[str, str]:
     current = DEFAULT_CURRENT_MILESTONE
     current_index = _milestone_index(current)
 
-    for candidate in [stored_current, memory_current]:
-        candidate_index = _milestone_index(candidate)
-        if candidate_index > current_index:
-            current = candidate
-            current_index = candidate_index
+    if stored_current:
+        current = stored_current
+        current_index = _milestone_index(current)
+    elif memory_current:
+        current = memory_current
+        current_index = _milestone_index(current)
 
     if current_index < 0:
         current = DEFAULT_CURRENT_MILESTONE
@@ -1105,6 +1580,7 @@ def _select_recommended_prompt_type(payload: dict[str, Any]) -> str:
 
 def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
+    fusion_payload = _safe_load_json(CONTEXT_FUSION_OUTPUT)
     active_file_available, active_file = _load_active_file_context()
 
     payload["active_file_available"] = active_file_available
@@ -1129,6 +1605,12 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     if not payload["suggested_checks"]:
         payload["suggested_checks"] = list(GENERIC_FILE_FOCUS["suggested_checks"])
 
+    payload["workflow_evidence"] = fusion_payload.get("workflow_evidence") if isinstance(fusion_payload.get("workflow_evidence"), dict) else {}
+    payload["signal_freshness"] = fusion_payload.get("signal_freshness") if isinstance(fusion_payload.get("signal_freshness"), dict) else {}
+    payload["validation_evidence_available"] = bool(fusion_payload.get("validation_evidence_available", False))
+    payload["terminal_evidence_available"] = bool(fusion_payload.get("terminal_evidence_available", False))
+    payload["git_evidence_available"] = bool(fusion_payload.get("git_evidence_available", False))
+
     project_memory = _load_project_memory_summary()
     payload["project_progress"] = _load_project_progress(project_memory)
     payload["architecture_context"] = _build_architecture_context(payload)
@@ -1138,11 +1620,22 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload["next_step_decision"] = decision
     payload["decision_reason"] = reason
 
-    completion_status, completion_evidence, completion_reason = _detect_task_completion(payload)
+    completion_assessment = _detect_task_completion(payload, project_memory)
+    completion_status = _as_text(completion_assessment.get("task_completion_status"), fallback="unknown")
+    completion_evidence = completion_assessment.get("completion_evidence") if isinstance(completion_assessment.get("completion_evidence"), list) else []
     payload["project_progress"] = _advance_project_progress_if_completed(payload["project_progress"], completion_status, completion_evidence)
-    payload["task_completion_status"] = completion_status
-    payload["completion_evidence"] = completion_evidence
-    _apply_completion_to_decision(payload, completion_status, completion_evidence, completion_reason)
+    completion_assessment["completion_evidence"] = completion_evidence
+    payload.update(
+        {
+            "task_completion_status": completion_status,
+            "completion_evidence": completion_evidence,
+            "reason_code": _as_text(completion_assessment.get("reason_code"), fallback="weak_context"),
+            "evidence_source": _as_text(completion_assessment.get("evidence_source"), fallback="none"),
+            "evidence_timestamp": _as_text(completion_assessment.get("evidence_timestamp"), fallback=""),
+            "evidence_confidence": float(completion_assessment.get("evidence_confidence", 0.0) or 0.0),
+        }
+    )
+    _apply_completion_to_decision(payload, completion_assessment)
 
     confidence, factors = _compute_decision_confidence(payload, _as_text(payload.get("next_step_decision"), fallback=decision))
     payload["decision_confidence"] = confidence
@@ -1150,8 +1643,30 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload["recommended_prompt_type"] = _select_recommended_prompt_type(payload)
     payload["prompt_library"] = _build_prompt_library(payload, project_memory)
     payload["actionable_prompt"] = _build_actionable_prompt(payload, project_memory)
+
+    chatgpt_context_payload = _build_chatgpt_context_payload(payload, project_memory)
+    guidance_response, guidance_source, openai_debug = _generate_guidance_response(payload, chatgpt_context_payload)
+    payload["guidance_response"] = guidance_response
+    payload["guidance_source"] = guidance_source
+    payload["recommended_next_action"] = _as_text(
+        guidance_response.get("recommended_next_step"),
+        fallback=_as_text(payload.get("recommended_next_action"), fallback="Continue current implementation."),
+    )
+    guidance_priority = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    if guidance_priority:
+        guidance_priority["headline"] = _as_text(guidance_priority.get("headline"), fallback="ChatGPT Guidance")
+        guidance_priority["recommended_action"] = payload["recommended_next_action"]
+        guidance_priority["message"] = _as_text(guidance_response.get("summary"), fallback="Guidance generated from mock ChatGPT layer")
+        payload["guidance_priority"] = guidance_priority
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    CHATGPT_CONTEXT_PAYLOAD_PATH.write_text(json.dumps(chatgpt_context_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    GUIDANCE_RESPONSE_PATH.write_text(json.dumps(guidance_response, ensure_ascii=False, indent=2), encoding="utf-8")
+    CHATGPT_REQUEST_PATH.write_text(json.dumps(openai_debug.get("request", {}), ensure_ascii=False, indent=2), encoding="utf-8")
+    CHATGPT_RESPONSE_RAW_PATH.write_text(json.dumps(openai_debug.get("response", {}), ensure_ascii=False, indent=2), encoding="utf-8")
+
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
-    _write_task_completion(payload["task_completion_status"], payload["completion_evidence"], payload)
+    _write_task_completion(completion_assessment, payload)
 
     return payload
 
