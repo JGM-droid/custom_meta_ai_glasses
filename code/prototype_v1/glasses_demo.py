@@ -398,6 +398,12 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
     )
     next_step_decision = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
     decision_reason = _as_text(payload.get("decision_reason"), fallback="No explicit decision reason available.")
+    decision_confidence = float(payload.get("decision_confidence", 0.0) or 0.0)
+    decision_confidence_text = f"{max(0.0, min(1.0, decision_confidence)) * 100:.0f}%"
+    decision_factors = payload.get("decision_factors") if isinstance(payload.get("decision_factors"), list) else []
+    decision_factors_text = "\n".join([f"- {str(item).strip()}" for item in decision_factors if str(item).strip()])
+    if not decision_factors_text:
+        decision_factors_text = "- Context signals unavailable"
     project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
     last_completed_milestone = _as_text(project_progress.get("last_completed_milestone"), fallback="Unknown")
     current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
@@ -428,6 +434,8 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         f"Recommended next action: {recommended_next_action}\n\n"
         f"Recommended next step: {next_step_decision}\n"
         f"Reason: {decision_reason}\n\n"
+        f"Decision Confidence:\n{decision_confidence_text}\n\n"
+        f"Reasoning Factors:\n{decision_factors_text}\n\n"
         "Project Progress:\n"
         f"- Last completed milestone: {last_completed_milestone}\n"
         f"- Current milestone: {current_milestone}\n"
@@ -731,6 +739,68 @@ def _build_task_tracking(active_file_name: str, current_focus: str) -> dict[str,
     return task_tracking
 
 
+def _compute_decision_confidence(payload: dict[str, Any], decision_name: str) -> tuple[float, list[str]]:
+    factors: list[str] = []
+
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_source = _as_text(guidance.get("source"), fallback="").lower()
+    has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
+
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    has_active_file = bool(active_file_name)
+    if has_active_file:
+        factors.append("Active file detected")
+
+    if has_terminal_error:
+        factors.append("Terminal error detected")
+        return 0.97, factors
+    factors.append("No terminal errors")
+
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    has_task = bool(_as_text(task_tracking.get("current_task"), fallback=""))
+    has_task_steps = bool(_as_text(task_tracking.get("last_completed_step"), fallback="")) and bool(
+        _as_text(task_tracking.get("next_recommended_step"), fallback="")
+    )
+    if has_task:
+        factors.append("Current task identified")
+    if has_task_steps:
+        factors.append("Clear task continuity")
+
+    architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
+    has_architecture = bool(_as_text(architecture_context.get("current_component"), fallback=""))
+    if has_architecture:
+        factors.append("Architecture context available")
+
+    prompt_mode = _as_text(payload.get("prompt_mode"), fallback="")
+    if prompt_mode:
+        factors.append("Prompt mode identified")
+
+    git_priority = "git_intelligence" in guidance_source
+    conflicting_signal = git_priority and decision_name not in {"review_git"}
+    if conflicting_signal:
+        factors.append("Conflicting signals detected")
+    else:
+        factors.append("No conflicting signals")
+
+    score = 0.52
+    if has_active_file:
+        score += 0.12
+    if has_task:
+        score += 0.1
+    if has_task_steps:
+        score += 0.08
+    if has_architecture:
+        score += 0.08
+    if prompt_mode:
+        score += 0.07
+    if not conflicting_signal:
+        score += 0.08
+
+    score = max(0.0, min(1.0, score))
+    return score, factors
+
+
 def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
     active_file_available, active_file = _load_active_file_context()
@@ -765,6 +835,9 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     decision, reason = _select_next_step_decision(payload)
     payload["next_step_decision"] = decision
     payload["decision_reason"] = reason
+    confidence, factors = _compute_decision_confidence(payload, decision)
+    payload["decision_confidence"] = confidence
+    payload["decision_factors"] = factors
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
 
     return payload
