@@ -55,14 +55,18 @@ def _load_resume_guidance() -> dict[str, str | dict[str, object]]:
 
 @app.get("/latest")
 async def latest():
-    if not LATEST_RESPONSE_JSON.exists():
+    if LATEST_RESPONSE_JSON.exists():
+        source_path = LATEST_RESPONSE_JSON
+    elif RESUME_NOW_JSON.exists():
+        source_path = RESUME_NOW_JSON
+    else:
         raise HTTPException(
             status_code=404,
-            detail="latest_response.json not found.",
+            detail="No display data available. Run glasses_demo.py or analyze an image first.",
         )
 
     try:
-        payload = json.loads(LATEST_RESPONSE_JSON.read_text(encoding="utf-8"))
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise HTTPException(
             status_code=500,
