@@ -9,6 +9,7 @@ from typing import Any
 
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BASE_DIR.parent.parent
 RESULTS_DIR = BASE_DIR / "results"
 CODING_CONTEXT_SCRIPT = BASE_DIR / "coding_context_pack.py"
 RESUME_NOW_SCRIPT = BASE_DIR / "resume_now.py"
@@ -19,6 +20,7 @@ DISPLAY_MOCK_PATH = BASE_DIR / "glasses_display_mock.html"
 TERMINAL_ERROR_OUTPUT = RESULTS_DIR / "terminal_error_context.json"
 CODING_CONTEXT_OUTPUT = RESULTS_DIR / "coding_context_pack.json"
 CONTEXT_FUSION_OUTPUT = RESULTS_DIR / "context_fusion.json"
+PROJECT_MEMORY_PATH = PROJECT_ROOT / "AGENTS.md"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -109,6 +111,53 @@ GENERIC_FILE_FOCUS = {
 }
 
 REPO_NAME = "custom_meta_ai_glasses"
+
+
+def _load_project_memory_summary() -> dict[str, str]:
+    summary = {
+        "project_name": REPO_NAME,
+        "architecture": "Architecture summary unavailable",
+        "milestone": "Milestone unavailable",
+    }
+
+    if not PROJECT_MEMORY_PATH.exists() or not PROJECT_MEMORY_PATH.is_file():
+        return summary
+
+    try:
+        text = PROJECT_MEMORY_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return summary
+
+    lines = text.splitlines()
+    architecture_lines: list[str] = []
+    in_architecture = False
+
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        lower = line.lower()
+
+        if lower == "project:" and index + 1 < len(lines):
+            summary["project_name"] = _as_text(lines[index + 1].strip(), fallback=summary["project_name"])
+
+        if lower == "current architecture:":
+            in_architecture = True
+            continue
+
+        if in_architecture:
+            if not line:
+                continue
+            if line.endswith(":") and lower != "current architecture:":
+                in_architecture = False
+                continue
+            architecture_lines.append(line)
+
+        if lower == "current milestone:" and index + 1 < len(lines):
+            summary["milestone"] = _as_text(lines[index + 1].strip(), fallback=summary["milestone"])
+
+    if architecture_lines:
+        summary["architecture"] = " ".join(architecture_lines)
+
+    return summary
 
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
@@ -303,9 +352,13 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
 
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable") if active_file_available else "unavailable"
     checks_block = "\n".join([f"- {item}" for item in payload["suggested_checks"]])
+    project_memory = _load_project_memory_summary()
 
     payload["ai_prompt"] = (
-        f"Project: {REPO_NAME}\n"
+        f"Project: {_as_text(project_memory.get('project_name'), fallback=REPO_NAME)}\n"
+        "Project Memory:\n"
+        f"- Architecture: {_as_text(project_memory.get('architecture'), fallback='Architecture summary unavailable')}\n"
+        f"- Current Milestone: {_as_text(project_memory.get('milestone'), fallback='Milestone unavailable')}\n\n"
         "Task: Provide coding guidance and next-step implementation support.\n\n"
         f"Current active file: {active_file_name}\n"
         f"Current focus: {current_focus}\n"
