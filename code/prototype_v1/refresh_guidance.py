@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import hashlib
 import importlib
 import json
 from pathlib import Path
+import argparse
+import contextlib
+import io
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -77,7 +82,12 @@ def _run_subprocess(script_name: str, args: list[str] | None = None) -> StepResu
     return StepResult(name=script_name, ok=True, method="subprocess")
 
 
-def _run_import_preferred(module_name: str, script_name: str, args: list[str] | None = None) -> StepResult:
+def _run_import_preferred(
+    module_name: str,
+    script_name: str,
+    args: list[str] | None = None,
+    suppress_output: bool = False,
+) -> StepResult:
     try:
         module = importlib.import_module(module_name)
     except Exception as exc:
@@ -104,7 +114,11 @@ def _run_import_preferred(module_name: str, script_name: str, args: list[str] | 
         return fallback
 
     try:
-        main_func()
+        if suppress_output:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                main_func()
+        else:
+            main_func()
     except Exception as exc:
         fallback = _run_subprocess(script_name, args=args)
         if fallback.ok:
@@ -152,8 +166,7 @@ def _print_summary(resume_payload: dict[str, Any], resume_updated: bool, failed_
         print("- failed steps: none")
 
 
-def main() -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+def _run_refresh_once(verbose: bool = True) -> tuple[dict[str, Any], bool, list[str], list[StepResult]]:
     before_sig = _file_signature(RESUME_NOW_PATH)
 
     pipeline: list[tuple[str, str, str, list[str]]] = [
@@ -170,26 +183,94 @@ def main() -> None:
         if step_name == "glasses_demo_auto":
             result = _run_subprocess(script_name, args=args)
         else:
-            result = _run_import_preferred(module_name, script_name, args=args)
+            result = _run_import_preferred(module_name, script_name, args=args, suppress_output=not verbose)
 
         step_results.append(StepResult(name=step_name, ok=result.ok, method=result.method, detail=result.detail))
 
         if not result.ok:
             print(f"Warning: step failed: {step_name}. {result.detail}")
             if step_name == "glasses_demo_auto":
-                _print_step_results(step_results)
-                print()
+                if verbose:
+                    _print_step_results(step_results)
+                    print()
                 print("Fatal: glasses_demo.py --auto failed. resume_now.json may be stale.")
                 raise SystemExit(1)
 
     after_sig = _file_signature(RESUME_NOW_PATH)
     resume_updated = before_sig != after_sig and after_sig[0]
-
     resume_payload = _safe_load_json(RESUME_NOW_PATH)
     failed_steps = [item.name for item in step_results if not item.ok]
 
-    _print_step_results(step_results)
-    _print_summary(resume_payload, resume_updated, failed_steps)
+    if verbose:
+        _print_step_results(step_results)
+        _print_summary(resume_payload, resume_updated, failed_steps)
+
+    return resume_payload, resume_updated, failed_steps, step_results
+
+
+def _status_fields(resume_payload: dict[str, Any]) -> tuple[str, str, str]:
+    active_file = resume_payload.get("active_file") if isinstance(resume_payload.get("active_file"), dict) else {}
+    guidance = resume_payload.get("guidance_priority") if isinstance(resume_payload.get("guidance_priority"), dict) else {}
+
+    active_file_name = str(active_file.get("active_file_name", "") or "")
+    prompt_mode = str(resume_payload.get("prompt_mode", "") or "")
+    headline = str(guidance.get("headline", "") or "")
+    return active_file_name, prompt_mode, headline
+
+
+def _print_watch_status(
+    resume_payload: dict[str, Any],
+    resume_updated: bool,
+    failed_steps: list[str],
+) -> None:
+    active_file_name, prompt_mode, headline = _status_fields(resume_payload)
+    now_text = datetime.now().strftime("%H:%M:%S")
+
+    print(f"[{now_text}]")
+    print(f"active_file={active_file_name or 'unavailable'}")
+    print(f"prompt_mode={prompt_mode or 'unavailable'}")
+    print(f"guidance={headline or 'unavailable'}")
+    print(f"resume_updated={resume_updated}")
+    if failed_steps:
+        print(f"failed_steps={','.join(failed_steps)}")
+
+
+def _watch_loop(interval_seconds: int = 5) -> None:
+    print(f"Watch mode started. Refresh interval: {interval_seconds}s. Press Ctrl+C to stop.")
+
+    previous_key: tuple[str, str, str] | None = None
+    first_cycle = True
+
+    try:
+        while True:
+            resume_payload, resume_updated, failed_steps, _ = _run_refresh_once(verbose=False)
+            current_key = _status_fields(resume_payload)
+
+            if first_cycle or current_key != previous_key:
+                _print_watch_status(resume_payload, resume_updated, failed_steps)
+                previous_key = current_key
+                first_cycle = False
+
+            time.sleep(interval_seconds)
+    except KeyboardInterrupt:
+        print("\nWatch mode stopped.")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Refresh the local guidance pipeline and resume output.")
+    parser.add_argument("--watch", action="store_true", help="Run refresh continuously every 5 seconds.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    args = _parse_args()
+
+    if args.watch:
+        _watch_loop(interval_seconds=5)
+        return
+
+    _run_refresh_once(verbose=True)
 
 
 if __name__ == "__main__":
