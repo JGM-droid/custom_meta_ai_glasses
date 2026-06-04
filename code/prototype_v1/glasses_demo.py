@@ -23,6 +23,7 @@ CONTEXT_FUSION_OUTPUT = RESULTS_DIR / "context_fusion.json"
 PROJECT_MEMORY_PATH = PROJECT_ROOT / "AGENTS.md"
 PROJECT_PROGRESS_PATH = RESULTS_DIR / "project_progress.json"
 TASK_STATE_PATH = RESULTS_DIR / "task_state.json"
+TASK_COMPLETION_PATH = RESULTS_DIR / "task_completion.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -127,6 +128,8 @@ MILESTONE_SEQUENCE = [
 ]
 
 DEFAULT_CURRENT_MILESTONE = "V8.6 Task Continuity"
+
+VALID_TASK_COMPLETION_STATUSES = {"completed", "in_progress", "blocked", "unknown"}
 
 ARCHITECTURE_RELATIONSHIPS: dict[str, dict[str, list[str]]] = {
     "active_editor_context.py": {
@@ -613,6 +616,16 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
         confidence_ratio = 0.0
     confidence_pct = int(round(max(0.0, min(1.0, confidence_ratio)) * 100))
 
+    completion_status = _as_text(payload.get("task_completion_status"), fallback="unknown").lower()
+    completion_evidence = payload.get("completion_evidence") if isinstance(payload.get("completion_evidence"), list) else []
+    completion_evidence_text = "; ".join([str(item).strip() for item in completion_evidence if str(item).strip()])
+    if not completion_evidence_text:
+        completion_evidence_text = "No completion evidence available"
+
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
+    next_milestone = _as_text(project_progress.get("suggested_next_milestone"), fallback=current_milestone)
+
     recommended_type = _as_text(payload.get("recommended_prompt_type"), fallback="implementation").lower()
     objective_map = {
         "implementation": "Objective: Produce an implementation-focused response with minimal safe code changes.",
@@ -625,6 +638,14 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
         objective_map["implementation"],
     )
 
+    status_guidance_map = {
+        "completed": f"Completion status: completed. Move to the next milestone: {next_milestone} (from {current_milestone}).",
+        "blocked": "Completion status: blocked. Focus first on resolving the blocker before implementation continues.",
+        "in_progress": "Completion status: in_progress. Focus on finishing the current next recommended step.",
+        "unknown": "Completion status: unknown. Clarify task state and gather stronger completion evidence before planning broad changes.",
+    }
+    status_guidance = status_guidance_map.get(completion_status, status_guidance_map["unknown"])
+
     return (
         f"Project name: {project_name}\n"
         f"Current active file: {current_file}\n"
@@ -634,6 +655,9 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
         f"Architecture impact: {architecture_impact}\n"
         f"Decision reasoning: {decision_reason}\n"
         f"Confidence percentage: {confidence_pct}%\n\n"
+        f"Task completion status: {completion_status}\n"
+        f"Completion evidence: {completion_evidence_text}\n"
+        f"{status_guidance}\n\n"
         f"{objective_line}\n\n"
         "Provide:\n"
         "1. Analysis\n"
@@ -641,6 +665,126 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
         "3. Validation plan\n"
         "4. Risks\n"
     )
+
+
+def _detect_task_completion(payload: dict[str, Any]) -> tuple[str, list[str], str]:
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_source = _as_text(guidance.get("source"), fallback="").lower()
+    has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
+    if has_terminal_error:
+        return "blocked", ["Terminal error context is active"], "blocked by terminal error"
+
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    current_task = _as_text(task_tracking.get("current_task"), fallback="")
+    decision_name = _as_text(payload.get("next_step_decision"), fallback="")
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="").lower()
+
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    current_milestone = _normalize_milestone_name(_as_text(project_progress.get("current_milestone"), fallback=""))
+
+    previous_completion = _safe_load_json(TASK_COMPLETION_PATH)
+    recent_validation = previous_completion.get("recent_validation") if isinstance(previous_completion.get("recent_validation"), dict) else {}
+    validation_milestone = _normalize_milestone_name(_as_text(recent_validation.get("milestone_passed"), fallback=""))
+
+    payload_milestone = _normalize_milestone_name(_as_text(payload.get("milestone_passed"), fallback=""))
+
+    completion_evidence: list[str] = []
+    if current_milestone and validation_milestone and validation_milestone == current_milestone:
+        completion_evidence.append(f"Validation evidence indicates milestone passed: {current_milestone}")
+    if current_milestone and payload_milestone and payload_milestone == current_milestone:
+        completion_evidence.append(f"Payload indicates milestone passed: {current_milestone}")
+    if current_milestone and any(token in decision_reason for token in ["milestone passed", "validation passed", "verified complete"]):
+        completion_evidence.append(f"Decision reason includes completion evidence for {current_milestone}")
+
+    if completion_evidence:
+        return "completed", completion_evidence, "completed milestone evidence found"
+
+    has_active_context = bool(active_file_name) or bool(current_task)
+    if has_active_context:
+        in_progress_reason = "active task present without completion evidence"
+        if decision_name:
+            in_progress_reason = f"{in_progress_reason}; decision={decision_name}"
+        return "in_progress", [in_progress_reason], in_progress_reason
+
+    return "unknown", ["insufficient active file/task context"], "context too weak"
+
+
+def _advance_project_progress_if_completed(progress: dict[str, str], status: str, evidence: list[str]) -> dict[str, str]:
+    if status != "completed":
+        return progress
+
+    current = _normalize_milestone_name(_as_text(progress.get("current_milestone"), fallback=""))
+    if not current:
+        return progress
+
+    previous_completion = _safe_load_json(TASK_COMPLETION_PATH)
+    if _normalize_milestone_name(_as_text(previous_completion.get("last_completed_milestone"), fallback="")) == current:
+        return progress
+
+    current_index = _milestone_index(current)
+    if current_index < 0:
+        return progress
+
+    next_index = min(current_index + 1, len(MILESTONE_SEQUENCE) - 1)
+    next_current = MILESTONE_SEQUENCE[next_index]
+    next_suggested = MILESTONE_SEQUENCE[min(next_index + 1, len(MILESTONE_SEQUENCE) - 1)]
+
+    updated = {
+        "last_completed_milestone": current,
+        "current_milestone": next_current,
+        "suggested_next_milestone": next_suggested,
+    }
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    PROJECT_PROGRESS_PATH.write_text(json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8")
+    evidence.append(f"Advanced project milestone from {current} to {next_current}")
+    return updated
+
+
+def _apply_completion_to_decision(payload: dict[str, Any], status: str, evidence: list[str], reason: str) -> None:
+    if status == "blocked":
+        payload["next_step_decision"] = "fix_error"
+        payload["decision_reason"] = f"Task is blocked: {reason}."
+        return
+
+    if status == "completed":
+        progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+        next_milestone = _as_text(progress.get("current_milestone"), fallback="next milestone")
+        payload["next_step_decision"] = "advance_milestone"
+        payload["decision_reason"] = f"Current milestone is complete based on evidence; proceed with {next_milestone}."
+        task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+        if task_tracking:
+            task_tracking["next_recommended_step"] = f"Start implementation for {next_milestone}"
+            payload["task_tracking"] = task_tracking
+        return
+
+    if status == "in_progress" and _as_text(payload.get("next_step_decision"), fallback="") == "continue_implementation":
+        payload["next_step_decision"] = "complete_current_task"
+        payload["decision_reason"] = "Active task is in progress with no completion evidence yet; complete the current recommended step first."
+        return
+
+    if status == "unknown":
+        payload["decision_reason"] = f"{_as_text(payload.get('decision_reason'), fallback='') or 'No decision reason available'} Context strength is low, so task completion status remains unknown."
+
+
+def _write_task_completion(status: str, evidence: list[str], payload: dict[str, Any]) -> None:
+    normalized_status = status if status in VALID_TASK_COMPLETION_STATUSES else "unknown"
+    progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+    record = {
+        "task_completion_status": normalized_status,
+        "completion_evidence": [str(item).strip() for item in evidence if str(item).strip()],
+        "current_milestone": _as_text(progress.get("current_milestone"), fallback=""),
+        "last_completed_milestone": _as_text(progress.get("last_completed_milestone"), fallback=""),
+    }
+
+    previous = _safe_load_json(TASK_COMPLETION_PATH)
+    if isinstance(previous.get("recent_validation"), dict):
+        record["recent_validation"] = previous.get("recent_validation")
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    TASK_COMPLETION_PATH.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
@@ -993,13 +1137,21 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     decision, reason = _select_next_step_decision(payload)
     payload["next_step_decision"] = decision
     payload["decision_reason"] = reason
-    confidence, factors = _compute_decision_confidence(payload, decision)
+
+    completion_status, completion_evidence, completion_reason = _detect_task_completion(payload)
+    payload["project_progress"] = _advance_project_progress_if_completed(payload["project_progress"], completion_status, completion_evidence)
+    payload["task_completion_status"] = completion_status
+    payload["completion_evidence"] = completion_evidence
+    _apply_completion_to_decision(payload, completion_status, completion_evidence, completion_reason)
+
+    confidence, factors = _compute_decision_confidence(payload, _as_text(payload.get("next_step_decision"), fallback=decision))
     payload["decision_confidence"] = confidence
     payload["decision_factors"] = factors
     payload["recommended_prompt_type"] = _select_recommended_prompt_type(payload)
     payload["prompt_library"] = _build_prompt_library(payload, project_memory)
     payload["actionable_prompt"] = _build_actionable_prompt(payload, project_memory)
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
+    _write_task_completion(payload["task_completion_status"], payload["completion_evidence"], payload)
 
     return payload
 
