@@ -132,6 +132,15 @@
       word-break: break-word;
     }
 
+    .active-file-line {
+      width: 100%;
+      opacity: 0.88;
+      font-size: 0.76rem;
+      line-height: 1.35;
+      color: var(--muted);
+      word-break: break-word;
+    }
+
     .waiting {
       color: var(--muted);
       font-size: 1rem;
@@ -164,6 +173,7 @@
     <section class="footer">
       <span id="connection">Waiting for API</span>
       <span id="updated">Last successful fetch: never</span>
+      <span id="active_file_line" class="active-file-line">Active file unavailable</span>
       <span id="debug_line" class="debug-line">Web app mode | Source: local-network-default | API: pending | Last success: never</span>
     </section>
   </main>
@@ -187,7 +197,27 @@
     const statusEl = document.getElementById("status");
     const connectionEl = document.getElementById("connection");
     const updatedEl = document.getElementById("updated");
+    const activeFileLineEl = document.getElementById("active_file_line");
     const debugLineEl = document.getElementById("debug_line");
+
+    function renderActiveFileContext(data) {
+      if (!activeFileLineEl) {
+        return;
+      }
+
+      const available = Boolean(data && data.active_file_available);
+      const display = data && typeof data.active_file_display === "object" ? data.active_file_display : null;
+
+      if (!available || !display) {
+        activeFileLineEl.textContent = "Active file unavailable";
+        return;
+      }
+
+      const currentFile = normalize(display.current_file, "Current file: unavailable");
+      const language = normalize(display.language, "Language: unknown");
+      const dirty = normalize(display.dirty, "Dirty: false");
+      activeFileLineEl.textContent = `${currentFile} | ${language} | ${dirty}`;
+    }
 
     function updateDebugLine(lastSuccessText = "never") {
       if (!debugLineEl) {
@@ -324,6 +354,7 @@
 
         const data = await response.json();
         updateTimestamp();
+        renderActiveFileContext(data);
         const key = _payloadKey(data);
         if (key === _lastPayloadKey) { return; }
         _lastPayloadKey = key;
@@ -359,6 +390,7 @@
         renderDisplay(display);
       } catch (_err) {
         _lastPayloadKey = null;
+        renderActiveFileContext(null);
         connectionEl.textContent = "Waiting for API";
         updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
         setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`);
