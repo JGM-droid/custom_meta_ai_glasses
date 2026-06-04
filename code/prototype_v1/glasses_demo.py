@@ -12,11 +12,13 @@ BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / "results"
 CODING_CONTEXT_SCRIPT = BASE_DIR / "coding_context_pack.py"
 RESUME_NOW_SCRIPT = BASE_DIR / "resume_now.py"
+CONTEXT_FUSION_SCRIPT = BASE_DIR / "context_fusion.py"
 RESUME_NOW_OUTPUT = RESULTS_DIR / "resume_now.json"
 OUTPUT_PATH = RESULTS_DIR / "glasses_demo.json"
 DISPLAY_MOCK_PATH = BASE_DIR / "glasses_display_mock.html"
 TERMINAL_ERROR_OUTPUT = RESULTS_DIR / "terminal_error_context.json"
 CODING_CONTEXT_OUTPUT = RESULTS_DIR / "coding_context_pack.json"
+CONTEXT_FUSION_OUTPUT = RESULTS_DIR / "context_fusion.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -181,6 +183,55 @@ def _build_scenario_resume_payload(scenario: str) -> dict[str, Any]:
     }
 
 
+def _active_file_defaults() -> dict[str, Any]:
+    return {
+        "active_file_name": "",
+        "active_file_path": "",
+        "language_id": "",
+        "is_dirty": False,
+        "event_type": "",
+    }
+
+
+def _load_active_file_context() -> tuple[bool, dict[str, Any]]:
+    fusion_payload = _safe_load_json(CONTEXT_FUSION_OUTPUT)
+    if not fusion_payload:
+        return False, _active_file_defaults()
+
+    if not bool(fusion_payload.get("active_file_available", False)):
+        return False, _active_file_defaults()
+
+    active_file = fusion_payload.get("active_file") if isinstance(fusion_payload.get("active_file"), dict) else {}
+    if not active_file:
+        return False, _active_file_defaults()
+
+    return True, {
+        "active_file_name": _as_text(active_file.get("active_file_name"), fallback=""),
+        "active_file_path": _as_text(active_file.get("active_file_path"), fallback=""),
+        "language_id": _as_text(active_file.get("language_id"), fallback=""),
+        "is_dirty": bool(active_file.get("is_dirty", False)),
+        "event_type": _as_text(active_file.get("event_type"), fallback=""),
+    }
+
+
+def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
+    active_file_available, active_file = _load_active_file_context()
+
+    payload["active_file_available"] = active_file_available
+    payload["active_file"] = active_file
+
+    if active_file_available and _as_text(active_file.get("active_file_name"), fallback=""):
+        payload["current_file"] = _as_text(active_file.get("active_file_name"), fallback="")
+
+    payload["active_file_display"] = {
+        "current_file": f"Current file: {_as_text(active_file.get('active_file_name'), fallback='unavailable') if active_file_available else 'unavailable'}",
+        "language": f"Language: {_as_text(active_file.get('language_id'), fallback='unknown') if active_file_available else 'unknown'}",
+        "dirty": f"Dirty: {bool(active_file.get('is_dirty', False)) if active_file_available else False}",
+    }
+    return payload
+
+
 def _build_terminal_error_resume_payload() -> dict[str, Any] | None:
     payload = _safe_load_json(TERMINAL_ERROR_OUTPUT)
     if not payload or payload.get("has_terminal_error") is not True:
@@ -250,6 +301,7 @@ def main() -> None:
     args = _parse_args()
     speak_enabled = bool(args.speak)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    _run_script(CONTEXT_FUSION_SCRIPT)
 
     if args.auto:
         candidates: list[dict[str, Any]] = []
@@ -290,7 +342,7 @@ def main() -> None:
 
         if candidates:
             selected = max(candidates, key=lambda item: _guidance_rank(item["resume_payload"]))
-            selected_resume_payload = selected["resume_payload"]
+            selected_resume_payload = _with_active_file_context(selected["resume_payload"])
 
             RESUME_NOW_OUTPUT.write_text(json.dumps(selected_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
             demo_payload = _build_demo_payload(
@@ -319,6 +371,7 @@ def main() -> None:
     if args.use_real_git:
         real_git_resume_payload = _build_git_intelligence_resume_payload()
         if real_git_resume_payload:
+            real_git_resume_payload = _with_active_file_context(real_git_resume_payload)
             RESUME_NOW_OUTPUT.write_text(json.dumps(real_git_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
             demo_payload = _build_demo_payload(
@@ -347,6 +400,7 @@ def main() -> None:
     if args.use_real_errors:
         real_error_resume_payload = _build_terminal_error_resume_payload()
         if real_error_resume_payload:
+            real_error_resume_payload = _with_active_file_context(real_error_resume_payload)
             RESUME_NOW_OUTPUT.write_text(json.dumps(real_error_resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
             demo_payload = _build_demo_payload(
@@ -373,7 +427,7 @@ def main() -> None:
         print("Source: fallback")
 
     if args.scenario:
-        resume_payload = _build_scenario_resume_payload(args.scenario)
+        resume_payload = _with_active_file_context(_build_scenario_resume_payload(args.scenario))
         RESUME_NOW_OUTPUT.write_text(json.dumps(resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
         demo_payload = _build_demo_payload(
@@ -404,6 +458,9 @@ def main() -> None:
     resume_payload = _safe_load_json(RESUME_NOW_OUTPUT)
     if not resume_payload:
         print(f"Warning: Could not load resume output from {RESUME_NOW_OUTPUT}")
+    else:
+        resume_payload = _with_active_file_context(resume_payload)
+        RESUME_NOW_OUTPUT.write_text(json.dumps(resume_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     demo_payload = _build_demo_payload(script_results, resume_payload, speak_enabled)
     OUTPUT_PATH.write_text(json.dumps(demo_payload, ensure_ascii=False, indent=2), encoding="utf-8")
