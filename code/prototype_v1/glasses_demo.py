@@ -22,6 +22,7 @@ CODING_CONTEXT_OUTPUT = RESULTS_DIR / "coding_context_pack.json"
 CONTEXT_FUSION_OUTPUT = RESULTS_DIR / "context_fusion.json"
 PROJECT_MEMORY_PATH = PROJECT_ROOT / "AGENTS.md"
 PROJECT_PROGRESS_PATH = RESULTS_DIR / "project_progress.json"
+TASK_STATE_PATH = RESULTS_DIR / "task_state.json"
 
 SCENARIO_GUIDANCE = {
     "normal": {
@@ -151,6 +152,33 @@ ARCHITECTURE_RELATIONSHIPS: dict[str, dict[str, list[str]]] = {
     "glasses_display_mock.html": {
         "upstream": ["FastAPI"],
         "downstream": ["Phone / Glasses Display"],
+    },
+}
+
+TASK_TRACKING_MAP: dict[str, dict[str, Any]] = {
+    "api.py": {
+        "current_task": "FastAPI endpoint development",
+        "last_completed_step": "Active file awareness integrated into payload",
+        "next_recommended_step": "Verify endpoint output matches payload",
+        "task_confidence": 0.92,
+    },
+    "context_fusion.py": {
+        "current_task": "Context fusion development",
+        "last_completed_step": "Active editor integration",
+        "next_recommended_step": "Validate downstream payload consumers",
+        "task_confidence": 0.9,
+    },
+    "glasses_display_mock.html": {
+        "current_task": "Display UI development",
+        "last_completed_step": "Active file context rendering",
+        "next_recommended_step": "Validate prompt panel usability",
+        "task_confidence": 0.9,
+    },
+    "ngrok_demo_launcher.py": {
+        "current_task": "Deployment workflow",
+        "last_completed_step": "Tunnel launch automation",
+        "next_recommended_step": "Verify endpoint accessibility",
+        "task_confidence": 0.88,
     },
 }
 
@@ -381,6 +409,10 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
     downstream_list = architecture_context.get("downstream_dependencies") if isinstance(architecture_context.get("downstream_dependencies"), list) else []
     upstream_text = ", ".join([str(item).strip() for item in upstream_list if str(item).strip()]) or "None"
     downstream_text = ", ".join([str(item).strip() for item in downstream_list if str(item).strip()]) or "None"
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    task_current = _as_text(task_tracking.get("current_task"), fallback="General development")
+    task_last_step = _as_text(task_tracking.get("last_completed_step"), fallback="No completed step recorded")
+    task_next_step = _as_text(task_tracking.get("next_recommended_step"), fallback="Continue current implementation")
     current_focus = _as_text(payload.get("current_focus"), fallback="General development")
     checks = payload.get("suggested_checks") if isinstance(payload.get("suggested_checks"), list) else []
     checks_block = "\n".join([f"- {str(item).strip()}" for item in checks if str(item).strip()])
@@ -404,6 +436,10 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         f"Current Component: {current_component}\n"
         f"Upstream: {upstream_text}\n"
         f"Downstream: {downstream_text}\n\n"
+        "Task Continuity:\n"
+        f"Current task: {task_current}\n"
+        f"Last completed step: {task_last_step}\n"
+        f"Next recommended step: {task_next_step}\n\n"
     )
 
     safety_block = (
@@ -674,6 +710,27 @@ def _load_project_progress(project_memory: dict[str, str]) -> dict[str, str]:
     return progress
 
 
+def _build_task_tracking(active_file_name: str, current_focus: str) -> dict[str, Any]:
+    mapping = TASK_TRACKING_MAP.get(active_file_name, {})
+
+    task_tracking = {
+        "current_task": _as_text(mapping.get("current_task"), fallback=current_focus or "General development"),
+        "last_completed_step": _as_text(
+            mapping.get("last_completed_step"),
+            fallback="Active file context and guidance payload integrated",
+        ),
+        "next_recommended_step": _as_text(
+            mapping.get("next_recommended_step"),
+            fallback="Validate the current payload and continue implementation",
+        ),
+        "task_confidence": float(mapping.get("task_confidence", 0.75) or 0.75),
+    }
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    TASK_STATE_PATH.write_text(json.dumps(task_tracking, ensure_ascii=False, indent=2), encoding="utf-8")
+    return task_tracking
+
+
 def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
     active_file_available, active_file = _load_active_file_context()
@@ -693,6 +750,7 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     file_name = _as_text(active_file.get("active_file_name"), fallback="") if active_file_available else ""
     file_focus = FILE_FOCUS_GUIDANCE.get(file_name, GENERIC_FILE_FOCUS)
     payload["current_focus"] = _as_text(file_focus.get("current_focus"), fallback=GENERIC_FILE_FOCUS["current_focus"])
+    payload["task_tracking"] = _build_task_tracking(file_name, payload["current_focus"])
 
     checks = file_focus.get("suggested_checks") if isinstance(file_focus.get("suggested_checks"), list) else []
     payload["suggested_checks"] = [str(item).strip() for item in checks if str(item).strip()]
