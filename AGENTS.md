@@ -42,6 +42,14 @@ Design Rules:
 Current Milestone:
 V8.1 Project Memory
 
+Architecture Relationships:
+- active_editor_context.py -> context_fusion.py
+- context_fusion.py -> glasses_demo.py
+- glasses_demo.py -> resume_now.json
+- resume_now.json -> FastAPI
+- FastAPI -> glasses_display_mock.html
+- glasses_display_mock.html -> Phone / Glasses Display
+
 Future Vision:
 Generate context-aware prompts that can be pasted into:
 - ChatGPT

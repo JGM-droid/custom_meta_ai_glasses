@@ -127,6 +127,33 @@ MILESTONE_SEQUENCE = [
 
 DEFAULT_CURRENT_MILESTONE = "V8.6 Task Continuity"
 
+ARCHITECTURE_RELATIONSHIPS: dict[str, dict[str, list[str]]] = {
+    "active_editor_context.py": {
+        "upstream": [],
+        "downstream": ["context_fusion.py"],
+    },
+    "context_fusion.py": {
+        "upstream": ["active_editor_context.py"],
+        "downstream": ["glasses_demo.py"],
+    },
+    "glasses_demo.py": {
+        "upstream": ["context_fusion.py"],
+        "downstream": ["resume_now.json"],
+    },
+    "resume_now.json": {
+        "upstream": ["glasses_demo.py"],
+        "downstream": ["FastAPI"],
+    },
+    "fastapi": {
+        "upstream": ["resume_now.json"],
+        "downstream": ["glasses_display_mock.html"],
+    },
+    "glasses_display_mock.html": {
+        "upstream": ["FastAPI"],
+        "downstream": ["Phone / Glasses Display"],
+    },
+}
+
 
 def _load_project_memory_summary() -> dict[str, str]:
     summary = {
@@ -261,40 +288,75 @@ def _select_next_step_decision(payload: dict[str, Any]) -> tuple[str, str]:
 
     has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
     if has_terminal_error:
-        return (
+        decision = (
             "fix_error",
             "Terminal traceback or command failure is present and must be resolved before implementation continues.",
         )
+        return _apply_architecture_reasoning(active_file_name, decision)
 
     has_git_priority = "git_intelligence" in guidance_source
     if has_git_priority:
-        return (
+        decision = (
             "review_git",
             "Git changes are present (modified, staged, or untracked) and should be reviewed before the next implementation step.",
         )
+        return _apply_architecture_reasoning(active_file_name, decision)
 
     if _is_deployment_file(active_file_name, guidance_source):
-        return (
+        decision = (
             "deployment_validation",
             "Deployment-related file is active, so validate launch flow, tunnel availability, and endpoint access next.",
         )
+        return _apply_architecture_reasoning(active_file_name, decision)
 
     if _is_ui_related_file(active_file_name, prompt_mode, current_focus) and _has_recent_implementation_change(active_file, prompt_mode, current_focus):
-        return (
+        decision = (
             "test_changes",
             "UI/display implementation context is active with recent change signals, so validating rendering and polling is the highest-value next step.",
         )
+        return _apply_architecture_reasoning(active_file_name, decision)
 
     if active_file_name:
-        return (
+        decision = (
             "continue_implementation",
             "No blocking error or Git-priority signal is present, so continue implementing the active file task.",
         )
+        return _apply_architecture_reasoning(active_file_name, decision)
 
-    return (
+    decision = (
         "continue_implementation",
         "No higher-priority signal is present, so continue implementation.",
     )
+    return _apply_architecture_reasoning(active_file_name, decision)
+
+
+def _build_architecture_context(payload: dict[str, Any]) -> dict[str, Any]:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    current_component = active_file_name or _as_text(payload.get("current_file"), fallback="") or "unknown"
+    key = current_component.lower()
+
+    relationships = ARCHITECTURE_RELATIONSHIPS.get(key, {"upstream": [], "downstream": []})
+    upstream = relationships.get("upstream", []) if isinstance(relationships.get("upstream"), list) else []
+    downstream = relationships.get("downstream", []) if isinstance(relationships.get("downstream"), list) else []
+
+    return {
+        "current_component": current_component,
+        "upstream_dependencies": [str(item) for item in upstream if str(item).strip()],
+        "downstream_dependencies": [str(item) for item in downstream if str(item).strip()],
+    }
+
+
+def _apply_architecture_reasoning(active_file_name: str, decision: tuple[str, str]) -> tuple[str, str]:
+    name = active_file_name.lower()
+    decision_name, reason = decision
+
+    if name == "context_fusion.py":
+        extra = " Changes may affect: glasses_demo.py, prompt generation, and display output."
+        if extra.strip() not in reason:
+            reason = reason + extra
+
+    return decision_name, reason
 
 
 def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[str, str]) -> str:
@@ -312,8 +374,14 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
     last_completed_milestone = _as_text(project_progress.get("last_completed_milestone"), fallback="Unknown")
     current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
     suggested_next_milestone = _as_text(project_progress.get("suggested_next_milestone"), fallback="Unknown")
-    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+    architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    current_component = _as_text(architecture_context.get("current_component"), fallback=active_file_name)
+    upstream_list = architecture_context.get("upstream_dependencies") if isinstance(architecture_context.get("upstream_dependencies"), list) else []
+    downstream_list = architecture_context.get("downstream_dependencies") if isinstance(architecture_context.get("downstream_dependencies"), list) else []
+    upstream_text = ", ".join([str(item).strip() for item in upstream_list if str(item).strip()]) or "None"
+    downstream_text = ", ".join([str(item).strip() for item in downstream_list if str(item).strip()]) or "None"
+    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
     checks = payload.get("suggested_checks") if isinstance(payload.get("suggested_checks"), list) else []
     checks_block = "\n".join([f"- {str(item).strip()}" for item in checks if str(item).strip()])
 
@@ -332,6 +400,10 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         f"- Last completed milestone: {last_completed_milestone}\n"
         f"- Current milestone: {current_milestone}\n"
         f"- Suggested next milestone: {suggested_next_milestone}\n\n"
+        "Architecture Impact:\n"
+        f"Current Component: {current_component}\n"
+        f"Upstream: {upstream_text}\n"
+        f"Downstream: {downstream_text}\n\n"
     )
 
     safety_block = (
@@ -629,6 +701,7 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
 
     project_memory = _load_project_memory_summary()
     payload["project_progress"] = _load_project_progress(project_memory)
+    payload["architecture_context"] = _build_architecture_context(payload)
 
     payload["prompt_mode"] = _select_prompt_mode(payload)
     decision, reason = _select_next_step_decision(payload)
