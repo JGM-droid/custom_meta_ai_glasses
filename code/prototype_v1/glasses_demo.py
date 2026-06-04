@@ -585,6 +585,64 @@ def _build_prompt_library(payload: dict[str, Any], project_memory: dict[str, str
     }
 
 
+def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, str]) -> str:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
+
+    project_name = _as_text(project_memory.get("project_name"), fallback=REPO_NAME)
+    current_file = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    current_task = _as_text(task_tracking.get("current_task"), fallback=_as_text(payload.get("current_focus"), fallback="General development"))
+    last_step = _as_text(task_tracking.get("last_completed_step"), fallback="No completed step recorded")
+    next_step = _as_text(task_tracking.get("next_recommended_step"), fallback="Continue implementation")
+
+    current_component = _as_text(architecture_context.get("current_component"), fallback=current_file)
+    upstream = architecture_context.get("upstream_dependencies") if isinstance(architecture_context.get("upstream_dependencies"), list) else []
+    downstream = architecture_context.get("downstream_dependencies") if isinstance(architecture_context.get("downstream_dependencies"), list) else []
+    upstream_text = ", ".join([str(item).strip() for item in upstream if str(item).strip()]) or "None"
+    downstream_text = ", ".join([str(item).strip() for item in downstream if str(item).strip()]) or "None"
+    architecture_impact = (
+        f"Component: {current_component}; Upstream: {upstream_text}; Downstream: {downstream_text}"
+    )
+
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="No decision reason available")
+    confidence_value = payload.get("decision_confidence", 0.0)
+    try:
+        confidence_ratio = float(confidence_value)
+    except (TypeError, ValueError):
+        confidence_ratio = 0.0
+    confidence_pct = int(round(max(0.0, min(1.0, confidence_ratio)) * 100))
+
+    recommended_type = _as_text(payload.get("recommended_prompt_type"), fallback="implementation").lower()
+    objective_map = {
+        "implementation": "Objective: Produce an implementation-focused response with minimal safe code changes.",
+        "validation": "Objective: Produce a validation-focused response with high-signal tests and checks.",
+        "architecture": "Objective: Produce an architecture-focused response emphasizing architecture impact and compatibility.",
+        "git_review": "Objective: Produce a git-review-focused response assessing change risk and commit readiness.",
+    }
+    objective_line = objective_map.get(
+        recommended_type,
+        objective_map["implementation"],
+    )
+
+    return (
+        f"Project name: {project_name}\n"
+        f"Current active file: {current_file}\n"
+        f"Current task: {current_task}\n"
+        f"Last completed step: {last_step}\n"
+        f"Next recommended step: {next_step}\n"
+        f"Architecture impact: {architecture_impact}\n"
+        f"Decision reasoning: {decision_reason}\n"
+        f"Confidence percentage: {confidence_pct}%\n\n"
+        f"{objective_line}\n\n"
+        "Provide:\n"
+        "1. Analysis\n"
+        "2. Minimal safe changes\n"
+        "3. Validation plan\n"
+        "4. Risks\n"
+    )
+
+
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
         return {}
@@ -883,6 +941,24 @@ def _compute_decision_confidence(payload: dict[str, Any], decision_name: str) ->
     return score, factors
 
 
+def _select_recommended_prompt_type(payload: dict[str, Any]) -> str:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="").lower()
+
+    if active_file_name == "context_fusion.py":
+        return "architecture"
+    if active_file_name == "api.py":
+        return "implementation"
+    if active_file_name == "glasses_display_mock.html":
+        return "validation"
+
+    decision = _as_text(payload.get("next_step_decision"), fallback="")
+    if decision == "review_git":
+        return "git_review"
+
+    return "implementation"
+
+
 def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload = dict(resume_payload) if isinstance(resume_payload, dict) else {}
     active_file_available, active_file = _load_active_file_context()
@@ -920,7 +996,9 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     confidence, factors = _compute_decision_confidence(payload, decision)
     payload["decision_confidence"] = confidence
     payload["decision_factors"] = factors
+    payload["recommended_prompt_type"] = _select_recommended_prompt_type(payload)
     payload["prompt_library"] = _build_prompt_library(payload, project_memory)
+    payload["actionable_prompt"] = _build_actionable_prompt(payload, project_memory)
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
 
     return payload
