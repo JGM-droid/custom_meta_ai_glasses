@@ -82,6 +82,36 @@
       align-items: end;
     }
 
+    .task-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(16, 23, 33, 0.48);
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: 122px 1fr;
+      gap: 8px;
+      align-items: start;
+      font-size: 0.8rem;
+      line-height: 1.35;
+      color: var(--text);
+    }
+
+    .task-key {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .task-fallback {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.35;
+    }
+
     .confidence {
       font-size: clamp(1.15rem, 2.2vw, 1.5rem);
       font-weight: 700;
@@ -213,6 +243,18 @@
       min-height: 1.1em;
     }
 
+    @media (max-width: 480px) {
+      .frame {
+        padding: 14px;
+        gap: 10px;
+      }
+
+      .task-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
+      }
+    }
+
     @media (max-width: 768px) {
       .prompt-panel {
         display: none;
@@ -233,7 +275,16 @@
       <div id="primary_action" class="action waiting">Run analysis and ensure API is available.</div>
     </section>
 
-    <div></div>
+    <section id="task_continuity" class="task-card" aria-live="polite">
+      <div class="label">Task Continuity</div>
+      <div id="task_fallback" class="task-fallback">Task continuity unavailable</div>
+      <div id="task_rows" hidden>
+        <div class="task-row"><span class="task-key">Current Task:</span><span id="task_current">-</span></div>
+        <div class="task-row"><span class="task-key">Last Completed:</span><span id="task_last">-</span></div>
+        <div class="task-row"><span class="task-key">Next Step:</span><span id="task_next">-</span></div>
+        <div class="task-row"><span class="task-key">Confidence:</span><span id="task_confidence">-</span></div>
+      </div>
+    </section>
 
     <section class="meta">
       <div>
@@ -282,6 +333,12 @@
     const updatedEl = document.getElementById("updated");
     const activeFileLineEl = document.getElementById("active_file_line");
     const debugLineEl = document.getElementById("debug_line");
+    const taskFallbackEl = document.getElementById("task_fallback");
+    const taskRowsEl = document.getElementById("task_rows");
+    const taskCurrentEl = document.getElementById("task_current");
+    const taskLastEl = document.getElementById("task_last");
+    const taskNextEl = document.getElementById("task_next");
+    const taskConfidenceEl = document.getElementById("task_confidence");
     const aiPromptTextEl = document.getElementById("ai_prompt_text");
     const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
     const promptCopyStatusEl = document.getElementById("prompt_copy_status");
@@ -319,6 +376,36 @@
       if (promptCopyStatusEl) {
         promptCopyStatusEl.textContent = "";
       }
+    }
+
+    function renderTaskContinuity(data) {
+      if (!taskFallbackEl || !taskRowsEl || !taskCurrentEl || !taskLastEl || !taskNextEl || !taskConfidenceEl) {
+        return;
+      }
+
+      const tracking = data && typeof data.task_tracking === "object" ? data.task_tracking : null;
+      if (!tracking) {
+        taskFallbackEl.textContent = "Task continuity unavailable";
+        taskFallbackEl.hidden = false;
+        taskRowsEl.hidden = true;
+        return;
+      }
+
+      const currentTask = normalize(tracking.current_task, "Task continuity unavailable");
+      const lastCompleted = normalize(tracking.last_completed_step, "Task continuity unavailable");
+      const nextStep = normalize(tracking.next_recommended_step, "Task continuity unavailable");
+      const confidenceRaw = tracking.task_confidence;
+      const confidence = typeof confidenceRaw === "number"
+        ? confidenceRaw.toFixed(2)
+        : normalize(confidenceRaw, "Task continuity unavailable");
+
+      taskCurrentEl.textContent = currentTask;
+      taskLastEl.textContent = lastCompleted;
+      taskNextEl.textContent = nextStep;
+      taskConfidenceEl.textContent = confidence;
+
+      taskFallbackEl.hidden = true;
+      taskRowsEl.hidden = false;
     }
 
     async function copyPromptToClipboard() {
@@ -489,6 +576,7 @@
         const data = await response.json();
         updateTimestamp();
         renderActiveFileContext(data);
+        renderTaskContinuity(data);
         renderAiPrompt(data);
         const key = _payloadKey(data);
         if (key === _lastPayloadKey) { return; }
@@ -526,6 +614,7 @@
       } catch (_err) {
         _lastPayloadKey = null;
         renderActiveFileContext(null);
+        renderTaskContinuity(null);
         renderAiPrompt(null);
         connectionEl.textContent = "Waiting for API";
         updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
