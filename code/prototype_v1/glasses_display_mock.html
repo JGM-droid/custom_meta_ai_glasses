@@ -171,7 +171,7 @@
   <script>
     const _currentHost = window.location.hostname;
     const _apiHost = (!_currentHost || _currentHost === "localhost") ? "127.0.0.1" : _currentHost;
-    const DEFAULT_API_LATEST_URL = `http://${_apiHost}:8001/latest`;
+      const DEFAULT_API_LATEST_URL = new URL("/latest", window.location.origin).toString();
     const _queryParams = new URLSearchParams(window.location.search);
     const _apiOverride = _queryParams.get("api");
     const API_LATEST_URL = _apiOverride || DEFAULT_API_LATEST_URL;
