@@ -160,6 +160,113 @@ def _load_project_memory_summary() -> dict[str, str]:
     return summary
 
 
+def _select_prompt_mode(payload: dict[str, Any]) -> str:
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_source = _as_text(guidance.get("source"), fallback="").lower()
+    has_terminal_error = bool(payload.get("has_terminal_error", False))
+
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    active_file_lower = active_file_name.lower()
+
+    if has_terminal_error or "terminal_error" in guidance_source:
+        return "error_resolution"
+
+    if active_file_lower == "glasses_display_mock.html":
+        return "display_ui"
+
+    if active_file_lower == "ngrok_demo_launcher.py" or "deploy" in guidance_source or "tunnel" in guidance_source:
+        return "deployment"
+
+    if "git_intelligence" in guidance_source:
+        if active_file_lower in {"api.py", "context_fusion.py", "active_editor_context.py"}:
+            return "file_development"
+        return "git_review"
+
+    if active_file_name:
+        return "file_development"
+
+    return "file_development"
+
+
+def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[str, str]) -> str:
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+
+    guidance_headline = _as_text(guidance.get("headline"), fallback="Resume guidance")
+    recommended_next_action = _as_text(
+        payload.get("recommended_next_action"),
+        fallback=_as_text(guidance.get("recommended_action"), fallback="Continue current implementation."),
+    )
+    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    checks = payload.get("suggested_checks") if isinstance(payload.get("suggested_checks"), list) else []
+    checks_block = "\n".join([f"- {str(item).strip()}" for item in checks if str(item).strip()])
+
+    common_header = (
+        f"Project: {_as_text(project_memory.get('project_name'), fallback=REPO_NAME)}\n"
+        "Project Memory:\n"
+        f"- Architecture: {_as_text(project_memory.get('architecture'), fallback='Architecture summary unavailable')}\n"
+        f"- Current Milestone: {_as_text(project_memory.get('milestone'), fallback='Milestone unavailable')}\n\n"
+        f"Current active file: {active_file_name}\n"
+        f"Current focus: {current_focus}\n"
+        f"Guidance headline: {guidance_headline}\n"
+        f"Recommended next action: {recommended_next_action}\n\n"
+    )
+
+    safety_block = (
+        "Safety constraints:\n"
+        "- Do not modify unrelated files.\n"
+        "- Report findings before making changes unless explicitly asked.\n"
+        "- Preserve existing architecture.\n"
+        "- Keep changes minimal."
+    )
+
+    mode_body = {
+        "error_resolution": (
+            "Task Mode: Error Resolution\n"
+            "Please debug the current failure.\n"
+            "- Identify root cause first.\n"
+            "- Explain why the failure occurs.\n"
+            "- Propose the smallest safe fix.\n"
+            "- Validate with focused checks before broader changes.\n"
+        ),
+        "git_review": (
+            "Task Mode: Git Review\n"
+            "Please inspect the current modified/staged changes.\n"
+            "- Summarize what changed.\n"
+            "- Identify risks/regressions.\n"
+            "- Recommend the next commit step.\n"
+            "- Do not make code changes yet.\n"
+        ),
+        "display_ui": (
+            "Task Mode: Display/UI Development\n"
+            "Please verify display behavior for the glasses UI.\n"
+            "- Verify rendering of guidance and active-file context.\n"
+            "- Verify polling and state refresh behavior.\n"
+            "- Verify mobile and desktop behavior remain intact.\n"
+        ),
+        "deployment": (
+            "Task Mode: Deployment\n"
+            "Please verify launch and tunnel deployment flow.\n"
+            "- Verify launcher sequence and process health.\n"
+            "- Verify tunnel accessibility.\n"
+            "- Verify key API/display endpoints respond correctly.\n"
+        ),
+        "file_development": (
+            "Task Mode: File Development\n"
+            "Please focus on the currently active file.\n"
+            "- Explain its current purpose in the architecture.\n"
+            "- Recommend the next implementation step.\n"
+            "- Keep changes aligned with existing architecture.\n"
+        ),
+    }.get(mode, "Task Mode: File Development\nPlease continue with focused file-level implementation.\n")
+
+    checks_section = "Suggested checks:\n" + (checks_block if checks_block else "- No suggested checks available.") + "\n\n"
+
+    return common_header + mode_body + "\n" + checks_section + safety_block
+
+
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
         return {}
@@ -342,36 +449,10 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     if not payload["suggested_checks"]:
         payload["suggested_checks"] = list(GENERIC_FILE_FOCUS["suggested_checks"])
 
-    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
-    guidance_headline = _as_text(guidance.get("headline"), fallback="Resume guidance")
-    recommended_next_action = _as_text(
-        payload.get("recommended_next_action"),
-        fallback=_as_text(guidance.get("recommended_action"), fallback="Continue current implementation."),
-    )
-    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
-
-    active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable") if active_file_available else "unavailable"
-    checks_block = "\n".join([f"- {item}" for item in payload["suggested_checks"]])
     project_memory = _load_project_memory_summary()
 
-    payload["ai_prompt"] = (
-        f"Project: {_as_text(project_memory.get('project_name'), fallback=REPO_NAME)}\n"
-        "Project Memory:\n"
-        f"- Architecture: {_as_text(project_memory.get('architecture'), fallback='Architecture summary unavailable')}\n"
-        f"- Current Milestone: {_as_text(project_memory.get('milestone'), fallback='Milestone unavailable')}\n\n"
-        "Task: Provide coding guidance and next-step implementation support.\n\n"
-        f"Current active file: {active_file_name}\n"
-        f"Current focus: {current_focus}\n"
-        f"Guidance headline: {guidance_headline}\n"
-        f"Recommended next action: {recommended_next_action}\n\n"
-        "Suggested checks:\n"
-        f"{checks_block}\n\n"
-        "Safety constraints:\n"
-        "- Do not modify unrelated files.\n"
-        "- Report findings before making changes unless explicitly asked.\n"
-        "- Preserve existing architecture.\n"
-        "- Keep changes minimal."
-    )
+    payload["prompt_mode"] = _select_prompt_mode(payload)
+    payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
 
     return payload
 
@@ -393,10 +474,12 @@ def _build_terminal_error_resume_payload() -> dict[str, Any] | None:
     )
 
     return {
+        "has_terminal_error": True,
         "recommended_next_action": recommended_action,
         "current_file": "",
         "guidance_priority": {
             "level": level,
+            "source": "terminal_error_context",
             "headline": headline,
             "recommended_action": recommended_action,
         },
