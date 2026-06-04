@@ -189,6 +189,99 @@ def _select_prompt_mode(payload: dict[str, Any]) -> str:
     return "file_development"
 
 
+def _is_deployment_file(active_file_name: str, guidance_source: str) -> bool:
+    name = active_file_name.lower()
+    deployment_names = {
+        "ngrok_demo_launcher.py",
+        "deploy.py",
+        "deployment.py",
+        "launch.py",
+    }
+    if name in deployment_names:
+        return True
+
+    deployment_tokens = ["deploy", "deployment", "ngrok", "tunnel", "launcher"]
+    if any(token in name for token in deployment_tokens):
+        return True
+
+    return any(token in guidance_source for token in deployment_tokens)
+
+
+def _is_ui_related_file(active_file_name: str, prompt_mode: str, current_focus: str) -> bool:
+    name = active_file_name.lower()
+    if name == "glasses_display_mock.html":
+        return True
+
+    ui_tokens = ["display", "ui", "dashboard", ".html"]
+    if any(token in name for token in ui_tokens):
+        return True
+
+    if prompt_mode == "display_ui":
+        return True
+
+    return "display/ui" in current_focus.lower() or "ui" in current_focus.lower()
+
+
+def _has_recent_implementation_change(active_file: dict[str, Any], prompt_mode: str, current_focus: str) -> bool:
+    if bool(active_file.get("is_dirty", False)):
+        return True
+
+    event_type = _as_text(active_file.get("event_type"), fallback="").lower()
+    if event_type:
+        return True
+
+    if prompt_mode == "display_ui":
+        return True
+
+    return "display/ui" in current_focus.lower() or "development" in current_focus.lower()
+
+
+def _select_next_step_decision(payload: dict[str, Any]) -> tuple[str, str]:
+    guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    guidance_source = _as_text(guidance.get("source"), fallback="").lower()
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    prompt_mode = _as_text(payload.get("prompt_mode"), fallback="")
+    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+
+    has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
+    if has_terminal_error:
+        return (
+            "fix_error",
+            "Terminal traceback or command failure is present and must be resolved before implementation continues.",
+        )
+
+    has_git_priority = "git_intelligence" in guidance_source
+    if has_git_priority:
+        return (
+            "review_git",
+            "Git changes are present (modified, staged, or untracked) and should be reviewed before the next implementation step.",
+        )
+
+    if _is_deployment_file(active_file_name, guidance_source):
+        return (
+            "deployment_validation",
+            "Deployment-related file is active, so validate launch flow, tunnel availability, and endpoint access next.",
+        )
+
+    if _is_ui_related_file(active_file_name, prompt_mode, current_focus) and _has_recent_implementation_change(active_file, prompt_mode, current_focus):
+        return (
+            "test_changes",
+            "UI/display implementation context is active with recent change signals, so validating rendering and polling is the highest-value next step.",
+        )
+
+    if active_file_name:
+        return (
+            "continue_implementation",
+            "No blocking error or Git-priority signal is present, so continue implementing the active file task.",
+        )
+
+    return (
+        "continue_implementation",
+        "No higher-priority signal is present, so continue implementation.",
+    )
+
+
 def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[str, str]) -> str:
     guidance = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
     active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
@@ -198,6 +291,8 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         payload.get("recommended_next_action"),
         fallback=_as_text(guidance.get("recommended_action"), fallback="Continue current implementation."),
     )
+    next_step_decision = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="No explicit decision reason available.")
     current_focus = _as_text(payload.get("current_focus"), fallback="General development")
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable")
     checks = payload.get("suggested_checks") if isinstance(payload.get("suggested_checks"), list) else []
@@ -212,6 +307,8 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
         f"Current focus: {current_focus}\n"
         f"Guidance headline: {guidance_headline}\n"
         f"Recommended next action: {recommended_next_action}\n\n"
+        f"Recommended next step: {next_step_decision}\n"
+        f"Reason: {decision_reason}\n\n"
     )
 
     safety_block = (
@@ -452,6 +549,9 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     project_memory = _load_project_memory_summary()
 
     payload["prompt_mode"] = _select_prompt_mode(payload)
+    decision, reason = _select_next_step_decision(payload)
+    payload["next_step_decision"] = decision
+    payload["decision_reason"] = reason
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
 
     return payload
