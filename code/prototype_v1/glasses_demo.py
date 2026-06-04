@@ -503,6 +503,88 @@ def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[
     return common_header + mode_body + "\n" + checks_section + safety_block
 
 
+def _build_prompt_library(payload: dict[str, Any], project_memory: dict[str, str]) -> dict[str, str]:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
+
+    current_file = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    language = _as_text(active_file.get("language_id"), fallback="unknown")
+    current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+    decision = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="No decision reason available")
+
+    current_component = _as_text(architecture_context.get("current_component"), fallback=current_file)
+    upstream = architecture_context.get("upstream_dependencies") if isinstance(architecture_context.get("upstream_dependencies"), list) else []
+    downstream = architecture_context.get("downstream_dependencies") if isinstance(architecture_context.get("downstream_dependencies"), list) else []
+    upstream_text = ", ".join([str(item).strip() for item in upstream if str(item).strip()]) or "None"
+    downstream_text = ", ".join([str(item).strip() for item in downstream if str(item).strip()]) or "None"
+
+    current_task = _as_text(task_tracking.get("current_task"), fallback=current_focus)
+    last_step = _as_text(task_tracking.get("last_completed_step"), fallback="No completed step recorded")
+    next_step = _as_text(task_tracking.get("next_recommended_step"), fallback="Continue implementation")
+
+    current_milestone = _as_text(project_progress.get("current_milestone"), fallback="Unknown")
+    next_milestone = _as_text(project_progress.get("suggested_next_milestone"), fallback="Unknown")
+
+    common_context = (
+        f"Project: {_as_text(project_memory.get('project_name'), fallback=REPO_NAME)}\n"
+        f"Current active file: {current_file}\n"
+        f"File language: {language}\n"
+        f"Current focus: {current_focus}\n"
+        f"Current task: {current_task}\n"
+        f"Last completed step: {last_step}\n"
+        f"Next recommended step: {next_step}\n"
+        f"Current milestone: {current_milestone}\n"
+        f"Suggested next milestone: {next_milestone}\n"
+        f"Decision: {decision}\n"
+        f"Decision reason: {decision_reason}\n"
+        f"Architecture component: {current_component}\n"
+        f"Upstream dependencies: {upstream_text}\n"
+        f"Downstream dependencies: {downstream_text}\n"
+    )
+
+    implementation_prompt = (
+        common_context
+        + "\nTask: Implement the current task with minimal safe changes.\n"
+        + "1. Propose a focused implementation plan.\n"
+        + "2. Describe exact code changes for the active file first.\n"
+        + "3. Keep architecture and existing behavior intact.\n"
+    )
+
+    validation_prompt = (
+        common_context
+        + "\nTask: Validate the current feature and report confidence in behavior.\n"
+        + "1. List high-signal tests and checks for this file/workflow.\n"
+        + "2. Identify likely regressions and edge cases.\n"
+        + "3. Provide a concise pass/fail checklist.\n"
+    )
+
+    architecture_prompt = (
+        common_context
+        + "\nTask: Analyze architecture impact of the current work.\n"
+        + "1. Explain upstream and downstream impact paths.\n"
+        + "2. Identify payload/schema compatibility risks.\n"
+        + "3. Recommend guardrails to prevent regressions.\n"
+    )
+
+    git_review_prompt = (
+        common_context
+        + "\nTask: Review git changes and risks before commit.\n"
+        + "1. Summarize expected change scope by component.\n"
+        + "2. Call out regression and integration risks.\n"
+        + "3. Provide commit readiness criteria.\n"
+    )
+
+    return {
+        "implementation_prompt": implementation_prompt,
+        "validation_prompt": validation_prompt,
+        "architecture_prompt": architecture_prompt,
+        "git_review_prompt": git_review_prompt,
+    }
+
+
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
         return {}
@@ -838,6 +920,7 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     confidence, factors = _compute_decision_confidence(payload, decision)
     payload["decision_confidence"] = confidence
     payload["decision_factors"] = factors
+    payload["prompt_library"] = _build_prompt_library(payload, project_memory)
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
 
     return payload
