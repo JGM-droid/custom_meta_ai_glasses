@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent
 NGROK_FALLBACK = Path(
     r"C:\Users\jesse\Downloads\ngrok-v3-stable-windows-amd64\ngrok.exe"
 )
+NGROK_GLOBAL_CONFIG = Path(r"C:\Users\jesse\AppData\Local\ngrok\ngrok.yml")
 
 API_COMMAND = [
     sys.executable,
@@ -28,16 +30,7 @@ API_COMMAND = [
     "--app-dir",
     str(BASE_DIR),
 ]
-DISPLAY_COMMAND = [
-    sys.executable,
-    "-m",
-    "http.server",
-    "8002",
-    "--directory",
-    str(BASE_DIR),
-]
-# Tunnel commands are built at runtime once the ngrok executable is resolved.
-# See _find_ngrok() and main().
+# No separate display server — glasses_display_mock.html is served by the FastAPI app.
 DEMO_NORMAL_COMMAND = [
     sys.executable,
     str(BASE_DIR / "glasses_demo.py"),
@@ -45,6 +38,20 @@ DEMO_NORMAL_COMMAND = [
     "normal",
 ]
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
+
+
+def _write_ngrok_config(tmp_dir: str) -> str:
+    """Write a temporary ngrok config that starts the API tunnel."""
+    config_path = Path(tmp_dir) / "ngrok_tunnels.yml"
+    config_path.write_text(
+        'version: "2"\n'
+        "tunnels:\n"
+        "  api:\n"
+        "    proto: http\n"
+        "    addr: 8001\n",
+        encoding="utf-8",
+    )
+    return str(config_path)
 
 
 def _find_ngrok() -> str | None:
@@ -80,7 +87,6 @@ def _load_ngrok_tunnels() -> dict[str, Any]:
 
 def _extract_https_urls(payload: dict[str, Any]) -> tuple[str, str]:
     api_tunnel_url = ""
-    display_tunnel_url = ""
 
     tunnels = payload.get("tunnels", []) if isinstance(payload, dict) else []
     for tunnel in tunnels:
@@ -96,10 +102,8 @@ def _extract_https_urls(payload: dict[str, Any]) -> tuple[str, str]:
 
         if addr.endswith(":8001") and not api_tunnel_url:
             api_tunnel_url = public_url.rstrip("/")
-        if addr.endswith(":8002") and not display_tunnel_url:
-            display_tunnel_url = public_url.rstrip("/")
 
-    return api_tunnel_url, display_tunnel_url
+    return api_tunnel_url, api_tunnel_url  # single tunnel serves both display and API
 
 
 def _fetch_tunnel_urls() -> tuple[str, str]:
@@ -110,9 +114,9 @@ def _fetch_tunnel_urls() -> tuple[str, str]:
         try:
             payload = _load_ngrok_tunnels()
             api_tunnel_url, display_tunnel_url = _extract_https_urls(payload)
-            if api_tunnel_url and display_tunnel_url:
+            if api_tunnel_url:
                 return api_tunnel_url, display_tunnel_url
-            last_error = "ngrok tunnels found, but HTTPS URLs for ports 8001 and 8002 were not both available yet."
+            last_error = "ngrok tunnels found, but HTTPS URL for port 8001 was not available yet."
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = str(exc)
 
@@ -141,19 +145,16 @@ def main() -> int:
         )
         return 1
 
-    api_tunnel_command = [ngrok_exe, "http", "8001"]
-    display_tunnel_command = [ngrok_exe, "http", "8002"]
-
     api_process: subprocess.Popen[str] | None = None
-    display_process: subprocess.Popen[str] | None = None
-    api_tunnel_process: subprocess.Popen[str] | None = None
-    display_tunnel_process: subprocess.Popen[str] | None = None
+    ngrok_process: subprocess.Popen[str] | None = None
+    tmp_dir = tempfile.mkdtemp()
 
     try:
+        ngrok_config = _write_ngrok_config(tmp_dir)
+        ngrok_command = [ngrok_exe, "start", "--all", "--config", str(NGROK_GLOBAL_CONFIG), "--config", ngrok_config]
+
         api_process = _start_process(API_COMMAND)
-        display_process = _start_process(DISPLAY_COMMAND)
-        api_tunnel_process = _start_process(api_tunnel_command)
-        display_tunnel_process = _start_process(display_tunnel_command)
+        ngrok_process = _start_process(ngrok_command)
 
         time.sleep(3)
         api_tunnel_url, display_tunnel_url = _fetch_tunnel_urls()
@@ -176,23 +177,16 @@ def main() -> int:
             if api_process.poll() is not None:
                 print(f"API server exited with code {api_process.returncode}")
                 break
-            if display_process.poll() is not None:
-                print(f"Display server exited with code {display_process.returncode}")
-                break
-            if api_tunnel_process.poll() is not None:
-                print(f"ngrok API tunnel exited with code {api_tunnel_process.returncode}")
-                break
-            if display_tunnel_process.poll() is not None:
-                print(f"ngrok display tunnel exited with code {display_tunnel_process.returncode}")
+            if ngrok_process.poll() is not None:
+                print(f"ngrok exited with code {ngrok_process.returncode}")
                 break
             time.sleep(1)
     except KeyboardInterrupt:
         pass
     finally:
-        _terminate_process(api_tunnel_process)
-        _terminate_process(display_tunnel_process)
+        _terminate_process(ngrok_process)
         _terminate_process(api_process)
-        _terminate_process(display_process)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return 0
 

@@ -10,6 +10,8 @@ import tempfile
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 
 app = FastAPI(title="Prototype V1 API")
@@ -25,6 +27,11 @@ BASE_DIR = Path(__file__).resolve().parent
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"
 LATEST_RESPONSE_JSON = BASE_DIR / "results" / "latest_response.json"
 RESUME_NOW_JSON = BASE_DIR / "results" / "resume_now.json"
+RESULTS_DIR = BASE_DIR / "results"
+DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
+
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
 
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -51,6 +58,13 @@ def _load_resume_guidance() -> dict[str, str | dict[str, object]]:
         merged["resume_recommended_action"] = recommended_next_action.strip()
 
     return merged
+
+
+@app.get("/glasses_display_mock.html", response_class=FileResponse)
+async def display_mock():
+    if not DISPLAY_HTML.exists():
+        raise HTTPException(status_code=404, detail="Display mock not found.")
+    return FileResponse(str(DISPLAY_HTML), media_type="text/html")
 
 
 @app.get("/latest")
