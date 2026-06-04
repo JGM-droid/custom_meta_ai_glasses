@@ -91,6 +91,14 @@
       gap: 6px;
     }
 
+    .continuity-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      align-items: stretch;
+      min-height: 0;
+    }
+
     .task-row {
       display: grid;
       grid-template-columns: 122px 1fr;
@@ -110,6 +118,20 @@
       color: var(--muted);
       font-size: 0.84rem;
       line-height: 1.35;
+    }
+
+    .factors-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text);
+      font-size: 0.78rem;
+      line-height: 1.3;
+      display: grid;
+      gap: 2px;
+    }
+
+    .factors-list li {
+      margin: 0;
     }
 
     .confidence {
@@ -253,6 +275,10 @@
         grid-template-columns: 1fr;
         gap: 2px;
       }
+
+      .continuity-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 768px) {
@@ -275,15 +301,28 @@
       <div id="primary_action" class="action waiting">Run analysis and ensure API is available.</div>
     </section>
 
-    <section id="task_continuity" class="task-card" aria-live="polite">
-      <div class="label">Task Continuity</div>
-      <div id="task_fallback" class="task-fallback">Task continuity unavailable</div>
-      <div id="task_rows" hidden>
-        <div class="task-row"><span class="task-key">Current Task:</span><span id="task_current">-</span></div>
-        <div class="task-row"><span class="task-key">Last Completed:</span><span id="task_last">-</span></div>
-        <div class="task-row"><span class="task-key">Next Step:</span><span id="task_next">-</span></div>
-        <div class="task-row"><span class="task-key">Confidence:</span><span id="task_confidence">-</span></div>
-      </div>
+    <section class="continuity-grid" aria-live="polite">
+      <section id="task_continuity" class="task-card">
+        <div class="label">Task Continuity</div>
+        <div id="task_fallback" class="task-fallback">Task continuity unavailable</div>
+        <div id="task_rows" hidden>
+          <div class="task-row"><span class="task-key">Current Task:</span><span id="task_current">-</span></div>
+          <div class="task-row"><span class="task-key">Last Completed:</span><span id="task_last">-</span></div>
+          <div class="task-row"><span class="task-key">Next Step:</span><span id="task_next">-</span></div>
+          <div class="task-row"><span class="task-key">Confidence:</span><span id="task_confidence">-</span></div>
+        </div>
+      </section>
+
+      <section id="decision_insight" class="task-card">
+        <div class="label">Decision Insight</div>
+        <div id="decision_fallback" class="task-fallback">Decision insight unavailable</div>
+        <div id="decision_rows" hidden>
+          <div class="task-row"><span class="task-key">Decision:</span><span id="decision_value">-</span></div>
+          <div class="task-row"><span class="task-key">Confidence:</span><span id="decision_confidence">-</span></div>
+          <div class="task-row"><span class="task-key">Reason:</span><span id="decision_reason">-</span></div>
+          <div class="task-row"><span class="task-key">Factors:</span><ul id="decision_factors" class="factors-list"></ul></div>
+        </div>
+      </section>
     </section>
 
     <section class="meta">
@@ -339,6 +378,12 @@
     const taskLastEl = document.getElementById("task_last");
     const taskNextEl = document.getElementById("task_next");
     const taskConfidenceEl = document.getElementById("task_confidence");
+    const decisionFallbackEl = document.getElementById("decision_fallback");
+    const decisionRowsEl = document.getElementById("decision_rows");
+    const decisionValueEl = document.getElementById("decision_value");
+    const decisionConfidenceEl = document.getElementById("decision_confidence");
+    const decisionReasonEl = document.getElementById("decision_reason");
+    const decisionFactorsEl = document.getElementById("decision_factors");
     const aiPromptTextEl = document.getElementById("ai_prompt_text");
     const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
     const promptCopyStatusEl = document.getElementById("prompt_copy_status");
@@ -406,6 +451,46 @@
 
       taskFallbackEl.hidden = true;
       taskRowsEl.hidden = false;
+    }
+
+    function renderDecisionInsight(data) {
+      if (!decisionFallbackEl || !decisionRowsEl || !decisionValueEl || !decisionConfidenceEl || !decisionReasonEl || !decisionFactorsEl) {
+        return;
+      }
+
+      const decisionValue = data && typeof data.next_step_decision === "string" && data.next_step_decision.trim()
+        ? data.next_step_decision.trim()
+        : "";
+      const reasonValue = data && typeof data.decision_reason === "string" && data.decision_reason.trim()
+        ? data.decision_reason.trim()
+        : "";
+      const confidenceRaw = data ? data.decision_confidence : null;
+      const hasConfidence = Number.isFinite(Number(confidenceRaw));
+      const factors = data && Array.isArray(data.decision_factors)
+        ? data.decision_factors.filter((item) => typeof item === "string" && item.trim())
+        : [];
+
+      const hasRequiredFields = Boolean(decisionValue && reasonValue && hasConfidence && factors.length > 0);
+      if (!hasRequiredFields) {
+        decisionFallbackEl.textContent = "Decision insight unavailable";
+        decisionFallbackEl.hidden = false;
+        decisionRowsEl.hidden = true;
+        decisionFactorsEl.innerHTML = "";
+        return;
+      }
+
+      decisionValueEl.textContent = decisionValue;
+      decisionConfidenceEl.textContent = `${(Number(confidenceRaw) * 100).toFixed(0)}%`;
+      decisionReasonEl.textContent = reasonValue;
+      decisionFactorsEl.innerHTML = "";
+      for (const factor of factors) {
+        const item = document.createElement("li");
+        item.textContent = factor;
+        decisionFactorsEl.appendChild(item);
+      }
+
+      decisionFallbackEl.hidden = true;
+      decisionRowsEl.hidden = false;
     }
 
     async function copyPromptToClipboard() {
@@ -577,6 +662,7 @@
         updateTimestamp();
         renderActiveFileContext(data);
         renderTaskContinuity(data);
+        renderDecisionInsight(data);
         renderAiPrompt(data);
         const key = _payloadKey(data);
         if (key === _lastPayloadKey) { return; }
@@ -615,6 +701,7 @@
         _lastPayloadKey = null;
         renderActiveFileContext(null);
         renderTaskContinuity(null);
+        renderDecisionInsight(null);
         renderAiPrompt(null);
         connectionEl.textContent = "Waiting for API";
         updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
