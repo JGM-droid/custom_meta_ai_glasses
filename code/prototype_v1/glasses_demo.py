@@ -56,6 +56,58 @@ GUIDANCE_PRIORITY_RANK = {
     "info": 1,
 }
 
+FILE_FOCUS_GUIDANCE: dict[str, dict[str, Any]] = {
+    "api.py": {
+        "current_focus": "FastAPI endpoint development",
+        "suggested_checks": [
+            "Verify endpoint request/response schema consistency.",
+            "Confirm fallback behavior and HTTP status handling.",
+            "Run a quick local /latest smoke test before tunnel testing.",
+        ],
+    },
+    "context_fusion.py": {
+        "current_focus": "Context fusion development",
+        "suggested_checks": [
+            "Confirm source selection order remains Error > Git > Snapshot.",
+            "Validate missing input files are handled without crashes.",
+            "Check fused output fields for active_file and guidance consistency.",
+        ],
+    },
+    "glasses_display_mock.html": {
+        "current_focus": "Display/UI development",
+        "suggested_checks": [
+            "Verify polling updates guidance and active-file lines every cycle.",
+            "Confirm API URL override and same-origin fallback both work.",
+            "Test visual fallback when active file context is unavailable.",
+        ],
+    },
+    "active_editor_context.py": {
+        "current_focus": "VS Code signal development",
+        "suggested_checks": [
+            "Validate active_editor_state.json parsing and invalid JSON fallback.",
+            "Confirm output schema remains stable for context fusion input.",
+            "Check timestamps and event_type values update as expected.",
+        ],
+    },
+    "ngrok_demo_launcher.py": {
+        "current_focus": "Deployment guidance",
+        "suggested_checks": [
+            "Verify ngrok tunnel is online and /latest responds over HTTPS.",
+            "Confirm final display URL includes a reachable API /latest path.",
+            "Re-run normal/error/git scenarios and verify remote display updates.",
+        ],
+    },
+}
+
+GENERIC_FILE_FOCUS = {
+    "current_focus": "General development",
+    "suggested_checks": [
+        "Review the current file changes and ensure intent is clear.",
+        "Run a focused smoke test for the module you are editing.",
+        "Confirm output artifacts match expected schema and freshness.",
+    ],
+}
+
 
 def _safe_load_json(path: Path) -> dict[str, Any]:
     if not path.exists() or not path.is_file():
@@ -229,6 +281,16 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
         "language": f"Language: {_as_text(active_file.get('language_id'), fallback='unknown') if active_file_available else 'unknown'}",
         "dirty": f"Dirty: {bool(active_file.get('is_dirty', False)) if active_file_available else False}",
     }
+
+    file_name = _as_text(active_file.get("active_file_name"), fallback="") if active_file_available else ""
+    file_focus = FILE_FOCUS_GUIDANCE.get(file_name, GENERIC_FILE_FOCUS)
+    payload["current_focus"] = _as_text(file_focus.get("current_focus"), fallback=GENERIC_FILE_FOCUS["current_focus"])
+
+    checks = file_focus.get("suggested_checks") if isinstance(file_focus.get("suggested_checks"), list) else []
+    payload["suggested_checks"] = [str(item).strip() for item in checks if str(item).strip()]
+    if not payload["suggested_checks"]:
+        payload["suggested_checks"] = list(GENERIC_FILE_FOCUS["suggested_checks"])
+
     return payload
 
 
