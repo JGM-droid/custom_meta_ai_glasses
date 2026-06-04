@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from active_editor_context import build_active_editor_context, write_active_editor_context
+except Exception:
+    build_active_editor_context = None  # type: ignore[assignment]
+    write_active_editor_context = None  # type: ignore[assignment]
+
 
 BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / "results"
@@ -86,6 +92,20 @@ def _load_active_editor_context() -> dict[str, Any]:
     if not payload:
         return {}
     return payload
+
+
+def _refresh_active_editor_context() -> None:
+    """Refresh active_editor_context.json from active_editor_state.json when helpers are importable."""
+    if not callable(build_active_editor_context) or not callable(write_active_editor_context):
+        return
+
+    try:
+        context = build_active_editor_context()
+        if isinstance(context, dict):
+            write_active_editor_context(context)
+    except Exception:
+        # Context fusion must remain resilient even if active editor refresh fails.
+        return
 
 
 def _active_file_payload(active_editor_context: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
@@ -195,6 +215,8 @@ def _select_context(
 
 
 def _build_payload() -> dict[str, Any]:
+    _refresh_active_editor_context()
+
     terminal_error = _load_terminal_error_context()
     coding_context = _load_coding_context()
     snapshot = _load_snapshot_context()
