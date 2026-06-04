@@ -228,6 +228,17 @@
       gap: 6px;
     }
 
+    .prompt-recommended-line {
+      color: var(--muted);
+      font-size: 0.74rem;
+      line-height: 1.25;
+    }
+
+    .prompt-recommended-line strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
     .prompt-selector-btn {
       border: 1px solid var(--line);
       background: #0d141d;
@@ -245,6 +256,22 @@
       box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.25);
       background: #11202a;
       color: #d7fff8;
+    }
+
+    .prompt-selector-btn.recommended {
+      border-color: rgba(45, 212, 191, 0.65);
+      box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.25);
+      position: relative;
+    }
+
+    .prompt-selector-btn.recommended::after {
+      content: "Recommended";
+      display: block;
+      margin-top: 3px;
+      font-size: 0.62rem;
+      line-height: 1;
+      color: var(--accent);
+      letter-spacing: 0.02em;
     }
 
     .prompt-selector-btn:disabled {
@@ -376,6 +403,7 @@
       <span class="prompt-title">Desktop Prompt Panel</span>
       <button id="copy_prompt_btn" class="copy-btn" type="button">Copy Prompt</button>
     </div>
+    <div id="recommended_prompt_line" class="prompt-recommended-line" hidden>Recommended Prompt: <strong id="recommended_prompt_value">Implementation</strong></div>
     <div id="prompt_selector" class="prompt-selector" hidden>
       <button id="prompt_btn_implementation" class="prompt-selector-btn" type="button" data-prompt-key="implementation_prompt">Implementation</button>
       <button id="prompt_btn_validation" class="prompt-selector-btn" type="button" data-prompt-key="validation_prompt">Validation</button>
@@ -424,6 +452,8 @@
     const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
     const promptCopyStatusEl = document.getElementById("prompt_copy_status");
     const promptSelectorEl = document.getElementById("prompt_selector");
+    const recommendedPromptLineEl = document.getElementById("recommended_prompt_line");
+    const recommendedPromptValueEl = document.getElementById("recommended_prompt_value");
     const promptSelectorButtons = promptSelectorEl
       ? Array.from(promptSelectorEl.querySelectorAll(".prompt-selector-btn"))
       : [];
@@ -436,8 +466,24 @@
     ];
 
     let _selectedPromptKey = "implementation_prompt";
+    let _recommendedPromptKey = "implementation_prompt";
     let _currentPromptLibrary = null;
     let _currentAiPromptFallback = "Prompt unavailable";
+
+    function _promptTypeFromPayload(value) {
+      const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+      if (text === "validation") return "validation_prompt";
+      if (text === "architecture") return "architecture_prompt";
+      if (text === "git_review") return "git_review_prompt";
+      return "implementation_prompt";
+    }
+
+    function _promptTypeLabelFromKey(key) {
+      if (key === "validation_prompt") return "Validation";
+      if (key === "architecture_prompt") return "Architecture";
+      if (key === "git_review_prompt") return "Git Review";
+      return "Implementation";
+    }
 
     function _promptValueByKey(key) {
       if (!_currentPromptLibrary || typeof _currentPromptLibrary !== "object") {
@@ -485,12 +531,19 @@
 
       const hasLibrary = _currentPromptLibrary && typeof _currentPromptLibrary === "object" && !!_firstAvailablePromptKey();
       promptSelectorEl.hidden = !hasLibrary;
+      if (recommendedPromptLineEl) {
+        recommendedPromptLineEl.hidden = !hasLibrary;
+      }
+      if (recommendedPromptValueEl) {
+        recommendedPromptValueEl.textContent = _promptTypeLabelFromKey(_recommendedPromptKey);
+      }
 
       for (const button of promptSelectorButtons) {
         const key = button.dataset.promptKey || "";
         const hasPrompt = hasLibrary && !!_promptValueByKey(key);
         button.disabled = !hasPrompt;
         button.classList.toggle("active", hasPrompt && key === _selectedPromptKey);
+        button.classList.toggle("recommended", hasPrompt && key === _recommendedPromptKey);
       }
     }
 
@@ -520,10 +573,13 @@
 
       const library = data && typeof data.prompt_library === "object" ? data.prompt_library : null;
       _currentPromptLibrary = library;
+      _recommendedPromptKey = _promptTypeFromPayload(data ? data.recommended_prompt_type : "");
 
       _currentAiPromptFallback = data && typeof data.ai_prompt === "string" && data.ai_prompt.trim()
         ? data.ai_prompt.trim()
         : "Prompt unavailable";
+
+      _selectedPromptKey = _recommendedPromptKey;
 
       if (!_promptValueByKey("implementation_prompt") && _firstAvailablePromptKey()) {
         _selectedPromptKey = _firstAvailablePromptKey();
