@@ -18,7 +18,7 @@ def _safe_load_json(path: Path) -> dict[str, Any]:
         return {}
 
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {}
 

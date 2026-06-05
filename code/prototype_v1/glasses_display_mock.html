@@ -174,6 +174,18 @@
       border-color: rgba(245, 158, 11, 0.35);
     }
 
+    .status.error {
+      color: #2e0000;
+      background: #ef4444;
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .status.stale {
+      color: #2a1a00;
+      background: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
     .footer {
       color: var(--muted);
       font-size: 0.84rem;
@@ -425,8 +437,13 @@
     const DISPLAY_SOURCE = _apiOverride ? "query-override" : "local-network-default";
     const LOCAL_RESUME_FALLBACK_URL = "./results/resume_now.json";
     const POLL_MS = 2000;
+    const LAST_KNOWN_PAYLOAD_KEY = "glasses_hud_last_known_payload";
 
     let _lastPayloadKey = null;
+    let _lastKnownHudPayload = null;
+    let _lastKnownGuidancePriority = null;
+    let _lastKnownTaskTracking = null;
+    let _lastKnownDecisionInsight = null;
 
     const titleEl = document.getElementById("title");
     const actionEl = document.getElementById("primary_action");
@@ -604,7 +621,11 @@
         return;
       }
 
-      const tracking = data && typeof data.task_tracking === "object" ? data.task_tracking : null;
+      const trackingFromPayload = data && typeof data.task_tracking === "object" ? data.task_tracking : null;
+      if (trackingFromPayload) {
+        _lastKnownTaskTracking = trackingFromPayload;
+      }
+      const tracking = trackingFromPayload || _lastKnownTaskTracking;
       if (!tracking) {
         taskFallbackEl.textContent = "Task continuity unavailable";
         taskFallbackEl.hidden = false;
@@ -634,16 +655,37 @@
         return;
       }
 
-      const decisionValue = data && typeof data.next_step_decision === "string" && data.next_step_decision.trim()
-        ? data.next_step_decision.trim()
+      const fromPayload = data && typeof data === "object" ? {
+        next_step_decision: typeof data.next_step_decision === "string" ? data.next_step_decision : "",
+        decision_reason: typeof data.decision_reason === "string" ? data.decision_reason : "",
+        decision_confidence: data.decision_confidence,
+        decision_factors: Array.isArray(data.decision_factors) ? data.decision_factors : [],
+      } : null;
+
+      const fromPayloadValid = Boolean(
+        fromPayload
+        && String(fromPayload.next_step_decision || "").trim()
+        && String(fromPayload.decision_reason || "").trim()
+        && Number.isFinite(Number(fromPayload.decision_confidence))
+        && Array.isArray(fromPayload.decision_factors)
+        && fromPayload.decision_factors.some((item) => typeof item === "string" && item.trim())
+      );
+
+      if (fromPayloadValid) {
+        _lastKnownDecisionInsight = fromPayload;
+      }
+
+      const source = fromPayloadValid ? fromPayload : _lastKnownDecisionInsight;
+      const decisionValue = source && typeof source.next_step_decision === "string" && source.next_step_decision.trim()
+        ? source.next_step_decision.trim()
         : "";
-      const reasonValue = data && typeof data.decision_reason === "string" && data.decision_reason.trim()
-        ? data.decision_reason.trim()
+      const reasonValue = source && typeof source.decision_reason === "string" && source.decision_reason.trim()
+        ? source.decision_reason.trim()
         : "";
-      const confidenceRaw = data ? data.decision_confidence : null;
+      const confidenceRaw = source ? source.decision_confidence : null;
       const hasConfidence = Number.isFinite(Number(confidenceRaw));
-      const factors = data && Array.isArray(data.decision_factors)
-        ? data.decision_factors.filter((item) => typeof item === "string" && item.trim())
+      const factors = source && Array.isArray(source.decision_factors)
+        ? source.decision_factors.filter((item) => typeof item === "string" && item.trim())
         : [];
 
       const hasRequiredFields = Boolean(decisionValue && reasonValue && hasConfidence && factors.length > 0);
@@ -733,6 +775,19 @@
 
     updateDebugLine();
 
+    const _persistedAtLoad = _readPersistedLastKnown();
+    if (_persistedAtLoad) {
+      _lastKnownHudPayload = _persistedAtLoad;
+      _lastKnownGuidancePriority = typeof _persistedAtLoad.guidance_priority === "object" ? _persistedAtLoad.guidance_priority : null;
+      _lastKnownTaskTracking = typeof _persistedAtLoad.task_tracking === "object" ? _persistedAtLoad.task_tracking : null;
+      _lastKnownDecisionInsight = {
+        next_step_decision: _persistedAtLoad.next_step_decision || "",
+        decision_reason: _persistedAtLoad.decision_reason || "",
+        decision_confidence: _persistedAtLoad.decision_confidence,
+        decision_factors: Array.isArray(_persistedAtLoad.decision_factors) ? _persistedAtLoad.decision_factors : [],
+      };
+    }
+
     function normalize(value, fallback = "No data") {
       if (value === null || value === undefined || value === "") {
         return fallback;
@@ -740,13 +795,79 @@
       return String(value);
     }
 
-    function setWaiting(message) {
+    function _setHudState(state, detail = "") {
+      const normalized = String(state || "stale").toLowerCase();
+      const label = normalized === "error" ? "Error" : normalized === "stale" ? "Stale" : "Connected";
+      statusEl.textContent = label.toUpperCase();
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
+      if (normalized === "error") {
+        statusEl.classList.add("error");
+      } else if (normalized === "stale") {
+        statusEl.classList.add("stale");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      connectionEl.textContent = detail ? `${label}: ${detail}` : label;
+    }
+
+    function _persistLastKnown(payload) {
+      _lastKnownHudPayload = payload;
+      try {
+        localStorage.setItem(LAST_KNOWN_PAYLOAD_KEY, JSON.stringify(payload));
+      } catch (_err) {
+        // Ignore persistence errors.
+      }
+    }
+
+    function _readPersistedLastKnown() {
+      try {
+        const raw = localStorage.getItem(LAST_KNOWN_PAYLOAD_KEY);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function _mergeLastKnown(data) {
+      const payload = data && typeof data === "object" ? { ...data } : {};
+      const fallback = _lastKnownHudPayload && typeof _lastKnownHudPayload === "object" ? _lastKnownHudPayload : null;
+      if (!fallback) {
+        return payload;
+      }
+
+      if ((!payload.guidance_priority || typeof payload.guidance_priority !== "object") && fallback.guidance_priority) {
+        payload.guidance_priority = fallback.guidance_priority;
+      }
+      if ((!payload.task_tracking || typeof payload.task_tracking !== "object") && fallback.task_tracking) {
+        payload.task_tracking = fallback.task_tracking;
+      }
+      const hasDecision = typeof payload.next_step_decision === "string" && payload.next_step_decision.trim();
+      if (!hasDecision && fallback.next_step_decision) {
+        payload.next_step_decision = fallback.next_step_decision;
+      }
+      if ((!payload.decision_reason || !String(payload.decision_reason).trim()) && fallback.decision_reason) {
+        payload.decision_reason = fallback.decision_reason;
+      }
+      if (!Array.isArray(payload.decision_factors) || payload.decision_factors.length === 0) {
+        payload.decision_factors = Array.isArray(fallback.decision_factors) ? fallback.decision_factors : [];
+      }
+      if (!Number.isFinite(Number(payload.decision_confidence))) {
+        payload.decision_confidence = fallback.decision_confidence;
+      }
+      return payload;
+    }
+
+    function setWaiting(message, state = "stale") {
       titleEl.textContent = "Waiting for glasses display data...";
       actionEl.textContent = message;
       actionEl.classList.add("waiting");
       confidenceEl.textContent = "No data";
-      statusEl.textContent = "No data";
-      statusEl.classList.remove("active", "stuck", "switch", "new");
+      _setHudState(state, "No fresh payload");
     }
 
     function renderDisplay(display) {
@@ -760,12 +881,14 @@
       actionEl.classList.remove("waiting");
       confidenceEl.textContent = confidence;
       statusEl.textContent = status;
-      statusEl.classList.remove("active", "stuck", "switch", "new");
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
       if (status === "STUCK") {
         statusEl.classList.add("stuck");
       } else if (status === "ACTIVE") {
         statusEl.classList.add("active");
       }
+
+      _setHudState("connected", "display");
     }
 
     function renderPriority(priority) {
@@ -780,7 +903,7 @@
       actionEl.classList.remove("waiting");
       confidenceEl.textContent = secondaryMessage;
       statusEl.textContent = status;
-      statusEl.classList.remove("active", "stuck", "switch", "new");
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
 
       if (status === "STUCK") {
         statusEl.classList.add("stuck");
@@ -792,7 +915,7 @@
         statusEl.classList.add("active");
       }
 
-      connectionEl.textContent = `Connected (${mode})`;
+      _setHudState("connected", mode);
     }
 
     function renderGuidancePriority(guidancePriority) {
@@ -805,7 +928,7 @@
       actionEl.classList.remove("waiting");
       confidenceEl.textContent = "Guidance";
       statusEl.textContent = level.toUpperCase();
-      statusEl.classList.remove("active", "stuck", "switch", "new");
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
 
       if (level === "critical") {
         statusEl.classList.add("stuck");
@@ -817,7 +940,7 @@
         statusEl.classList.add("active");
       }
 
-      connectionEl.textContent = "Connected (guidance)";
+      _setHudState("connected", "guidance");
     }
 
     async function fetchResumeFallback() {
@@ -856,7 +979,14 @@
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const data = await response.json();
+        const data = _mergeLastKnown(await response.json());
+        const payloadFreshness = data && typeof data.payload_freshness === "object" ? data.payload_freshness : null;
+        const ageSeconds = payloadFreshness && Number.isFinite(Number(payloadFreshness.age_seconds))
+          ? Number(payloadFreshness.age_seconds)
+          : null;
+        const hudState = payloadFreshness && typeof payloadFreshness.state === "string"
+          ? payloadFreshness.state.toLowerCase()
+          : (data && typeof data.hud_status === "string" ? data.hud_status.toLowerCase() : "connected");
         updateTimestamp();
         renderActiveFileContext(data);
         renderTaskContinuity(data);
@@ -869,16 +999,32 @@
         const guidancePriority = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
         const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
         const display = data && typeof data.glasses_display === "object" ? data.glasses_display : null;
+        const fallbackGuidance = await fetchResumeFallback();
+        if (guidancePriority) {
+          _lastKnownGuidancePriority = guidancePriority;
+        }
+
+        if (guidancePriority || fallbackGuidance) {
+          _persistLastKnown(data);
+        }
+
+        const hudDetail = ageSeconds === null ? "fresh" : `${ageSeconds}s old`;
+        _setHudState(hudState, hudDetail);
 
         if (guidancePriority) {
           renderGuidancePriority(guidancePriority);
           return;
         }
 
-        const fallbackGuidance = await fetchResumeFallback();
         if (fallbackGuidance) {
           renderGuidancePriority(fallbackGuidance);
-          connectionEl.textContent = "Connected (resume fallback)";
+          _setHudState(hudState, "resume fallback");
+          return;
+        }
+
+        if (!guidancePriority && _lastKnownGuidancePriority) {
+          renderGuidancePriority(_lastKnownGuidancePriority);
+          _setHudState("stale", "last known guidance");
           return;
         }
 
@@ -888,22 +1034,34 @@
         }
 
         if (!display) {
-          connectionEl.textContent = "Connected, waiting for glasses_display";
-          setWaiting("Analyze an image to populate display_priority or glasses_display.");
+          setWaiting("Analyze an image to populate display_priority or glasses_display.", hudState === "error" ? "error" : "stale");
           return;
         }
 
-        connectionEl.textContent = "Connected";
         renderDisplay(display);
       } catch (_err) {
         _lastPayloadKey = null;
+        const persisted = _readPersistedLastKnown();
+        if (persisted) {
+          _lastKnownHudPayload = persisted;
+          renderActiveFileContext(persisted);
+          renderTaskContinuity(persisted);
+          renderDecisionInsight(persisted);
+          renderAiPrompt(persisted);
+          if (persisted.guidance_priority && typeof persisted.guidance_priority === "object") {
+            _lastKnownGuidancePriority = persisted.guidance_priority;
+            renderGuidancePriority(_lastKnownGuidancePriority);
+          }
+          _setHudState("error", "using last known payload");
+          return;
+        }
+
         renderActiveFileContext(null);
         renderTaskContinuity(null);
         renderDecisionInsight(null);
         renderAiPrompt(null);
-        connectionEl.textContent = "Waiting for API";
         updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
-        setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`);
+        setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`, "error");
       }
     }
 

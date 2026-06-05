@@ -11,6 +11,9 @@ VS Code
 -> Active Editor Signal
 -> Active Editor Context
 -> Context Fusion
+-> Task Tracking
+-> Decision Intelligence
+-> ChatGPT Guidance Engine
 -> Guidance Engine
 -> resume_now.json
 -> FastAPI
@@ -29,6 +32,8 @@ Current Features:
 - Active file awareness
 - File-aware guidance
 - Context fusion
+- Task completion evidence and reason codes
+- Real ChatGPT guidance integration with fallback
 - Desktop prompt panel
 - Copy-to-AI workflow
 
@@ -40,7 +45,7 @@ Design Rules:
 - Prefer additive changes over rewrites
 
 Current Milestone:
-V8.1 Project Memory
+V8.7 Prompt Library
 
 Architecture Relationships:
 - active_editor_context.py -> context_fusion.py

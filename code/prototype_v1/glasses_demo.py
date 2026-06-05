@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -35,6 +36,8 @@ CHATGPT_CONTEXT_PAYLOAD_PATH = RESULTS_DIR / "chatgpt_context_payload.json"
 GUIDANCE_RESPONSE_PATH = RESULTS_DIR / "guidance_response.json"
 CHATGPT_REQUEST_PATH = RESULTS_DIR / "chatgpt_request.json"
 CHATGPT_RESPONSE_RAW_PATH = RESULTS_DIR / "chatgpt_response_raw.json"
+DEVELOPER_VALIDATION_LOG_PATH = RESULTS_DIR / "developer_validation_log.json"
+USABILITY_REPORT_PATH = RESULTS_DIR / "usability_report.json"
 
 # Load project-root environment variables early so OpenAI settings are available
 # before any guidance request logic executes.
@@ -321,6 +324,60 @@ def _is_ui_related_file(active_file_name: str, prompt_mode: str, current_focus: 
     return "display/ui" in current_focus.lower() or "ui" in current_focus.lower()
 
 
+def _to_repo_relative_path(path_text: Any) -> str:
+    raw = str(path_text or "").strip()
+    if not raw:
+        return ""
+
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        try:
+            return candidate.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+        except (OSError, ValueError):
+            return candidate.name
+
+    return Path(raw).as_posix()
+
+
+def _build_git_risk_context(active_file: dict[str, Any]) -> dict[str, Any]:
+    coding_context = _safe_load_json(CODING_CONTEXT_OUTPUT)
+    git_info = coding_context.get("git_intelligence") if isinstance(coding_context.get("git_intelligence"), dict) else {}
+    changed_files = coding_context.get("changed_files") if isinstance(coding_context.get("changed_files"), list) else []
+
+    risk_level = _as_text(git_info.get("risk_level"), fallback="low").lower()
+    recommendation = _as_text(git_info.get("recommendation"), fallback="Review git state")
+    reason = _as_text(git_info.get("reason"), fallback="Git changes require attention.")
+    next_command = _as_text(git_info.get("next_command"), fallback="")
+
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
+    active_file_path = _to_repo_relative_path(active_file.get("active_file_path"))
+
+    active_file_involved = False
+    for item in changed_files:
+        if not isinstance(item, dict):
+            continue
+        changed_path = _to_repo_relative_path(item.get("path"))
+        if not changed_path:
+            continue
+        if active_file_path and changed_path == active_file_path:
+            active_file_involved = True
+            break
+        if active_file_name and Path(changed_path).name == active_file_name:
+            active_file_involved = True
+            break
+
+    blocking = risk_level == "severe" or (risk_level == "high" and active_file_involved)
+
+    return {
+        "risk_level": risk_level,
+        "recommendation": recommendation,
+        "reason": reason,
+        "next_command": next_command,
+        "active_file_involved": active_file_involved,
+        "blocking": blocking,
+    }
+
+
 def _has_recent_implementation_change(active_file: dict[str, Any], prompt_mode: str, current_focus: str) -> bool:
     if bool(active_file.get("is_dirty", False)):
         return True
@@ -342,6 +399,13 @@ def _select_next_step_decision(payload: dict[str, Any]) -> tuple[str, str]:
     active_file_name = _as_text(active_file.get("active_file_name"), fallback="")
     prompt_mode = _as_text(payload.get("prompt_mode"), fallback="")
     current_focus = _as_text(payload.get("current_focus"), fallback="General development")
+    git_risk_context = payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {}
+    git_risk_level = _as_text(git_risk_context.get("risk_level"), fallback="low").lower()
+    git_active_file_involved = bool(git_risk_context.get("active_file_involved", False))
+    git_blocking = bool(git_risk_context.get("blocking", False))
+    validation_evidence_available = bool(payload.get("validation_evidence_available", False))
+    change_context = payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {}
+    file_status = _as_text(change_context.get("file_status"), fallback="clean").lower()
 
     has_terminal_error = bool(payload.get("has_terminal_error", False)) or "terminal_error" in guidance_source
     if has_terminal_error:
@@ -351,11 +415,31 @@ def _select_next_step_decision(payload: dict[str, Any]) -> tuple[str, str]:
         )
         return _apply_architecture_reasoning(active_file_name, decision)
 
-    has_git_priority = "git_intelligence" in guidance_source
-    if has_git_priority:
+    if git_blocking or (git_risk_level == "high" and git_active_file_involved):
         decision = (
             "review_git",
-            "Git changes are present (modified, staged, or untracked) and should be reviewed before the next implementation step.",
+            "High-severity Git risk affects the active file, so review the risky changes before continuing implementation.",
+        )
+        return _apply_architecture_reasoning(active_file_name, decision)
+
+    if active_file_name == "api.py":
+        decision = (
+            "continue_api_task",
+            "The active FastAPI file is the primary work surface; continue the endpoint task before handling advisory Git review.",
+        )
+        return _apply_architecture_reasoning(active_file_name, decision)
+
+    if active_file_name == "context_fusion.py":
+        decision = (
+            "continue_fusion_task",
+            "The active context fusion file is the primary work surface; continue the fusion task before handling advisory Git review.",
+        )
+        return _apply_architecture_reasoning(active_file_name, decision)
+
+    if active_file_name == "glasses_display_mock.html":
+        decision = (
+            "validate_ui_display",
+            "The active UI/display file should be validated next; keep Git review advisory unless risk becomes blocking.",
         )
         return _apply_architecture_reasoning(active_file_name, decision)
 
@@ -370,6 +454,13 @@ def _select_next_step_decision(payload: dict[str, Any]) -> tuple[str, str]:
         decision = (
             "test_changes",
             "UI/display implementation context is active with recent change signals, so validating rendering and polling is the highest-value next step.",
+        )
+        return _apply_architecture_reasoning(active_file_name, decision)
+
+    if active_file_name and file_status == "modified" and not validation_evidence_available:
+        decision = (
+            "validate_recent_changes",
+            "Recent local modifications are present in the active file without validation evidence, so validate the changed lines before continuing implementation.",
         )
         return _apply_architecture_reasoning(active_file_name, decision)
 
@@ -414,6 +505,148 @@ def _apply_architecture_reasoning(active_file_name: str, decision: tuple[str, st
             reason = reason + extra
 
     return decision_name, reason
+
+
+def _change_line_summary(change_context: dict[str, Any]) -> str:
+    lines = change_context.get("changed_lines") if isinstance(change_context.get("changed_lines"), list) else []
+    numbers = sorted({_as_int(item, 0) for item in lines if _as_int(item, 0) > 0})
+    if numbers:
+        return f"Recent changes detected around lines {numbers[0]}-{numbers[-1]}. "
+
+    file_status = _as_text(change_context.get("file_status"), fallback="clean").lower()
+    if file_status in {"modified", "staged", "untracked"}:
+        return "Recent changes detected in this file. "
+    return ""
+
+
+def _build_primary_guidance(payload: dict[str, Any]) -> dict[str, Any]:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    development_context = payload.get("development_context") if isinstance(payload.get("development_context"), dict) else {}
+    active_file_name = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    active_function = _as_text(development_context.get("active_function"), fallback="")
+    change_context = payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {}
+    change_summary = _change_line_summary(change_context)
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    next_step = _as_text(task_tracking.get("next_recommended_step"), fallback="Continue the current task.")
+    decision = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
+    decision_reason = _as_text(payload.get("decision_reason"), fallback="No explicit decision reason available.")
+    has_terminal_error = bool(payload.get("has_terminal_error", False))
+    git_risk_context = payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {}
+    git_blocking = bool(git_risk_context.get("blocking", False))
+
+    if has_terminal_error or decision == "fix_error":
+        return {
+            "headline": "Fix Error",
+            "recommended_action": "Fix the failing terminal error before continuing the active file task.",
+            "reason": decision_reason,
+            "blocking": True,
+            "source": "terminal_error_context",
+            "level": "critical",
+        }
+
+    if git_blocking or decision == "review_git":
+        return {
+            "headline": "Review Risky Git Changes",
+            "recommended_action": _as_text(git_risk_context.get("recommendation"), fallback="Review risky git changes before continuing."),
+            "reason": decision_reason,
+            "blocking": True,
+            "source": "git_intelligence",
+            "level": "high",
+        }
+
+    if decision == "continue_api_task":
+        target = f"You are editing {active_function} in {active_file_name}. " if active_function else f"You are editing {active_file_name}. "
+        return {
+            "headline": "Continue API Task",
+            "recommended_action": f"{target}{change_summary}{next_step or 'Continue the FastAPI endpoint development task.'}",
+            "reason": decision_reason,
+            "blocking": False,
+            "source": "active_file_task",
+            "level": "info",
+        }
+
+    if decision == "continue_fusion_task":
+        target = f"You are editing {active_function} in {active_file_name}. " if active_function else f"You are editing {active_file_name}. "
+        return {
+            "headline": "Continue Context Fusion Task",
+            "recommended_action": f"{target}{change_summary}{next_step or 'Continue the context fusion development task.'}",
+            "reason": decision_reason,
+            "blocking": False,
+            "source": "active_file_task",
+            "level": "info",
+        }
+
+    if decision == "validate_ui_display":
+        target = f"You are editing {active_function} in {active_file_name}. " if active_function else f"You are editing {active_file_name}. "
+        return {
+            "headline": "Validate Display UI",
+            "recommended_action": f"{target}{change_summary}{next_step or 'Validate the display/UI task for the active file.'}",
+            "reason": decision_reason,
+            "blocking": False,
+            "source": "active_file_task",
+            "level": "info",
+        }
+
+    if decision == "validate_recent_changes":
+        target = f"You are editing {active_function} in {active_file_name}. " if active_function else f"You are editing {active_file_name}. "
+        return {
+            "headline": "Validate Recent Changes",
+            "recommended_action": f"{target}{change_summary}{next_step or 'Validate recent local edits before continuing implementation.'}",
+            "reason": decision_reason,
+            "blocking": False,
+            "source": "active_file_task",
+            "level": "info",
+        }
+
+    target = f"You are editing {active_function} in {active_file_name}. " if active_function else f"You are editing {active_file_name}. "
+    return {
+        "headline": "Continue Active File Work",
+        "recommended_action": f"{target}{change_summary}{next_step or f'Continue working in {active_file_name}.'}",
+        "reason": decision_reason,
+        "blocking": False,
+        "source": "active_file_task",
+        "level": "info",
+    }
+
+
+def _build_advisory_guidance(payload: dict[str, Any]) -> list[dict[str, str]]:
+    advisories: list[dict[str, str]] = []
+    git_risk_context = payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {}
+    risk_level = _as_text(git_risk_context.get("risk_level"), fallback="low").lower()
+    if risk_level in {"low", "medium", "high", "severe"} and not bool(git_risk_context.get("blocking", False)):
+        message = _as_text(git_risk_context.get("reason"), fallback="Git review is recommended soon.")
+        next_command = _as_text(git_risk_context.get("next_command"), fallback="")
+        if next_command:
+            message = f"{message} Run: {next_command}"
+        advisories.append({"type": "git_review", "level": "warning", "message": message})
+
+    if _as_text(payload.get("reason_code"), fallback="") == "stale_project_memory":
+        advisories.append({"type": "stale_memory", "level": "warning", "message": "Project memory appears stale relative to runtime progress; prefer fresh workflow evidence for next decisions."})
+
+    if not bool(payload.get("validation_evidence_available", False)):
+        advisories.append({"type": "validation_missing", "level": "warning", "message": "Validation evidence is missing; run a focused check after the next active-file step."})
+
+    return advisories
+
+
+def _apply_guidance_policy(payload: dict[str, Any], guidance_response: dict[str, Any]) -> dict[str, Any]:
+    primary_guidance = payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {}
+    if not primary_guidance:
+        return guidance_response
+
+    aligned = dict(guidance_response) if isinstance(guidance_response, dict) else {}
+    recommended = _as_text(primary_guidance.get("recommended_action"), fallback="")
+    reason = _as_text(primary_guidance.get("reason"), fallback="")
+    blocking = bool(primary_guidance.get("blocking", False))
+
+    if recommended:
+        aligned["recommended_next_step"] = recommended
+
+    if reason and not _as_text(aligned.get("reasoning"), fallback=""):
+        aligned["reasoning"] = reason
+
+    aligned["blocked"] = blocking or bool(aligned.get("blocked", False))
+    return aligned
 
 
 def _build_mode_prompt(mode: str, payload: dict[str, Any], project_memory: dict[str, str]) -> str:
@@ -616,11 +849,25 @@ def _build_prompt_library(payload: dict[str, Any], project_memory: dict[str, str
 
 def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, str]) -> str:
     active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    development_context = payload.get("development_context") if isinstance(payload.get("development_context"), dict) else {}
+    change_context = payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {}
     task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
     architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
 
     project_name = _as_text(project_memory.get("project_name"), fallback=REPO_NAME)
     current_file = _as_text(active_file.get("active_file_name"), fallback="unavailable")
+    active_function = _as_text(development_context.get("active_function"), fallback="")
+    active_class = _as_text(development_context.get("active_class"), fallback="")
+    line_number = _as_int(development_context.get("line_number"), 0)
+    language = _as_text(development_context.get("language"), fallback=_as_text(active_file.get("language_id"), fallback="unknown"))
+    symbol_confidence = float(development_context.get("symbol_confidence", 0.0) or 0.0)
+    symbol_confidence = max(0.0, min(1.0, symbol_confidence))
+    file_status = _as_text(change_context.get("file_status"), fallback="clean")
+    changed_lines = change_context.get("changed_lines") if isinstance(change_context.get("changed_lines"), list) else []
+    changed_lines_text = ", ".join([str(_as_int(item, 0)) for item in changed_lines if _as_int(item, 0) > 0]) or "none"
+    recently_modified = bool(change_context.get("recently_modified", False))
+    change_confidence = float(change_context.get("change_confidence", 0.0) or 0.0)
+    change_confidence = max(0.0, min(1.0, change_confidence))
     current_task = _as_text(task_tracking.get("current_task"), fallback=_as_text(payload.get("current_focus"), fallback="General development"))
     last_step = _as_text(task_tracking.get("last_completed_step"), fallback="No completed step recorded")
     next_step = _as_text(task_tracking.get("next_recommended_step"), fallback="Continue implementation")
@@ -684,6 +931,15 @@ def _build_actionable_prompt(payload: dict[str, Any], project_memory: dict[str, 
     return (
         f"Project name: {project_name}\n"
         f"Current active file: {current_file}\n"
+        f"Active function: {active_function or 'unknown'}\n"
+        f"Active class: {active_class or 'unknown'}\n"
+        f"Line number: {line_number}\n"
+        f"Language: {language}\n"
+        f"Symbol confidence: {symbol_confidence:.2f}\n"
+        f"File status: {file_status}\n"
+        f"Changed lines: {changed_lines_text}\n"
+        f"Recently modified: {recently_modified}\n"
+        f"Change confidence: {change_confidence:.2f}\n"
         f"Current task: {current_task}\n"
         f"Last completed step: {last_step}\n"
         f"Next recommended step: {next_step}\n"
@@ -710,6 +966,10 @@ def _build_chatgpt_prompt_template() -> str:
     return (
         "You are the project guidance engine for Custom Meta AI Glasses.\n"
         "Use the provided context to produce concise, evidence-backed engineering guidance.\n\n"
+        "When development_context.active_function is available, reference that function/symbol explicitly in the recommended next step.\n"
+        "When change_context indicates recent edits, reference changed line ranges and prioritize validating those changes before broader implementation.\n"
+        "Primary guidance must focus on the next concrete step in the current active file.\n"
+        "Advisory warnings such as Git review, stale memory, or missing validation must not override primary guidance unless a blocking signal is present.\n\n"
         "Answer all of the following:\n"
         "1. What is the user currently working on?\n"
         "2. What was most recently completed?\n"
@@ -723,6 +983,8 @@ def _build_chatgpt_prompt_template() -> str:
 
 def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict[str, str]) -> dict[str, Any]:
     active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    development_context = payload.get("development_context") if isinstance(payload.get("development_context"), dict) else {}
+    change_context = payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {}
     task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
     project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
     architecture_context = payload.get("architecture_context") if isinstance(payload.get("architecture_context"), dict) else {}
@@ -733,6 +995,8 @@ def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict
     terminal_context = _safe_load_json(TERMINAL_ERROR_OUTPUT)
 
     decision_factors = payload.get("decision_factors") if isinstance(payload.get("decision_factors"), list) else []
+    primary_guidance = payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {}
+    advisory_guidance = payload.get("advisory_guidance") if isinstance(payload.get("advisory_guidance"), list) else []
 
     return {
         "active_file": {
@@ -741,6 +1005,20 @@ def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict
             "language_id": _as_text(active_file.get("language_id"), fallback=""),
             "is_dirty": bool(active_file.get("is_dirty", False)),
         },
+        "development_context": {
+            "active_file": _as_text(development_context.get("active_file"), fallback=_as_text(active_file.get("active_file_name"), fallback="")),
+            "active_function": _as_text(development_context.get("active_function"), fallback=""),
+            "active_class": _as_text(development_context.get("active_class"), fallback=""),
+            "line_number": _as_int(development_context.get("line_number"), 0),
+            "language": _as_text(development_context.get("language"), fallback=_as_text(active_file.get("language_id"), fallback="")),
+            "symbol_confidence": float(development_context.get("symbol_confidence", 0.0) or 0.0),
+        },
+        "change_context": {
+            "file_status": _as_text(change_context.get("file_status"), fallback="clean"),
+            "changed_lines": [_as_int(item, 0) for item in change_context.get("changed_lines", []) if _as_int(item, 0) > 0] if isinstance(change_context.get("changed_lines"), list) else [],
+            "recently_modified": bool(change_context.get("recently_modified", False)),
+            "change_confidence": float(change_context.get("change_confidence", 0.0) or 0.0),
+        },
         "current_task": _as_text(task_tracking.get("current_task"), fallback="General development"),
         "task_completion_status": _as_text(payload.get("task_completion_status"), fallback="unknown"),
         "completion_evidence": [str(item).strip() for item in payload.get("completion_evidence", []) if str(item).strip()] if isinstance(payload.get("completion_evidence"), list) else [],
@@ -748,6 +1026,9 @@ def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict
         "project_progress": project_progress,
         "architecture_context": architecture_context,
         "workflow_evidence": workflow_evidence,
+        "primary_guidance": primary_guidance,
+        "advisory_guidance": advisory_guidance,
+        "git_risk_context": payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {},
         "git_intelligence": git_intelligence,
         "terminal_context": terminal_context,
         "decision_confidence": float(payload.get("decision_confidence", 0.0) or 0.0),
@@ -763,6 +1044,7 @@ def _build_chatgpt_context_payload(payload: dict[str, Any], project_memory: dict
 
 
 def _build_mock_chatgpt_guidance_response(payload: dict[str, Any]) -> dict[str, Any]:
+    primary_guidance = payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {}
     status = _as_text(payload.get("task_completion_status"), fallback="unknown").lower()
     decision_reason = _as_text(payload.get("decision_reason"), fallback="No decision reason available")
     current_task = _as_text(
@@ -771,13 +1053,13 @@ def _build_mock_chatgpt_guidance_response(payload: dict[str, Any]) -> dict[str, 
     )
     project_progress = payload.get("project_progress") if isinstance(payload.get("project_progress"), dict) else {}
     next_milestone = _as_text(project_progress.get("current_milestone"), fallback="next milestone")
-    recommended_next_step = _as_text(payload.get("next_step_decision"), fallback="continue_implementation")
+    recommended_next_step = _as_text(primary_guidance.get("recommended_action"), fallback=_as_text(payload.get("next_step_decision"), fallback="continue_implementation"))
 
-    blocked = status == "blocked"
+    blocked = status == "blocked" or bool(primary_guidance.get("blocking", False))
 
     if blocked:
         summary = "User is blocked by a terminal error and needs blocker resolution first."
-        recommended_next_step = "Resolve the terminal error and re-run the failing command before continuing implementation."
+        recommended_next_step = _as_text(primary_guidance.get("recommended_action"), fallback="Resolve the terminal error and re-run the failing command before continuing implementation.")
         reasoning = "Terminal evidence has highest priority and indicates an active blocker."
         validation_steps = [
             "Re-run the previously failing command and confirm it exits with code 0.",
@@ -795,7 +1077,7 @@ def _build_mock_chatgpt_guidance_response(payload: dict[str, Any]) -> dict[str, 
         ]
     elif status == "in_progress":
         summary = f"User is actively working on {current_task}."
-        recommended_next_step = "Complete the current recommended task step before starting a new milestone."
+        recommended_next_step = _as_text(primary_guidance.get("recommended_action"), fallback="Complete the current recommended task step before starting a new milestone.")
         reasoning = "Active task evidence exists, but completion evidence is not yet present."
         validation_steps = [
             "Complete the next_recommended_step for the active task.",
@@ -1113,7 +1395,9 @@ def _detect_task_completion(payload: dict[str, Any], project_memory: dict[str, s
         }
 
     git_risk = _as_text(workflow_evidence.get("git_risk_level"), fallback="low").lower()
-    if git_evidence_available and git_risk in {"medium", "high"}:
+    git_risk_context = payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {}
+    git_blocking = bool(git_risk_context.get("blocking", False))
+    if git_evidence_available and git_blocking and git_risk in {"high", "severe"}:
         completion_evidence.append(f"Git risk level {git_risk} requires review before completion can be asserted")
         return {
             "task_completion_status": "in_progress",
@@ -1188,6 +1472,7 @@ def _advance_project_progress_if_completed(progress: dict[str, str], status: str
 def _apply_completion_to_decision(payload: dict[str, Any], assessment: dict[str, Any]) -> None:
     status = _as_text(assessment.get("task_completion_status"), fallback="unknown")
     reason_code = _as_text(assessment.get("reason_code"), fallback="weak_context")
+    git_risk_context = payload.get("git_risk_context") if isinstance(payload.get("git_risk_context"), dict) else {}
 
     if status == "blocked":
         payload["next_step_decision"] = "fix_error"
@@ -1206,8 +1491,11 @@ def _apply_completion_to_decision(payload: dict[str, Any], assessment: dict[str,
         return
 
     if reason_code == "git_changes_need_review":
-        payload["next_step_decision"] = "review_git"
-        payload["decision_reason"] = "Git evidence indicates medium/high change risk, so review changes before continuing implementation."
+        if bool(git_risk_context.get("blocking", False)):
+            payload["next_step_decision"] = "review_git"
+            payload["decision_reason"] = "Git evidence indicates blocking high/severe change risk, so review changes before continuing implementation."
+        else:
+            payload["decision_reason"] = f"{_as_text(payload.get('decision_reason'), fallback='Continue the active file task first.')} Git review remains advisory until risk becomes blocking."
         return
 
     if status == "in_progress" and _as_text(payload.get("next_step_decision"), fallback="") == "continue_implementation":
@@ -1274,6 +1562,189 @@ def _safe_load_json(path: Path) -> dict[str, Any]:
 def _as_text(value: Any, fallback: str = "") -> str:
     text = str(value).strip() if value is not None else ""
     return text if text else fallback
+
+
+def _as_int(value: Any, fallback: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _default_validation_log() -> dict[str, Any]:
+    return {
+        "last_state": {
+            "active_file": "",
+            "active_function": "",
+            "next_step_decision": "",
+        },
+        "transitions": [],
+        "entries": [],
+    }
+
+
+def _load_validation_log() -> dict[str, Any]:
+    payload = _safe_load_json(DEVELOPER_VALIDATION_LOG_PATH)
+    if not payload:
+        return _default_validation_log()
+
+    entries = payload.get("entries") if isinstance(payload.get("entries"), list) else []
+    transitions = payload.get("transitions") if isinstance(payload.get("transitions"), list) else []
+    last_state = payload.get("last_state") if isinstance(payload.get("last_state"), dict) else {}
+
+    return {
+        "last_state": {
+            "active_file": _as_text(last_state.get("active_file"), fallback=""),
+            "active_function": _as_text(last_state.get("active_function"), fallback=""),
+            "next_step_decision": _as_text(last_state.get("next_step_decision"), fallback=""),
+        },
+        "transitions": [item for item in transitions if isinstance(item, dict)],
+        "entries": [item for item in entries if isinstance(item, dict)],
+    }
+
+
+def _usefulness_scores(payload: dict[str, Any], transition_count: int) -> dict[str, int]:
+    active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+    development_context = payload.get("development_context") if isinstance(payload.get("development_context"), dict) else {}
+    change_context = payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {}
+
+    file_awareness = bool(_as_text(active_file.get("active_file_name"), fallback=""))
+    function_awareness = bool(_as_text(development_context.get("active_function"), fallback=""))
+    change_awareness = bool(change_context.get("recently_modified", False)) or _as_text(change_context.get("file_status"), fallback="clean") != "clean"
+    validation_awareness = bool(payload.get("validation_evidence_available", False)) or _as_text(payload.get("next_step_decision"), fallback="").startswith("validate")
+
+    specificity_ratio = (int(file_awareness) + int(function_awareness) + int(change_awareness) + int(validation_awareness)) / 4
+    actionability_ratio = (
+        int(file_awareness) * 0.2
+        + int(function_awareness) * 0.2
+        + int(change_awareness) * 0.3
+        + int(validation_awareness) * 0.3
+    )
+
+    stability = max(0, 100 - min(3, max(0, transition_count)) * 35)
+    return {
+        "guidance_stability": int(round(stability)),
+        "guidance_specificity": int(round(specificity_ratio * 100)),
+        "guidance_actionability": int(round(actionability_ratio * 100)),
+    }
+
+
+def _build_usability_report(log_payload: dict[str, Any]) -> dict[str, Any]:
+    entries = log_payload.get("entries") if isinstance(log_payload.get("entries"), list) else []
+    transitions = log_payload.get("transitions") if isinstance(log_payload.get("transitions"), list) else []
+
+    guidance_keys: list[str] = []
+    repetitive_guidance_count = 0
+    previous_key = ""
+
+    specificity_scores: list[int] = []
+    actionability_scores: list[int] = []
+    guidance_changes_by_file: dict[str, int] = {}
+
+    for entry in entries:
+        primary = entry.get("primary_guidance") if isinstance(entry.get("primary_guidance"), dict) else {}
+        headline = _as_text(primary.get("headline"), fallback="")
+        action = _as_text(primary.get("recommended_action"), fallback="")
+        guidance_key = f"{headline}|{action}" if headline or action else "unknown"
+        guidance_keys.append(guidance_key)
+
+        if previous_key and guidance_key == previous_key:
+            repetitive_guidance_count += 1
+        previous_key = guidance_key
+
+        usefulness = entry.get("usefulness_scores") if isinstance(entry.get("usefulness_scores"), dict) else {}
+        specificity_scores.append(_as_int(usefulness.get("guidance_specificity"), 0))
+        actionability_scores.append(_as_int(usefulness.get("guidance_actionability"), 0))
+
+    for transition in transitions:
+        if _as_text(transition.get("field"), fallback="") != "next_step_decision":
+            continue
+        active_file = _as_text(transition.get("active_file"), fallback="unknown") or "unknown"
+        guidance_changes_by_file[active_file] = guidance_changes_by_file.get(active_file, 0) + 1
+
+    most_common_guidance = {"guidance": "none", "count": 0}
+    if guidance_keys:
+        top_guidance, top_count = Counter(guidance_keys).most_common(1)[0]
+        most_common_guidance = {"guidance": top_guidance, "count": top_count}
+
+    avg_specificity = round(sum(specificity_scores) / len(specificity_scores), 2) if specificity_scores else 0.0
+    avg_actionability = round(sum(actionability_scores) / len(actionability_scores), 2) if actionability_scores else 0.0
+
+    return {
+        "generated_at": _utc_now_iso(),
+        "total_entries": len(entries),
+        "total_transitions": len(transitions),
+        "most_common_guidance": most_common_guidance,
+        "repetitive_guidance_count": repetitive_guidance_count,
+        "guidance_changes_by_file": guidance_changes_by_file,
+        "average_specificity_score": avg_specificity,
+        "average_actionability_score": avg_actionability,
+    }
+
+
+def _update_developer_validation(payload: dict[str, Any]) -> None:
+    validation_log = _load_validation_log()
+    last_state = validation_log.get("last_state") if isinstance(validation_log.get("last_state"), dict) else {}
+    transitions = validation_log.get("transitions") if isinstance(validation_log.get("transitions"), list) else []
+    entries = validation_log.get("entries") if isinstance(validation_log.get("entries"), list) else []
+
+    active_file = _as_text((payload.get("active_file") or {}).get("active_file_name") if isinstance(payload.get("active_file"), dict) else "", fallback="")
+    active_function = _as_text((payload.get("development_context") or {}).get("active_function") if isinstance(payload.get("development_context"), dict) else "", fallback="")
+    next_step_decision = _as_text(payload.get("next_step_decision"), fallback="")
+
+    transition_count = 0
+    for field, current_value in {
+        "active_file": active_file,
+        "active_function": active_function,
+        "next_step_decision": next_step_decision,
+    }.items():
+        previous_value = _as_text(last_state.get(field), fallback="")
+        if current_value != previous_value:
+            transition_count += 1
+            transitions.append(
+                {
+                    "timestamp": _utc_now_iso(),
+                    "field": field,
+                    "previous": previous_value,
+                    "current": current_value,
+                    "active_file": active_file,
+                }
+            )
+
+    usefulness_scores = _usefulness_scores(payload, transition_count)
+    entries.append(
+        {
+            "timestamp": _utc_now_iso(),
+            "active_file": active_file,
+            "active_function": active_function,
+            "next_step_decision": next_step_decision,
+            "primary_guidance": payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {},
+            "advisory_guidance": payload.get("advisory_guidance") if isinstance(payload.get("advisory_guidance"), list) else [],
+            "change_context": payload.get("change_context") if isinstance(payload.get("change_context"), dict) else {},
+            "decision_confidence": float(payload.get("decision_confidence", 0.0) or 0.0),
+            "usefulness_scores": usefulness_scores,
+        }
+    )
+
+    updated_log = {
+        "last_state": {
+            "active_file": active_file,
+            "active_function": active_function,
+            "next_step_decision": next_step_decision,
+        },
+        "transitions": transitions,
+        "entries": entries,
+    }
+
+    report = _build_usability_report(updated_log)
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    DEVELOPER_VALIDATION_LOG_PATH.write_text(json.dumps(updated_log, ensure_ascii=False, indent=2), encoding="utf-8")
+    USABILITY_REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _run_script(script_path: Path, args: list[str] | None = None) -> dict[str, Any]:
@@ -1572,6 +2043,8 @@ def _select_recommended_prompt_type(payload: dict[str, Any]) -> str:
         return "validation"
 
     decision = _as_text(payload.get("next_step_decision"), fallback="")
+    if decision == "validate_recent_changes":
+        return "validation"
     if decision == "review_git":
         return "git_review"
 
@@ -1610,6 +2083,23 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     payload["validation_evidence_available"] = bool(fusion_payload.get("validation_evidence_available", False))
     payload["terminal_evidence_available"] = bool(fusion_payload.get("terminal_evidence_available", False))
     payload["git_evidence_available"] = bool(fusion_payload.get("git_evidence_available", False))
+    payload["git_risk_context"] = fusion_payload.get("git_risk_context") if isinstance(fusion_payload.get("git_risk_context"), dict) else _build_git_risk_context(active_file)
+    development_context = fusion_payload.get("development_context") if isinstance(fusion_payload.get("development_context"), dict) else {}
+    change_context = fusion_payload.get("change_context") if isinstance(fusion_payload.get("change_context"), dict) else {}
+    payload["development_context"] = {
+        "active_file": _as_text(development_context.get("active_file"), fallback=_as_text(active_file.get("active_file_name"), fallback="")),
+        "active_function": _as_text(development_context.get("active_function"), fallback=""),
+        "active_class": _as_text(development_context.get("active_class"), fallback=""),
+        "line_number": _as_int(development_context.get("line_number"), 0),
+        "language": _as_text(development_context.get("language"), fallback=_as_text(active_file.get("language_id"), fallback="")),
+        "symbol_confidence": float(development_context.get("symbol_confidence", 0.0) or 0.0),
+    }
+    payload["change_context"] = {
+        "file_status": _as_text(change_context.get("file_status"), fallback="clean"),
+        "changed_lines": [_as_int(item, 0) for item in change_context.get("changed_lines", []) if _as_int(item, 0) > 0] if isinstance(change_context.get("changed_lines"), list) else [],
+        "recently_modified": bool(change_context.get("recently_modified", False)),
+        "change_confidence": float(change_context.get("change_confidence", 0.0) or 0.0),
+    }
 
     project_memory = _load_project_memory_summary()
     payload["project_progress"] = _load_project_progress(project_memory)
@@ -1637,6 +2127,22 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
     )
     _apply_completion_to_decision(payload, completion_assessment)
 
+    payload["primary_guidance"] = _build_primary_guidance(payload)
+    payload["advisory_guidance"] = _build_advisory_guidance(payload)
+
+    primary_guidance = payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {}
+    payload["recommended_next_action"] = _as_text(
+        primary_guidance.get("recommended_action"),
+        fallback=_as_text(payload.get("recommended_next_action"), fallback="Continue current implementation."),
+    )
+    payload["guidance_priority"] = {
+        "level": _as_text(primary_guidance.get("level"), fallback="info"),
+        "source": _as_text(primary_guidance.get("source"), fallback="active_file_task"),
+        "headline": _as_text(primary_guidance.get("headline"), fallback="Continue Active File Work"),
+        "recommended_action": payload["recommended_next_action"],
+        "message": _as_text(primary_guidance.get("reason"), fallback="Focus on the next active-file step."),
+    }
+
     confidence, factors = _compute_decision_confidence(payload, _as_text(payload.get("next_step_decision"), fallback=decision))
     payload["decision_confidence"] = confidence
     payload["decision_factors"] = factors
@@ -1646,6 +2152,7 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
 
     chatgpt_context_payload = _build_chatgpt_context_payload(payload, project_memory)
     guidance_response, guidance_source, openai_debug = _generate_guidance_response(payload, chatgpt_context_payload)
+    guidance_response = _apply_guidance_policy(payload, guidance_response)
     payload["guidance_response"] = guidance_response
     payload["guidance_source"] = guidance_source
     payload["recommended_next_action"] = _as_text(
@@ -1667,6 +2174,9 @@ def _with_active_file_context(resume_payload: dict[str, Any]) -> dict[str, Any]:
 
     payload["ai_prompt"] = _build_mode_prompt(payload["prompt_mode"], payload, project_memory)
     _write_task_completion(completion_assessment, payload)
+    _update_developer_validation(payload)
+    payload["generated_at"] = _utc_now_iso()
+    payload["age_seconds"] = 0
 
     return payload
 
@@ -1707,7 +2217,11 @@ def _build_git_intelligence_resume_payload() -> dict[str, Any] | None:
         return None
 
     risk_level = _as_text(git_info.get("risk_level")).lower()
-    if risk_level not in {"medium", "high"}:
+    active_file_available, active_file = _load_active_file_context()
+    git_risk_context = _build_git_risk_context(active_file if active_file_available else _active_file_defaults())
+    if risk_level not in {"high", "severe"}:
+        return None
+    if risk_level == "high" and not bool(git_risk_context.get("active_file_involved", False)):
         return None
 
     recommended_action = _as_text(
