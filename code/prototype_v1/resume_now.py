@@ -1,3 +1,27 @@
+"""resume_now.py — LEGACY — DO NOT RUN
+
+LEGACY WARNING — NOT PART OF THE V16+ CANONICAL RUNTIME
+========================================================
+This file is a pre-V16 standalone resume generator. It is quarantined and
+must not be run as part of normal development or hardware validation workflows.
+
+RISKS IF RUN:
+  - Writes results/resume_now.json directly using a different payload schema,
+    overwriting the canonical HUD artifact owned by glasses_demo.py --auto.
+  - Runs coding_context_pack.py and session_recovery.py as subprocesses
+    using sys.executable (not the venv Python), bypassing V16 interpreter guards.
+  - The resume_now.json schema it produces does not match what api.py expects
+    for /glasses/latest, causing the HUD to display stale or malformed data.
+
+CANONICAL STARTUP COMMAND:
+  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+
+CANONICAL resume_now.json WRITER:
+  glasses_demo.py --auto (called by refresh_guidance.py --watch)
+
+Do not run this file. If you must run it for historical reference only,
+pass --allow-legacy-run as the first argument.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -185,4 +209,32 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
+    if "--allow-legacy-run" not in _sys.argv:
+        print(
+            "\n"
+            "LEGACY FILE — BLOCKED\n"
+            "=====================\n"
+            "resume_now.py is not part of the V16+ canonical runtime.\n"
+            "\n"
+            "Running it would:\n"
+            "  - Overwrite results/resume_now.json with a schema that does not match\n"
+            "    what api.py expects, breaking the /glasses/latest HUD endpoint\n"
+            "  - Run coding_context_pack.py and session_recovery.py using the wrong\n"
+            "    Python interpreter, bypassing V16 interpreter guards\n"
+            "  - Race against the canonical pipeline writer (glasses_demo.py --auto)\n"
+            "\n"
+            "Canonical startup command:\n"
+            "  venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
+            "\n"
+            "Canonical resume_now.json writer:\n"
+            "  glasses_demo.py --auto (called by refresh_guidance.py --watch)\n"
+            "\n"
+            "To override (not recommended):\n"
+            "  python resume_now.py --allow-legacy-run\n",
+            file=_sys.stderr,
+        )
+        raise SystemExit(1)
+
     main()

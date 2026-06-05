@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import atexit
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import argparse
 import contextlib
@@ -16,8 +18,11 @@ from typing import Any
 
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent.parent
+VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
 RESULTS_DIR = BASE_DIR / "results"
 RESUME_NOW_PATH = RESULTS_DIR / "resume_now.json"
+WATCH_LOCK_PATH = RESULTS_DIR / "refresh_guidance_watch.lock"
 
 
 @dataclass
@@ -26,6 +31,79 @@ class StepResult:
     ok: bool
     method: str
     detail: str = ""
+
+
+def _normalized_path(path: Path) -> str:
+    return str(path.resolve()).casefold()
+
+
+def _is_canonical_python() -> bool:
+    try:
+        return _normalized_path(Path(sys.executable)) == _normalized_path(VENV_PYTHON)
+    except OSError:
+        return False
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    if not lock_path.exists() or not lock_path.is_file():
+        return None
+
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+        return int(raw)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _acquire_single_instance_lock(lock_path: Path, label: str) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            existing_pid = _read_lock_pid(lock_path)
+            if existing_pid is not None and _process_is_running(existing_pid):
+                print(f"{label}: already running as PID {existing_pid}; refusing to start a duplicate.")
+                return False
+
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                print(f"{label}: could not clear stale lock {lock_path}: {exc}")
+                return False
+            continue
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()}\n")
+            handle.write(f"{sys.executable}\n")
+        return True
+
+
+def _release_single_instance_lock(lock_path: Path) -> None:
+    current_pid = _read_lock_pid(lock_path)
+    if current_pid != os.getpid():
+        return
+
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
 
 
 def _file_signature(path: Path) -> tuple[bool, int, int, str]:
@@ -64,7 +142,7 @@ def _run_subprocess(script_name: str, args: list[str] | None = None) -> StepResu
             detail=f"script not found: {script_path}",
         )
 
-    command = [sys.executable, str(script_path), *(args or [])]
+    command = [str(VENV_PYTHON), str(script_path), *(args or [])]
     result = subprocess.run(
         command,
         cwd=str(BASE_DIR),
@@ -266,11 +344,26 @@ def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     args = _parse_args()
 
+    if not _is_canonical_python():
+        print(f"refresh_guidance.py: refusing to start under {sys.executable}; use {VENV_PYTHON}")
+        raise SystemExit(1)
+
+    if not _acquire_single_instance_lock(WATCH_LOCK_PATH, "refresh_guidance.py"):
+        raise SystemExit(1)
+
+    atexit.register(_release_single_instance_lock, WATCH_LOCK_PATH)
+
     if args.watch:
-        _watch_loop(interval_seconds=5)
+        try:
+            _watch_loop(interval_seconds=5)
+        finally:
+            _release_single_instance_lock(WATCH_LOCK_PATH)
         return
 
-    _run_refresh_once(verbose=True)
+    try:
+        _run_refresh_once(verbose=True)
+    finally:
+        _release_single_instance_lock(WATCH_LOCK_PATH)
 
 
 if __name__ == "__main__":

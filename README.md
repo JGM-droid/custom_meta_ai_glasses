@@ -5,6 +5,50 @@ This project is a local-first AI prototype that explores workflow-aware assistan
 Most AI assistants are effectively stateless and optimized for single interactions. They respond to the current prompt or screenshot, but they typically do not retain workflow context over time.
 
 This prototype focuses on continuity across observations: it analyzes screenshots, maintains session state, tracks progress, detects stalled steps, and generates concise next-step guidance so users can continue technical workflows with less friction.
+## Canonical Runtime (V16+)
+
+> **One startup path. One writer per artifact. Venv only.**
+
+### Start the assistant
+
+```
+venv\Scripts\python.exe code\prototype_v1\start_assistant.py
+```
+
+This is the **only valid startup command**. It starts the API server and the 5-second pipeline watcher as guarded subprocesses, pinned to the project venv, with single-instance lockfiles.
+
+### Canonical runtime files
+
+| Role | File |
+|---|---|
+| Startup entry point | `code/prototype_v1/start_assistant.py` |
+| Pipeline watcher (spawned by start_assistant) | `code/prototype_v1/refresh_guidance.py` |
+| Signal fusion | `code/prototype_v1/context_fusion.py` |
+| HUD payload generator | `code/prototype_v1/glasses_demo.py` |
+| API server | `code/prototype_v1/api.py` |
+| Active-file signal | `vscode_extension/active-file-signal/extension.js` |
+
+### One writer per artifact
+
+| Artifact | Canonical writer |
+|---|---|
+| `results/active_editor_state.json` | VS Code extension only |
+| `results/context_fusion.json` | `context_fusion.py` only |
+| `results/resume_now.json` | `glasses_demo.py --auto` only |
+
+### Legacy files — do not run
+
+These files are quarantined. Running them will create duplicate runtime chains and bypass V16 single-instance guards. They will refuse to run by default and print an error.
+
+| File | Risk |
+|---|---|
+| `code/prototype_v1/local_demo_launcher.py` | Starts duplicate uvicorn on :8001, writes resume_now.json |
+| `code/prototype_v1/ngrok_demo_launcher.py` | Starts duplicate uvicorn on :8001, conflicts with Cloudflare tunnel |
+| `code/prototype_v1/demo_server_manager.py` | `--start` flag spawns unvenv-pinned uvicorn |
+| `code/prototype_v1/resume_now.py` | Overwrites resume_now.json with wrong schema |
+
+---
+
 
 ## Why I Built This
 

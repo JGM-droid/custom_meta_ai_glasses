@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import shutil
@@ -14,13 +15,16 @@ from urllib.request import urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent.parent
+VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
+START_ASSISTANT_LOCK = BASE_DIR / "results" / "start_assistant.lock"
 API_PORT = 8001
 API_LATEST_URL = f"http://127.0.0.1:{API_PORT}/latest"
 DESKTOP_URL = f"http://127.0.0.1:{API_PORT}/glasses_display_mock.html"
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
 
 API_COMMAND = [
-    sys.executable,
+    str(VENV_PYTHON),
     "-m",
     "uvicorn",
     "api:app",
@@ -32,10 +36,83 @@ API_COMMAND = [
     str(BASE_DIR),
 ]
 REFRESH_WATCH_COMMAND = [
-    sys.executable,
+    str(VENV_PYTHON),
     str(BASE_DIR / "refresh_guidance.py"),
     "--watch",
 ]
+
+
+def _normalized_path(path: Path) -> str:
+    return str(path.resolve()).casefold()
+
+
+def _is_canonical_python() -> bool:
+    try:
+        return _normalized_path(Path(sys.executable)) == _normalized_path(VENV_PYTHON)
+    except OSError:
+        return False
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    if not lock_path.exists() or not lock_path.is_file():
+        return None
+
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+        return int(raw)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _acquire_single_instance_lock(lock_path: Path, label: str) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            existing_pid = _read_lock_pid(lock_path)
+            if existing_pid is not None and _process_is_running(existing_pid):
+                print(f"{label}: already running as PID {existing_pid}; refusing to start a duplicate.")
+                return False
+
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                print(f"{label}: could not clear stale lock {lock_path}: {exc}")
+                return False
+            continue
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()}\n")
+            handle.write(f"{sys.executable}\n")
+        return True
+
+
+def _release_single_instance_lock(lock_path: Path) -> None:
+    current_pid = _read_lock_pid(lock_path)
+    if current_pid != os.getpid():
+        return
+
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
 
 
 def _start_process(command: list[str]) -> subprocess.Popen[str]:
@@ -121,6 +198,16 @@ def _match_ngrok_processes(processes: list[dict[str, Any]]) -> list[dict[str, An
     return matches
 
 
+def _refuse_duplicates(label: str, matches: list[dict[str, Any]]) -> bool:
+    if not matches:
+        return False
+
+    pids = [str(item.get("ProcessId", "?")) for item in matches]
+    noun = "process" if len(matches) == 1 else "processes"
+    print(f"{label}: already running as {noun} {', '.join(pids)}; refusing to start a duplicate.")
+    return True
+
+
 def _warn_duplicates(label: str, matches: list[dict[str, Any]]) -> None:
     if len(matches) <= 1:
         return
@@ -204,13 +291,23 @@ def main() -> int:
     api_process: subprocess.Popen[str] | None = None
     refresh_process: subprocess.Popen[str] | None = None
 
+    if not _is_canonical_python():
+        print(f"start_assistant.py: refusing to start under {sys.executable}; use {VENV_PYTHON}")
+        return 1
+
+    if not _acquire_single_instance_lock(START_ASSISTANT_LOCK, "start_assistant.py"):
+        return 1
+
+    atexit.register(_release_single_instance_lock, START_ASSISTANT_LOCK)
+
     processes = _fetch_processes()
     api_matches = _match_api_processes(processes)
     refresh_matches = _match_refresh_watch_processes(processes)
     ngrok_matches = _match_ngrok_processes(processes)
 
-    _warn_duplicates("uvicorn API", api_matches)
-    _warn_duplicates("refresh watcher", refresh_matches)
+    if _refuse_duplicates("uvicorn API", api_matches) or _refuse_duplicates("refresh watcher", refresh_matches):
+        return 1
+
     _warn_duplicates("ngrok", ngrok_matches)
 
     try:
@@ -250,6 +347,7 @@ def main() -> int:
     finally:
         _terminate_process(refresh_process)
         _terminate_process(api_process)
+        _release_single_instance_lock(START_ASSISTANT_LOCK)
 
     return 0
 

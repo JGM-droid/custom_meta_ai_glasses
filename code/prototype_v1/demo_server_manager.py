@@ -1,4 +1,27 @@
-"""demo_server_manager.py — V5.2 Local Demo Server Manager
+"""demo_server_manager.py — LEGACY — DO NOT RUN
+
+LEGACY WARNING — NOT PART OF THE V16+ CANONICAL RUNTIME
+========================================================
+This file is a V5.2-era diagnostic tool. It is quarantined and must not be
+run as part of normal development or hardware validation workflows.
+
+RISKS IF RUN:
+  - The --start flag spawns uvicorn on :8001 using bare 'python' (not the
+    venv Python), bypassing all V16 single-instance guards.
+  - Writes demo_server_status.json to results/, polluting the artifact store.
+  - Start commands embedded in this file are not venv-pinned and will spawn
+    unguarded runtime chains.
+
+CANONICAL STARTUP COMMAND:
+  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+
+Do not run this file. If you must run it for historical reference only,
+pass --allow-legacy-run as the first argument.
+
+------------------------------------------------------------------------
+Original V5.2 docstring:
+
+demo_server_manager.py — V5.2 Local Demo Server Manager
 
 Checks whether the API server (port 8001) and the display web server (port 8002)
 are running and network-reachable, then prints exact start commands for any that
@@ -290,4 +313,27 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
+    if "--allow-legacy-run" not in _sys.argv:
+        print(
+            "\n"
+            "LEGACY FILE — BLOCKED\n"
+            "=====================\n"
+            "demo_server_manager.py is not part of the V16+ canonical runtime.\n"
+            "\n"
+            "Running it would:\n"
+            "  - With --start: spawn a duplicate uvicorn on :8001 using unvenv-pinned 'python'\n"
+            "  - Bypass all V16 single-instance guards\n"
+            "  - Write demo_server_status.json to the results/ artifact store\n"
+            "\n"
+            "Canonical startup command:\n"
+            "  venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
+            "\n"
+            "To override (not recommended):\n"
+            "  python demo_server_manager.py --allow-legacy-run\n",
+            file=_sys.stderr,
+        )
+        raise SystemExit(1)
+
     main()

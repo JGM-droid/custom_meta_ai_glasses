@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -25,6 +26,9 @@ app.add_middleware(
 )
 
 BASE_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BASE_DIR.parent.parent
+VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
+API_LOCK_PATH = BASE_DIR / "results" / "api_server.lock"
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"
 LATEST_RESPONSE_JSON = BASE_DIR / "results" / "latest_response.json"
 RESUME_NOW_JSON = BASE_DIR / "results" / "resume_now.json"
@@ -39,6 +43,89 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
 if GLASSES_WEBAPP_DIR.exists() and GLASSES_WEBAPP_DIR.is_dir():
     app.mount("/glasses/static", StaticFiles(directory=str(GLASSES_WEBAPP_DIR)), name="glasses_static")
+
+
+def _normalized_path(path: Path) -> str:
+    return str(path.resolve()).casefold()
+
+
+def _is_canonical_python() -> bool:
+    try:
+        return _normalized_path(Path(sys.executable)) == _normalized_path(VENV_PYTHON)
+    except OSError:
+        return False
+
+
+def _process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    if not lock_path.exists() or not lock_path.is_file():
+        return None
+
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+        return int(raw)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _acquire_single_instance_lock(lock_path: Path, label: str) -> bool:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            existing_pid = _read_lock_pid(lock_path)
+            if existing_pid is not None and _process_is_running(existing_pid):
+                print(f"{label}: already running as PID {existing_pid}; refusing to start a duplicate.")
+                return False
+
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                print(f"{label}: could not clear stale lock {lock_path}: {exc}")
+                return False
+            continue
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()}\n")
+            handle.write(f"{sys.executable}\n")
+        return True
+
+
+def _release_single_instance_lock(lock_path: Path) -> None:
+    current_pid = _read_lock_pid(lock_path)
+    if current_pid != os.getpid():
+        return
+
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+if not _is_canonical_python():
+    print(f"api.py: refusing to start under {sys.executable}; use {VENV_PYTHON}")
+    raise SystemExit(1)
+
+if not _acquire_single_instance_lock(API_LOCK_PATH, "api.py"):
+    raise SystemExit(1)
+
+atexit.register(_release_single_instance_lock, API_LOCK_PATH)
 
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -114,6 +201,27 @@ def _payload_generated_at(payload: dict[str, object], source_path: Path) -> str:
 
     try:
         modified = datetime.fromtimestamp(source_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        modified = datetime.now(timezone.utc)
+    return modified.isoformat(timespec="seconds")
+
+
+def _newest_generated_at(candidates: list[str], fallback_source_path: Path) -> str:
+    # Pick the newest valid timestamp so HUD freshness reflects the latest
+    # producer update (for example refresh_guidance updating resume_now.json).
+    newest: datetime | None = None
+    for candidate in candidates:
+        parsed = _parse_iso8601(candidate)
+        if not parsed:
+            continue
+        if newest is None or parsed > newest:
+            newest = parsed
+
+    if newest is not None:
+        return newest.isoformat(timespec="seconds")
+
+    try:
+        modified = datetime.fromtimestamp(fallback_source_path.stat().st_mtime, tz=timezone.utc)
     except OSError:
         modified = datetime.now(timezone.utc)
     return modified.isoformat(timespec="seconds")
@@ -318,7 +426,19 @@ async def latest():
         )
 
     freshness_source = source_path or RESUME_NOW_JSON
-    generated_at = _payload_generated_at(payload, freshness_source)
+
+    # Keep latest_response.json support for vision-analysis payload fields, but
+    # compute freshness from the newest available timestamp across both sources.
+    freshness_candidates: list[str] = []
+    if LATEST_RESPONSE_JSON.exists():
+        latest_fresh_payload = _safe_load_json(LATEST_RESPONSE_JSON)
+        freshness_candidates.append(_payload_generated_at(latest_fresh_payload, LATEST_RESPONSE_JSON))
+    if RESUME_NOW_JSON.exists():
+        resume_fresh_payload = _safe_load_json(RESUME_NOW_JSON)
+        freshness_candidates.append(_payload_generated_at(resume_fresh_payload, RESUME_NOW_JSON))
+    freshness_candidates.append(_payload_generated_at(payload, freshness_source))
+
+    generated_at = _newest_generated_at(freshness_candidates, freshness_source)
     parsed_generated = _parse_iso8601(generated_at) or datetime.now(timezone.utc)
     age_seconds = max(0, int((datetime.now(timezone.utc) - parsed_generated).total_seconds()))
 

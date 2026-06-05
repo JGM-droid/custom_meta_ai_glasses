@@ -1,3 +1,28 @@
+"""ngrok_demo_launcher.py — LEGACY — DO NOT RUN
+
+LEGACY WARNING — NOT PART OF THE V16+ CANONICAL RUNTIME
+========================================================
+This file is a pre-V16 ngrok-based demo launcher. It is quarantined and
+must not be run as part of normal development or hardware validation workflows.
+The tunnel function it provided is now handled by Cloudflare (cloudflared).
+
+RISKS IF RUN:
+  - Starts uvicorn on :8001 using sys.executable (not the venv Python),
+    bypassing all V16 single-instance guards.
+  - Starts ngrok, which conflicts with the active Cloudflare tunnel.
+  - Runs glasses_demo.py --scenario normal, which writes resume_now.json
+    and races against the canonical pipeline writer.
+  - Creates duplicate runtime chains that break the V16 artifact-ownership model.
+
+CANONICAL STARTUP COMMAND:
+  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+
+CANONICAL TUNNEL COMMAND:
+  cloudflared.exe tunnel --url http://127.0.0.1:8001
+
+Do not run this file. If you must run it for historical reference only,
+pass --allow-legacy-run as the first argument.
+"""
 from __future__ import annotations
 
 import json
@@ -213,4 +238,31 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    import sys as _sys
+
+    if "--allow-legacy-run" not in _sys.argv:
+        print(
+            "\n"
+            "LEGACY FILE — BLOCKED\n"
+            "=====================\n"
+            "ngrok_demo_launcher.py is not part of the V16+ canonical runtime.\n"
+            "\n"
+            "Running it would:\n"
+            "  - Start a duplicate uvicorn on :8001 using the wrong Python interpreter\n"
+            "  - Start ngrok, conflicting with the active Cloudflare tunnel\n"
+            "  - Write resume_now.json, racing against the canonical pipeline\n"
+            "  - Bypass all V16 single-instance guards\n"
+            "\n"
+            "Canonical startup command:\n"
+            "  venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
+            "\n"
+            "Canonical tunnel command:\n"
+            "  cloudflared.exe tunnel --url http://127.0.0.1:8001\n"
+            "\n"
+            "To override (not recommended):\n"
+            "  python ngrok_demo_launcher.py --allow-legacy-run\n",
+            file=_sys.stderr,
+        )
+        raise SystemExit(1)
+
     raise SystemExit(main())
