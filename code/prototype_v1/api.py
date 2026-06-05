@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,9 +31,14 @@ RESUME_NOW_JSON = BASE_DIR / "results" / "resume_now.json"
 HUD_CACHE_JSON = BASE_DIR / "results" / "last_known_hud_payload.json"
 RESULTS_DIR = BASE_DIR / "results"
 DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
+GLASSES_WEBAPP_DIR = BASE_DIR / "glasses_webapp"
+GLASSES_WEBAPP_INDEX = GLASSES_WEBAPP_DIR / "index.html"
+GLASSES_API_TOKEN = (os.environ.get("GLASSES_API_TOKEN") or "").strip()
 
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
+if GLASSES_WEBAPP_DIR.exists() and GLASSES_WEBAPP_DIR.is_dir():
+    app.mount("/glasses/static", StaticFiles(directory=str(GLASSES_WEBAPP_DIR)), name="glasses_static")
 
 _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -154,11 +159,132 @@ def _load_resume_payload() -> dict[str, object]:
     return _safe_load_json(RESUME_NOW_JSON)
 
 
+def _extract_bearer_token(request: Request) -> str:
+    auth = str(request.headers.get("Authorization", "")).strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def _truncate_text(value: object, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    compact = " ".join(text.split())
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[: max(0, max_chars - 1)].rstrip()}..."
+
+
+def _basename_only(path_text: object) -> str:
+    raw = str(path_text or "").strip()
+    if not raw:
+        return ""
+    return Path(raw).name
+
+
+def _compact_active_context(payload: dict[str, object]) -> str:
+    development = payload.get("development_context") if isinstance(payload.get("development_context"), dict) else {}
+    file_name = _basename_only(development.get("active_file"))
+    function_name = str(development.get("active_function") or "").strip()
+
+    if not file_name:
+        active_file = payload.get("active_file") if isinstance(payload.get("active_file"), dict) else {}
+        file_name = _basename_only(active_file.get("active_file_name") or active_file.get("active_file_path"))
+
+    if file_name and function_name:
+        return _truncate_text(f"{file_name} :: {function_name}", 96)
+    if file_name:
+        return _truncate_text(file_name, 96)
+    return "No active context"
+
+
+def _confidence_percent(payload: dict[str, object]) -> int:
+    decision_conf = payload.get("decision_confidence")
+    if isinstance(decision_conf, (int, float)):
+        value = float(decision_conf)
+        if value <= 1:
+            return int(max(0, min(100, round(value * 100))))
+        return int(max(0, min(100, round(value))))
+
+    task_tracking = payload.get("task_tracking") if isinstance(payload.get("task_tracking"), dict) else {}
+    task_conf = task_tracking.get("task_confidence")
+    if isinstance(task_conf, (int, float)):
+        value = float(task_conf)
+        if value <= 1:
+            return int(max(0, min(100, round(value * 100))))
+        return int(max(0, min(100, round(value))))
+
+    return 0
+
+
+def _build_glasses_payload(payload: dict[str, object]) -> dict[str, object]:
+    guidance = payload.get("primary_guidance") if isinstance(payload.get("primary_guidance"), dict) else {}
+    guidance_priority = payload.get("guidance_priority") if isinstance(payload.get("guidance_priority"), dict) else {}
+    freshness = payload.get("payload_freshness") if isinstance(payload.get("payload_freshness"), dict) else {}
+
+    headline = str(guidance.get("headline") or guidance_priority.get("headline") or "No headline").strip()
+    next_action = str(
+        guidance.get("recommended_action")
+        or guidance_priority.get("recommended_action")
+        or payload.get("recommended_next_action")
+        or "No next action"
+    ).strip()
+
+    blocked = False
+    if isinstance(guidance.get("blocking"), bool):
+        blocked = bool(guidance.get("blocking"))
+    elif isinstance(guidance_priority.get("blocking"), bool):
+        blocked = bool(guidance_priority.get("blocking"))
+    else:
+        level = str(guidance.get("level") or guidance_priority.get("level") or "").strip().lower()
+        blocked = level == "critical"
+
+    short_reason = str(
+        payload.get("decision_reason")
+        or guidance.get("reason")
+        or guidance_priority.get("message")
+        or "No reason available"
+    )
+
+    freshness_state = str(
+        freshness.get("state")
+        or payload.get("hud_status")
+        or "stale"
+    ).strip().lower() or "stale"
+
+    generated_at = str(payload.get("generated_at") or freshness.get("generated_at") or "")
+    age_seconds_raw = freshness.get("age_seconds") if freshness else payload.get("age_seconds")
+    try:
+        age_seconds = int(age_seconds_raw) if age_seconds_raw is not None else 0
+    except (TypeError, ValueError):
+        age_seconds = 0
+
+    return {
+        "headline": _truncate_text(headline, 80) or "No headline",
+        "next_action": _truncate_text(next_action, 140) or "No next action",
+        "blocked": blocked,
+        "confidence_percent": _confidence_percent(payload),
+        "short_reason": _truncate_text(short_reason, 120) or "No reason available",
+        "active_context": _compact_active_context(payload),
+        "freshness_state": freshness_state,
+        "generated_at": generated_at,
+        "age_seconds": max(0, age_seconds),
+    }
+
+
 @app.get("/glasses_display_mock.html", response_class=FileResponse)
 async def display_mock():
     if not DISPLAY_HTML.exists():
         raise HTTPException(status_code=404, detail="Display mock not found.")
     return FileResponse(str(DISPLAY_HTML), media_type="text/html")
+
+
+@app.get("/glasses", response_class=FileResponse)
+async def glasses_webapp():
+    if not GLASSES_WEBAPP_INDEX.exists():
+        raise HTTPException(status_code=404, detail="Glasses web app not found.")
+    return FileResponse(str(GLASSES_WEBAPP_INDEX), media_type="text/html")
 
 
 @app.get("/latest")
@@ -214,6 +340,17 @@ async def latest():
         _safe_write_json(HUD_CACHE_JSON, cache_to_write)
 
     return payload
+
+
+@app.get("/glasses/latest")
+async def glasses_latest(request: Request, token: str = Query(default="")):
+    if GLASSES_API_TOKEN:
+        candidate = token.strip() or _extract_bearer_token(request)
+        if candidate != GLASSES_API_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized token for glasses endpoint.")
+
+    payload = await latest()
+    return _build_glasses_payload(payload)
 
 
 @app.post("/analyze")

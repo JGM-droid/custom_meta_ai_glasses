@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glasses HUD</title>
+  <link rel="stylesheet" href="/glasses/static/styles.css">
+</head>
+<body>
+  <main class="hud" aria-live="polite">
+    <section class="card">
+      <div class="label">Headline</div>
+      <div id="headline" class="headline">Waiting for glasses data...</div>
+    </section>
+
+    <section class="card">
+      <div class="label">Next Action</div>
+      <div id="next_action" class="next-action">Start backend and wait for guidance.</div>
+    </section>
+
+    <section class="card grid">
+      <div class="row">
+        <span class="key">Blocked</span>
+        <span id="blocked" class="value">Unknown</span>
+      </div>
+      <div class="row">
+        <span class="key">Confidence</span>
+        <span id="confidence" class="value">0%</span>
+      </div>
+      <div class="row">
+        <span class="key">Reason</span>
+        <span id="short_reason" class="value reason">No reason available</span>
+      </div>
+      <div class="row">
+        <span class="key">Context</span>
+        <span id="active_context" class="value context">No active context</span>
+      </div>
+    </section>
+
+    <section class="card status-card">
+      <div class="row status-row">
+        <span class="key">State</span>
+        <span id="freshness_state" class="state state-stale">stale</span>
+      </div>
+      <div class="timestamp">
+        <span id="generated_at">-</span>
+        <span>•</span>
+        <span id="age_seconds">0s</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="/glasses/static/app.js"></script>
+</body>
+</html>

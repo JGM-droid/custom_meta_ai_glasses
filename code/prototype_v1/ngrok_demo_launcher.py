@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -38,6 +40,8 @@ DEMO_NORMAL_COMMAND = [
     "normal",
 ]
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
+LOCAL_BASE = "http://127.0.0.1:8001"
+DESKTOP_DEBUG_URL = f"{LOCAL_BASE}/glasses_display_mock.html"
 
 
 def _write_ngrok_config(tmp_dir: str) -> str:
@@ -135,6 +139,18 @@ def _fetch_tunnel_urls() -> tuple[str, str]:
     return "", ""
 
 
+def _token_suffix() -> str:
+    token = os.getenv("GLASSES_API_TOKEN", "").strip()
+    if not token:
+        return ""
+    return f"&token={quote_plus(token)}"
+
+
+def _build_glasses_hud_url(base_host: str) -> str:
+    host = base_host.rstrip("/")
+    return f"{host}/glasses?api={host}/glasses/latest{_token_suffix()}"
+
+
 def main() -> int:
     ngrok_exe = _find_ngrok()
     if ngrok_exe is None:
@@ -161,14 +177,19 @@ def main() -> int:
         if not api_tunnel_url or not display_tunnel_url:
             return 1
 
-        final_display_url = f"{display_tunnel_url}/glasses_display_mock.html?api={api_tunnel_url}/latest"
+        local_glasses_url = _build_glasses_hud_url(LOCAL_BASE)
+        public_glasses_url = _build_glasses_hud_url(display_tunnel_url)
         demo_result = subprocess.run(DEMO_NORMAL_COMMAND, cwd=str(BASE_DIR), check=False)
 
         print("NGROK DEMO LAUNCHER")
         print()
+        print(f"Desktop debug HUD: {DESKTOP_DEBUG_URL}")
+        print(f"Local glasses HUD: {local_glasses_url}")
+        print(f"Public glasses HUD: {public_glasses_url}")
+        print(f"Mock display HUD: {DESKTOP_DEBUG_URL}")
+        print()
         print(f"API tunnel URL: {api_tunnel_url}")
         print(f"Display tunnel URL: {display_tunnel_url}")
-        print(f"Final display URL: {final_display_url}")
         print("Test command: python code/prototype_v1/glasses_demo.py --scenario error")
         print(f"glasses_demo.py --scenario normal exited with code {demo_result.returncode}")
         print("Press Ctrl+C to stop the local servers and ngrok tunnels.")

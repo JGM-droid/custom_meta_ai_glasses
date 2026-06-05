@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -172,12 +174,30 @@ def _ngrok_launcher_available() -> bool:
     return bool(shutil.which("ngrok"))
 
 
+def _token_suffix() -> str:
+    token = os.getenv("GLASSES_API_TOKEN", "").strip()
+    if not token:
+        return ""
+    return f"&token={quote_plus(token)}"
+
+
+def _build_glasses_hud_url(base_host: str) -> str:
+    host = base_host.rstrip("/")
+    return f"{host}/glasses?api={host}/glasses/latest{_token_suffix()}"
+
+
 def _print_urls(ngrok_url: str) -> None:
-    print(f"Desktop URL: {DESKTOP_URL}")
+    local_glasses_url = _build_glasses_hud_url(f"http://127.0.0.1:{API_PORT}")
+
+    print(f"Desktop debug HUD: {DESKTOP_URL}")
+    # Preserve easy access to the original mock display endpoint.
+    print(f"Mock display HUD: {DESKTOP_URL}")
+    print(f"Local glasses HUD: {local_glasses_url}")
+
     if ngrok_url:
-        print(f"Phone/Glasses URL: {ngrok_url}/glasses_display_mock.html?api={ngrok_url}/latest")
+        print(f"Public glasses HUD: {_build_glasses_hud_url(ngrok_url)}")
     elif _ngrok_launcher_available():
-        print("Phone/Glasses URL: unavailable (ngrok launcher is available, but no active tunnel was detected)")
+        print("Public glasses HUD: unavailable (ngrok launcher is available, but no active tunnel was detected)")
 
 
 def main() -> int:
