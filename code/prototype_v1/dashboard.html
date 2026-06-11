@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Glasses Live Analysis Dashboard</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #1f2933;
+      --muted: #52606d;
+      --line: #d9e2ec;
+      --ok: #1f9d55;
+      --warn: #d9822b;
+      --accent: #0f6fff;
+      --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background:
+        radial-gradient(circle at 10% 10%, rgba(15, 111, 255, 0.08), transparent 40%),
+        radial-gradient(circle at 90% 5%, rgba(31, 157, 85, 0.07), transparent 35%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    .wrap {
+      max-width: 1050px;
+      margin: 28px auto;
+      padding: 0 18px;
+    }
+
+    .hero {
+      background: linear-gradient(120deg, #0f6fff 0%, #0f4fcc 100%);
+      color: #fff;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 20px 22px;
+      margin-bottom: 16px;
+    }
+
+    .glasses-view {
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      border: 1px solid #cdd9ee;
+      border-left: 6px solid var(--accent);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+
+    .demo-mode {
+      background: linear-gradient(145deg, #fffdf6 0%, #fff8e8 100%);
+      border: 1px solid #ecd9aa;
+      border-left: 6px solid #d9822b;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+      margin-bottom: 16px;
+    }
+
+    .demo-mode h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    @media (min-width: 900px) {
+      .demo-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .demo-item {
+      background: #fff;
+      border: 1px solid #eddcb2;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .demo-item .label {
+      margin-bottom: 4px;
+      font-size: 0.72rem;
+    }
+
+    .demo-item .value {
+      font-size: 0.96rem;
+      white-space: pre-wrap;
+    }
+
+    .glasses-view h2 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .glasses-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    @media (min-width: 700px) {
+      .glasses-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .glasses-item {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .glasses-item .label {
+      margin-bottom: 4px;
+      font-size: 0.72rem;
+    }
+
+    .glasses-item .value {
+      font-size: 0.96rem;
+      white-space: pre-wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .sub {
+      margin: 8px 0 0;
+      opacity: 0.92;
+      font-size: 0.96rem;
+    }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+    }
+
+    .status-pill.connected .status-dot {
+      background: #9ff2bf;
+      box-shadow: 0 0 0 6px rgba(159, 242, 191, 0.18);
+    }
+
+    .status-pill.waiting .status-dot {
+      background: #ffd19d;
+      box-shadow: 0 0 0 6px rgba(255, 209, 157, 0.2);
+    }
+
+    .meta {
+      font-size: 0.86rem;
+      opacity: 0.95;
+    }
+
+    .upload-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 12px;
+    }
+
+    .file-input {
+      color: #fff;
+      font-size: 0.9rem;
+      max-width: 100%;
+    }
+
+    .analyze-btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #0f4fcc;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .analyze-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .upload-status {
+      font-size: 0.9rem;
+      font-weight: 600;
+      min-height: 1.2em;
+    }
+
+    .upload-status.uploading {
+      color: #ffe6bf;
+    }
+
+    .upload-status.success {
+      color: #b6ffd0;
+    }
+
+    .upload-status.error {
+      color: #ffd1d1;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    @media (min-width: 900px) {
+      .grid.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 14px 12px;
+      box-shadow: var(--shadow);
+      min-height: 90px;
+    }
+
+    .label {
+      display: inline-block;
+      margin-bottom: 6px;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .value {
+      font-size: 1rem;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .value.mono {
+      font-family: "Consolas", "Courier New", monospace;
+      font-size: 0.95rem;
+      background: #f9fbfd;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="glasses-view">
+      <h2>Glasses View</h2>
+      <div class="glasses-grid">
+        <article class="glasses-item">
+          <div class="label">Glasses Guidance</div>
+          <div id="glasses_guidance" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Current Task</div>
+          <div id="glasses_current_task" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Task Continuity</div>
+          <div id="glasses_task_continuity" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Next Action</div>
+          <div id="glasses_next_action" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Risk</div>
+          <div id="glasses_risk" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Confidence</div>
+          <div id="glasses_confidence" class="value muted">No data yet</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="hero">
+      <h1>Recruiter Demo Dashboard</h1>
+      <p class="sub">Live view of the latest AI glasses analysis response (auto-refresh every 3 seconds).</p>
+      <div class="status-row">
+        <div id="statusPill" class="status-pill waiting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">Waiting for API</span>
+        </div>
+        <div id="lastChecked" class="meta">Last checked: never</div>
+      </div>
+      <div class="upload-row">
+        <input id="uploadInput" class="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
+        <button id="analyzeBtn" class="analyze-btn" type="button">Analyze Image</button>
+        <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="demo-mode">
+      <h2>Demo Mode</h2>
+      <div class="demo-grid">
+        <article class="demo-item">
+          <div class="label">Current Task</div>
+          <div id="demo_current_task" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Task Continuity</div>
+          <div id="demo_task_continuity" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Task Progress / Step Count</div>
+          <div id="demo_task_progress" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Stuck Status</div>
+          <div id="demo_stuck_status" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Intervention Message</div>
+          <div id="demo_intervention_message" class="value muted">No data yet</div>
+        </article>
+        <article class="demo-item">
+          <div class="label">Glasses Guidance</div>
+          <div id="demo_glasses_guidance" class="value muted">No data yet</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="label">Timestamp</div>
+        <div id="timestamp" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Image Analyzed</div>
+        <div id="image_analyzed" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Observed Issue</div>
+        <div id="observed_issue" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Likely Cause</div>
+        <div id="likely_cause" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Recommended Fix</div>
+        <div id="recommended_fix" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Validation Step</div>
+        <div id="validation_step" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Next Action</div>
+        <div id="next_action" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Completed Steps</div>
+        <div id="completed_steps" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Task Progress</div>
+        <div id="task_progress" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Stuck Status</div>
+        <div id="stuck_status" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Resume Previous Task</div>
+        <div id="resume_previous_task" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Intervention</div>
+        <div id="intervention" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Metrics Snapshot</div>
+        <div id="metrics_snapshot" class="value muted">No data yet</div>
+      </article>
+      <article class="card">
+        <div class="label">Glasses Display</div>
+        <div id="glasses_display" class="value muted">No data yet</div>
+      </article>
+    </section>
+
+    <section class="grid" style="margin-top: 12px;">
+      <article class="card">
+        <div class="label">Full Analysis</div>
+        <div id="full_analysis" class="value mono muted">No data yet</div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const API_LATEST_URL = "http://127.0.0.1:8001/latest";
+    const API_ANALYZE_URL = "http://127.0.0.1:8001/analyze";
+    const POLL_MS = 3000;
+
+    const fields = [
+      "timestamp",
+      "image_analyzed",
+      "observed_issue",
+      "likely_cause",
+      "recommended_fix",
+      "validation_step",
+      "next_action",
+      "completed_steps",
+      "task_progress",
+      "stuck_status",
+      "resume_previous_task",
+      "intervention",
+      "metrics_snapshot",
+      "glasses_display",
+      "full_analysis"
+    ];
+
+    const statusPill = document.getElementById("statusPill");
+    const statusText = document.getElementById("statusText");
+    const lastChecked = document.getElementById("lastChecked");
+    const uploadInput = document.getElementById("uploadInput");
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const uploadStatus = document.getElementById("uploadStatus");
+    const glassesGuidance = document.getElementById("glasses_guidance");
+    const glassesCurrentTask = document.getElementById("glasses_current_task");
+    const glassesTaskContinuity = document.getElementById("glasses_task_continuity");
+    const glassesNextAction = document.getElementById("glasses_next_action");
+    const glassesRisk = document.getElementById("glasses_risk");
+    const glassesConfidence = document.getElementById("glasses_confidence");
+    const demoCurrentTask = document.getElementById("demo_current_task");
+    const demoTaskContinuity = document.getElementById("demo_task_continuity");
+    const demoTaskProgress = document.getElementById("demo_task_progress");
+    const demoStuckStatus = document.getElementById("demo_stuck_status");
+    const demoInterventionMessage = document.getElementById("demo_intervention_message");
+    const demoGlassesGuidance = document.getElementById("demo_glasses_guidance");
+
+    function setStatus(connected) {
+      statusPill.classList.remove("connected", "waiting");
+      if (connected) {
+        statusPill.classList.add("connected");
+        statusText.textContent = "Connected";
+      } else {
+        statusPill.classList.add("waiting");
+        statusText.textContent = "Waiting for API";
+      }
+    }
+
+    function setUploadStatus(message, state) {
+      uploadStatus.textContent = message;
+      uploadStatus.classList.remove("uploading", "success", "error");
+      if (state) {
+        uploadStatus.classList.add(state);
+      }
+    }
+
+    function setLastChecked() {
+      const now = new Date();
+      lastChecked.textContent = `Last checked: ${now.toLocaleTimeString()}`;
+    }
+
+    function normalize(value) {
+      if (value === null || value === undefined || value === "") {
+        return "No data";
+      }
+      return String(value);
+    }
+
+    function applyData(data) {
+      fields.forEach((field) => {
+        const el = document.getElementById(field);
+        if (!el) return;
+        if (field === "completed_steps") {
+          const steps = Array.isArray(data.completed_steps) ? data.completed_steps : [];
+          el.textContent = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps yet";
+        } else if (field === "task_progress") {
+          const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
+          const nextStep = normalize(progress.next_step);
+          const stepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
+          el.textContent = `Next step: ${nextStep}\nStep count: ${stepCount}`;
+        } else if (field === "stuck_status") {
+          const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+          const isStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
+          const reason = normalize(status.reason);
+          const count = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
+          el.textContent = `Is stuck: ${isStuck ? "Yes" : "No"}\nReason: ${reason}\nRepeated next step count: ${count}`;
+        } else if (field === "resume_previous_task") {
+          const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
+          const available = typeof resume.available === "boolean" ? resume.available : false;
+          const task = normalize(resume.task);
+          const nextStep = normalize(resume.next_step);
+          const reason = normalize(resume.reason);
+          const steps = Array.isArray(resume.completed_steps) ? resume.completed_steps : [];
+          const stepsText = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps";
+          el.textContent = `Available: ${available ? "Yes" : "No"}\nTask: ${task}\nNext step: ${nextStep}\nCompleted:\n${stepsText}\nReason: ${reason}`;
+        } else if (field === "intervention") {
+          const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
+          const recommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
+          const message = normalize(intervention.message);
+          const reason = normalize(intervention.reason);
+          el.textContent = `Recommended: ${recommended ? "Yes" : "No"}\nMessage: ${message}\nReason: ${reason}`;
+        } else if (field === "metrics_snapshot") {
+          const metrics = (data.metrics_snapshot && typeof data.metrics_snapshot === "object") ? data.metrics_snapshot : {};
+          const recentObservationCount = Number.isInteger(metrics.recent_observation_count) ? metrics.recent_observation_count : 0;
+          const stuckCount = Number.isInteger(metrics.stuck_count) ? metrics.stuck_count : 0;
+          const interventionCount = Number.isInteger(metrics.intervention_count) ? metrics.intervention_count : 0;
+          const latestTaskContinuity = normalize(metrics.latest_task_continuity);
+          const latestStepCount = Number.isInteger(metrics.latest_step_count) ? metrics.latest_step_count : 0;
+          el.textContent = `Recent observation count: ${recentObservationCount}\nStuck count: ${stuckCount}\nIntervention count: ${interventionCount}\nLatest task continuity: ${latestTaskContinuity}\nLatest step count: ${latestStepCount}`;
+        } else if (field === "glasses_display") {
+          const display = (data.glasses_display && typeof data.glasses_display === "object") ? data.glasses_display : {};
+          const title = normalize(display.title);
+          const primaryAction = normalize(display.primary_action);
+          const confidence = normalize(display.confidence);
+          const status = normalize(display.status);
+          el.textContent = `Title: ${title}\nPrimary action: ${primaryAction}\nConfidence: ${confidence}\nStatus: ${status}`;
+        } else {
+          el.textContent = normalize(data[field]);
+        }
+        el.classList.remove("muted");
+      });
+
+      const fullAnalysis = data.full_analysis || "";
+      const currentTask = data.current_task || extractLine(fullAnalysis, "Current task");
+      const taskContinuity = data.task_continuity || extractLine(fullAnalysis, "Task continuity");
+      const nextAction = data.next_action || extractSection(fullAnalysis, "NEXT ACTION");
+      const risk = data.risk || extractLine(fullAnalysis, "RISK");
+      const confidence = data.confidence || extractLine(fullAnalysis, "Confidence");
+      const glassesGuidanceText = data.glasses_guidance
+        || `Task ${normalize(currentTask)}. Next ${normalize(nextAction)}. Risk ${normalize(risk)}. Confidence ${normalize(confidence)}.`;
+
+      glassesGuidance.textContent = normalize(glassesGuidanceText);
+      glassesCurrentTask.textContent = normalize(currentTask);
+      glassesTaskContinuity.textContent = normalize(taskContinuity);
+      glassesNextAction.textContent = normalize(nextAction);
+      glassesRisk.textContent = normalize(risk);
+      glassesConfidence.textContent = normalize(confidence);
+
+      const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
+      const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
+      const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+      const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
+
+      const demoTaskName = normalize(resume.task);
+      const demoStepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
+      const demoNextStep = normalize(progress.next_step);
+      const demoIsStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
+      const demoRepeatedCount = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
+      const demoInterventionRecommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
+
+      demoCurrentTask.textContent = demoTaskName;
+      demoTaskContinuity.textContent = normalize(data.task_continuity);
+      demoTaskProgress.textContent = `Step count: ${demoStepCount}\nNext step: ${demoNextStep}`;
+      demoStuckStatus.textContent = `${demoIsStuck ? "Stuck" : "Not stuck"}\nRepeated next-step count: ${demoRepeatedCount}`;
+      demoInterventionMessage.textContent = `${demoInterventionRecommended ? "Intervention recommended" : "No intervention needed"}\n${normalize(intervention.message)}`;
+      demoGlassesGuidance.textContent = normalize(data.glasses_guidance);
+
+      [glassesGuidance, glassesCurrentTask, glassesTaskContinuity, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
+        el.classList.remove("muted");
+      });
+
+      [demoCurrentTask, demoTaskContinuity, demoTaskProgress, demoStuckStatus, demoInterventionMessage, demoGlassesGuidance].forEach((el) => {
+        el.classList.remove("muted");
+      });
+    }
+
+    function extractSection(text, label) {
+      if (!text) {
+        return "No data";
+      }
+
+      const pattern = new RegExp(
+        String.raw`(?:^|\n)${label}:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{2,}:\s*|$)`,
+        "i"
+      );
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() || "No data" : "No data";
+    }
+
+    function extractLine(text, label) {
+      if (!text) {
+        return "No data";
+      }
+
+      const pattern = new RegExp(String.raw`${label}:\s*([^\n]+)`, "i");
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() || "No data" : "No data";
+    }
+
+    async function fetchLatest() {
+      setLastChecked();
+      try {
+        const response = await fetch(API_LATEST_URL, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        applyData(data);
+        setStatus(true);
+      } catch (_err) {
+        setStatus(false);
+      }
+    }
+
+    async function uploadAndAnalyze() {
+      const file = uploadInput.files && uploadInput.files[0];
+      if (!file) {
+        setUploadStatus("Upload failed", "error");
+        return;
+      }
+
+      analyzeBtn.disabled = true;
+      setUploadStatus("Uploading...", "uploading");
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch(API_ANALYZE_URL, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        setUploadStatus("Analysis complete", "success");
+        await fetchLatest();
+      } catch (_err) {
+        setUploadStatus("Upload failed", "error");
+      } finally {
+        analyzeBtn.disabled = false;
+      }
+    }
+
+    analyzeBtn.addEventListener("click", uploadAndAnalyze);
+
+    fetchLatest();
+    setInterval(fetchLatest, POLL_MS);
+  </script>
+</body>
+</html>

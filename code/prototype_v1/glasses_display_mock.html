@@ -1,0 +1,1416 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glasses Display Mock</title>
+  <style>
+    :root {
+      --bg: #050608;
+      --panel: #0b0f14;
+      --line: #1d2633;
+      --text: #f4f8ff;
+      --muted: #9fb0c9;
+      --active: #22c55e;
+      --stuck: #ef4444;
+      --accent: #5eead4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(94, 234, 212, 0.08), transparent 40%),
+        radial-gradient(circle at 80% 80%, rgba(34, 197, 94, 0.08), transparent 40%),
+        var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      padding: 16px;
+      overflow-x: hidden;
+    }
+
+    .app-shell {
+      width: min(600px, 100%);
+      max-width: 100%;
+      display: grid;
+      gap: 12px;
+    }
+
+    .frame {
+      width: 600px;
+      height: 600px;
+      max-width: 100%;
+      max-height: calc(100vh - 32px);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(180deg, #0b0f14 0%, #080b10 100%);
+      padding: 24px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto auto;
+      gap: 14px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      overflow: hidden;
+    }
+
+    .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.8rem;
+      margin-bottom: 4px;
+    }
+
+    .title {
+      font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .action {
+      font-size: clamp(1.6rem, 3.3vw, 2.2rem);
+      line-height: 1.2;
+      font-weight: 800;
+      color: var(--accent);
+      overflow-wrap: anywhere;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    .task-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(16, 23, 33, 0.48);
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .compact-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(16, 23, 33, 0.48);
+      padding: 10px 12px;
+      display: none;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .compact-row {
+      display: grid;
+      grid-template-columns: 102px 1fr;
+      gap: 8px;
+      align-items: start;
+      min-width: 0;
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+
+    .compact-key {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .compact-value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .compact-value.reason {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .compact-value.context {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .continuity-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      align-items: stretch;
+      min-height: 0;
+    }
+
+    .task-row {
+      display: grid;
+      grid-template-columns: 122px 1fr;
+      gap: 8px;
+      align-items: start;
+      font-size: 0.8rem;
+      line-height: 1.35;
+      color: var(--text);
+    }
+
+    .task-key {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .task-fallback {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.35;
+    }
+
+    .factors-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--text);
+      font-size: 0.78rem;
+      line-height: 1.3;
+      display: grid;
+      gap: 2px;
+    }
+
+    .factors-list li {
+      margin: 0;
+    }
+
+    .confidence {
+      font-size: clamp(1.15rem, 2.2vw, 1.5rem);
+      font-weight: 700;
+    }
+
+    .status {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      justify-self: end;
+    }
+
+    .status.active {
+      color: #02240f;
+      background: var(--active);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+
+    .status.stuck {
+      color: #2e0000;
+      background: var(--stuck);
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .status.switch {
+      color: #071826;
+      background: #38bdf8;
+      border-color: rgba(56, 189, 248, 0.35);
+    }
+
+    .status.new {
+      color: #2a1a00;
+      background: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .status.error {
+      color: #2e0000;
+      background: #ef4444;
+      border-color: rgba(239, 68, 68, 0.35);
+    }
+
+    .status.stale {
+      color: #2a1a00;
+      background: #f59e0b;
+      border-color: rgba(245, 158, 11, 0.35);
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 0.84rem;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .debug-line {
+      width: 100%;
+      opacity: 0.8;
+      font-size: 0.74rem;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+
+    .active-file-line {
+      width: 100%;
+      opacity: 0.88;
+      font-size: 0.76rem;
+      line-height: 1.35;
+      color: var(--muted);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    .waiting {
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.4;
+    }
+
+    .prompt-panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #0a0e13 0%, #070a0f 100%);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .prompt-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .prompt-selector {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .prompt-recommended-line {
+      color: var(--muted);
+      font-size: 0.74rem;
+      line-height: 1.25;
+    }
+
+    .prompt-recommended-line strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .prompt-selector-btn {
+      border: 1px solid var(--line);
+      background: #0d141d;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 0.74rem;
+      cursor: pointer;
+      text-align: center;
+      line-height: 1.2;
+    }
+
+    .prompt-selector-btn.active {
+      border-color: rgba(94, 234, 212, 0.7);
+      box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.25);
+      background: #11202a;
+      color: #d7fff8;
+    }
+
+    .prompt-selector-btn.recommended {
+      border-color: rgba(45, 212, 191, 0.65);
+      box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.25);
+      position: relative;
+    }
+
+    .prompt-selector-btn.recommended::after {
+      content: "Recommended";
+      display: block;
+      margin-top: 3px;
+      font-size: 0.62rem;
+      line-height: 1;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+
+    .prompt-selector-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .prompt-title {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .copy-btn {
+      border: 1px solid var(--line);
+      background: #101721;
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    .copy-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .prompt-text {
+      width: 100%;
+      min-height: 170px;
+      resize: vertical;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #05090f;
+      color: var(--text);
+      padding: 10px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      font-family: Consolas, "Courier New", monospace;
+    }
+
+    /* == V18.1 manual visual input panel ======================== */
+    .vision-panel {
+      width: 480px; max-width: 100%;
+      border: 1px solid var(--line); border-radius: 16px;
+      background: linear-gradient(180deg, #0d121a 0%, #090d14 100%);
+      padding: 18px; display: grid; gap: 10px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    }
+    .vision-panel-title { font-size: 1rem; font-weight: 700; color: var(--accent); }
+    .vision-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-size: 0.76rem; margin-bottom: 2px; }
+    .vision-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .vision-btn { border: 1px solid var(--line); border-radius: 8px; background: #132236; color: var(--text); padding: 7px 12px; font-size: 0.86rem; cursor: pointer; }
+    .vision-btn:hover { background: #18304d; }
+    .vision-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .vision-field { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: rgba(8,12,18,0.8); min-height: 36px; font-size: 0.86rem; color: var(--text); line-height: 1.35; }
+    .vision-obs-list { margin: 0; padding-left: 16px; }
+    .vision-obs-list li { margin: 2px 0; color: var(--muted); font-size: 0.82rem; }
+    .vision-prompt-ta { width: 100%; min-height: 130px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: #070b11; color: var(--text); padding: 9px; font-family: Consolas, "Courier New", monospace; font-size: 0.82rem; line-height: 1.4; }
+    .vision-footer { color: var(--muted); font-size: 0.78rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+    @media (max-width: 1100px) { .vision-panel { display: none; } }
+    /* == end V18.1 ============================================== */
+
+    .prompt-status {
+      color: var(--muted);
+      font-size: 0.74rem;
+      min-height: 1.1em;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        display: block;
+        padding: 8px;
+      }
+
+      .app-shell {
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .frame {
+        padding: 14px;
+        gap: 10px;
+        width: 100%;
+        height: auto;
+        max-height: none;
+        border-radius: 14px;
+        grid-template-rows: auto auto auto auto auto;
+      }
+
+      .title {
+        font-size: 1.08rem;
+        line-height: 1.2;
+      }
+
+      .action {
+        font-size: 1.02rem;
+        line-height: 1.35;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .prompt-panel {
+        display: none;
+      }
+
+      .continuity-grid {
+        display: none;
+      }
+
+      .compact-card {
+        display: grid;
+      }
+
+      .meta {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        align-items: start;
+      }
+
+      .confidence {
+        font-size: 1rem;
+      }
+
+      .status {
+        justify-self: start;
+        font-size: 0.86rem;
+        padding: 4px 10px;
+        max-width: 100%;
+      }
+
+      #updated,
+      #debug_line {
+        display: none;
+      }
+
+      .footer {
+        font-size: 0.74rem;
+        gap: 6px;
+      }
+
+      .active-file-line {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    }
+
+    @media (max-width: 420px) {
+      .frame {
+        padding: 12px;
+      }
+
+      .compact-row {
+        grid-template-columns: 88px 1fr;
+        font-size: 0.78rem;
+      }
+
+      .status {
+        font-size: 0.8rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+  <main class="frame" aria-live="polite">
+    <section>
+      <div class="label">Title</div>
+      <div id="title" class="title">Waiting for glasses display data...</div>
+    </section>
+
+    <section>
+      <div class="label">Primary Action</div>
+      <div id="primary_action" class="action waiting">Run analysis and ensure API is available.</div>
+    </section>
+
+    <section class="continuity-grid" aria-live="polite">
+      <section id="task_continuity" class="task-card">
+        <div class="label">Task Continuity</div>
+        <div id="task_fallback" class="task-fallback">Task continuity unavailable</div>
+        <div id="task_rows" hidden>
+          <div class="task-row"><span class="task-key">Current Task:</span><span id="task_current">-</span></div>
+          <div class="task-row"><span class="task-key">Last Completed:</span><span id="task_last">-</span></div>
+          <div class="task-row"><span class="task-key">Next Step:</span><span id="task_next">-</span></div>
+          <div class="task-row"><span class="task-key">Confidence:</span><span id="task_confidence">-</span></div>
+        </div>
+      </section>
+
+      <section id="decision_insight" class="task-card">
+        <div class="label">Decision Insight</div>
+        <div id="decision_fallback" class="task-fallback">Decision insight unavailable</div>
+        <div id="decision_rows" hidden>
+          <div class="task-row"><span class="task-key">Decision:</span><span id="decision_value">-</span></div>
+          <div class="task-row"><span class="task-key">Confidence:</span><span id="decision_confidence">-</span></div>
+          <div class="task-row"><span class="task-key">Reason:</span><span id="decision_reason">-</span></div>
+          <div class="task-row"><span class="task-key">Factors:</span><ul id="decision_factors" class="factors-list"></ul></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="compact_hud" class="compact-card" aria-live="polite">
+      <div class="label">Glanceable HUD</div>
+      <div class="compact-row"><span class="compact-key">Next:</span><span id="compact_next_action" class="compact-value">Run analysis and ensure API is available.</span></div>
+      <div class="compact-row"><span class="compact-key">Blocked:</span><span id="compact_blocked" class="compact-value">Unknown</span></div>
+      <div class="compact-row"><span class="compact-key">Confidence:</span><span id="compact_confidence" class="compact-value">No data</span></div>
+      <div class="compact-row"><span class="compact-key">Reason:</span><span id="compact_reason" class="compact-value reason">No reason available</span></div>
+      <div class="compact-row"><span class="compact-key">Context:</span><span id="compact_context" class="compact-value context">Active file unavailable</span></div>
+    </section>
+
+    <section class="meta">
+      <div>
+        <div class="label">Confidence</div>
+        <div id="confidence" class="confidence">No data</div>
+      </div>
+      <div id="status" class="status">No data</div>
+    </section>
+
+    <section class="footer">
+      <span id="connection">Waiting for API</span>
+      <span id="updated">Last successful fetch: never</span>
+      <span id="active_file_line" class="active-file-line">Active file unavailable</span>
+      <span id="debug_line" class="debug-line">Web app mode | Source: local-network-default | API: pending | Last success: never</span>
+    </section>
+  </main>
+
+  <section class="prompt-panel" aria-live="polite">
+    <div class="prompt-header">
+      <span class="prompt-title">Desktop Prompt Panel</span>
+      <button id="copy_prompt_btn" class="copy-btn" type="button">Copy Prompt</button>
+    </div>
+    <div id="recommended_prompt_line" class="prompt-recommended-line" hidden>Recommended Prompt: <strong id="recommended_prompt_value">Implementation</strong></div>
+    <div id="prompt_selector" class="prompt-selector" hidden>
+      <button id="prompt_btn_implementation" class="prompt-selector-btn" type="button" data-prompt-key="implementation_prompt">Implementation</button>
+      <button id="prompt_btn_validation" class="prompt-selector-btn" type="button" data-prompt-key="validation_prompt">Validation</button>
+      <button id="prompt_btn_architecture" class="prompt-selector-btn" type="button" data-prompt-key="architecture_prompt">Architecture</button>
+      <button id="prompt_btn_git" class="prompt-selector-btn" type="button" data-prompt-key="git_review_prompt">Git Review</button>
+    </div>
+    <textarea id="ai_prompt_text" class="prompt-text" readonly>Prompt unavailable</textarea>
+    <div id="prompt_copy_status" class="prompt-status"></div>
+  </section>
+
+  <aside class="vision-panel" id="vision_panel" aria-live="polite">
+    <div class="vision-panel-title">Manual Visual Input (Desktop)</div>
+    <div class="vision-label">Upload Image</div>
+    <div class="vision-controls">
+      <input id="vision_file" type="file" accept="image/png,image/jpeg">
+      <button id="vision_upload" class="vision-btn" type="button">Upload</button>
+    </div>
+    <div id="vision_status" class="vision-field">No visual analysis yet.</div>
+    <div class="vision-label">Summary</div>
+    <div id="vision_summary" class="vision-field">No data</div>
+    <div class="vision-label">Observations</div>
+    <ul id="vision_obs" class="vision-obs-list"></ul>
+    <div class="vision-label">Recommended Next Step</div>
+    <div id="vision_next_step" class="vision-field">No data</div>
+    <div class="vision-label">Copilot Prompt</div>
+    <textarea id="vision_prompt" class="vision-prompt-ta" readonly placeholder="Prompt will appear here after upload or refresh."></textarea>
+    <div class="vision-controls">
+      <button id="vision_copy" class="vision-btn" type="button">Copy Prompt</button>
+    </div>
+    <div class="vision-footer">
+      <span id="vision_updated">Last vision update: never</span>
+      <span id="vision_conf">Confidence: 0.00</span>
+    </div>
+  </aside>
+  </div>
+
+  <script>
+    const _currentHost = window.location.hostname;
+    const _apiHost = (!_currentHost || _currentHost === "localhost") ? "127.0.0.1" : _currentHost;
+      const DEFAULT_API_LATEST_URL = new URL("/latest", window.location.origin).toString();
+    const _queryParams = new URLSearchParams(window.location.search);
+    const _apiOverride = _queryParams.get("api");
+    const API_LATEST_URL = _apiOverride || DEFAULT_API_LATEST_URL;
+    const DISPLAY_SOURCE = _apiOverride ? "query-override" : "local-network-default";
+    const LOCAL_RESUME_FALLBACK_URL = "./results/resume_now.json";
+    const POLL_MS = 2000;
+    const LAST_KNOWN_PAYLOAD_KEY = "glasses_hud_last_known_payload";
+
+    let _lastPayloadKey = null;
+    let _lastKnownHudPayload = null;
+    let _lastKnownGuidancePriority = null;
+    let _lastKnownTaskTracking = null;
+    let _lastKnownDecisionInsight = null;
+
+    const titleEl = document.getElementById("title");
+    const actionEl = document.getElementById("primary_action");
+    const confidenceEl = document.getElementById("confidence");
+    const statusEl = document.getElementById("status");
+    const connectionEl = document.getElementById("connection");
+    const updatedEl = document.getElementById("updated");
+    const activeFileLineEl = document.getElementById("active_file_line");
+    const debugLineEl = document.getElementById("debug_line");
+    const taskFallbackEl = document.getElementById("task_fallback");
+    const taskRowsEl = document.getElementById("task_rows");
+    const taskCurrentEl = document.getElementById("task_current");
+    const taskLastEl = document.getElementById("task_last");
+    const taskNextEl = document.getElementById("task_next");
+    const taskConfidenceEl = document.getElementById("task_confidence");
+    const decisionFallbackEl = document.getElementById("decision_fallback");
+    const decisionRowsEl = document.getElementById("decision_rows");
+    const decisionValueEl = document.getElementById("decision_value");
+    const decisionConfidenceEl = document.getElementById("decision_confidence");
+    const decisionReasonEl = document.getElementById("decision_reason");
+    const decisionFactorsEl = document.getElementById("decision_factors");
+    const aiPromptTextEl = document.getElementById("ai_prompt_text");
+    const copyPromptBtnEl = document.getElementById("copy_prompt_btn");
+    const promptCopyStatusEl = document.getElementById("prompt_copy_status");
+    const promptSelectorEl = document.getElementById("prompt_selector");
+    const recommendedPromptLineEl = document.getElementById("recommended_prompt_line");
+    const recommendedPromptValueEl = document.getElementById("recommended_prompt_value");
+    const compactNextActionEl = document.getElementById("compact_next_action");
+    const compactBlockedEl = document.getElementById("compact_blocked");
+    const compactConfidenceEl = document.getElementById("compact_confidence");
+    const compactReasonEl = document.getElementById("compact_reason");
+    const compactContextEl = document.getElementById("compact_context");
+    const promptSelectorButtons = promptSelectorEl
+      ? Array.from(promptSelectorEl.querySelectorAll(".prompt-selector-btn"))
+      : [];
+
+    const PROMPT_KEYS = [
+      "implementation_prompt",
+      "validation_prompt",
+      "architecture_prompt",
+      "git_review_prompt",
+    ];
+
+    let _selectedPromptKey = "implementation_prompt";
+    let _recommendedPromptKey = "implementation_prompt";
+    let _currentPromptLibrary = null;
+    let _currentAiPromptFallback = "Prompt unavailable";
+
+    function _promptTypeFromPayload(value) {
+      const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+      if (text === "validation") return "validation_prompt";
+      if (text === "architecture") return "architecture_prompt";
+      if (text === "git_review") return "git_review_prompt";
+      return "implementation_prompt";
+    }
+
+    function _promptTypeLabelFromKey(key) {
+      if (key === "validation_prompt") return "Validation";
+      if (key === "architecture_prompt") return "Architecture";
+      if (key === "git_review_prompt") return "Git Review";
+      return "Implementation";
+    }
+
+    function _promptValueByKey(key) {
+      if (!_currentPromptLibrary || typeof _currentPromptLibrary !== "object") {
+        return "";
+      }
+
+      const value = _currentPromptLibrary[key];
+      return typeof value === "string" && value.trim() ? value.trim() : "";
+    }
+
+    function _firstAvailablePromptKey() {
+      for (const key of PROMPT_KEYS) {
+        if (_promptValueByKey(key)) {
+          return key;
+        }
+      }
+      return "";
+    }
+
+    function _activePromptText() {
+      const selectedText = _promptValueByKey(_selectedPromptKey);
+      if (selectedText) {
+        return selectedText;
+      }
+
+      const implementation = _promptValueByKey("implementation_prompt");
+      if (implementation) {
+        _selectedPromptKey = "implementation_prompt";
+        return implementation;
+      }
+
+      const firstKey = _firstAvailablePromptKey();
+      if (firstKey) {
+        _selectedPromptKey = firstKey;
+        return _promptValueByKey(firstKey);
+      }
+
+      return _currentAiPromptFallback;
+    }
+
+    function _updatePromptSelectorUi() {
+      if (!promptSelectorEl) {
+        return;
+      }
+
+      const hasLibrary = _currentPromptLibrary && typeof _currentPromptLibrary === "object" && !!_firstAvailablePromptKey();
+      promptSelectorEl.hidden = !hasLibrary;
+      if (recommendedPromptLineEl) {
+        recommendedPromptLineEl.hidden = !hasLibrary;
+      }
+      if (recommendedPromptValueEl) {
+        recommendedPromptValueEl.textContent = _promptTypeLabelFromKey(_recommendedPromptKey);
+      }
+
+      for (const button of promptSelectorButtons) {
+        const key = button.dataset.promptKey || "";
+        const hasPrompt = hasLibrary && !!_promptValueByKey(key);
+        button.disabled = !hasPrompt;
+        button.classList.toggle("active", hasPrompt && key === _selectedPromptKey);
+        button.classList.toggle("recommended", hasPrompt && key === _recommendedPromptKey);
+      }
+    }
+
+    function renderActiveFileContext(data) {
+      if (!activeFileLineEl) {
+        return;
+      }
+
+      const available = Boolean(data && data.active_file_available);
+      const display = data && typeof data.active_file_display === "object" ? data.active_file_display : null;
+
+      if (!available || !display) {
+        activeFileLineEl.textContent = "Active file unavailable";
+        return;
+      }
+
+      const currentFile = normalize(display.current_file, "Current file: unavailable");
+      const language = normalize(display.language, "Language: unknown");
+      const dirty = normalize(display.dirty, "Dirty: false");
+      activeFileLineEl.textContent = `${currentFile} | ${language} | ${dirty}`;
+    }
+
+    function _truncateText(value, maxChars) {
+      const text = normalize(value, "").replace(/\s+/g, " ").trim();
+      if (!text) {
+        return "";
+      }
+      if (text.length <= maxChars) {
+        return text;
+      }
+      return `${text.slice(0, Math.max(0, maxChars - 1)).trim()}...`;
+    }
+
+    function _compactPercent(value) {
+      const asNumber = Number(value);
+      if (!Number.isFinite(asNumber)) {
+        return "No data";
+      }
+      const normalized = asNumber <= 1 ? asNumber * 100 : asNumber;
+      const clamped = Math.max(0, Math.min(100, normalized));
+      return `${Math.round(clamped)}%`;
+    }
+
+    function _compactContext(data) {
+      const dev = data && typeof data.development_context === "object" ? data.development_context : null;
+      const fileName = dev && typeof dev.active_file === "string" && dev.active_file.trim()
+        ? dev.active_file.trim()
+        : "";
+      const activeFunction = dev && typeof dev.active_function === "string" && dev.active_function.trim()
+        ? dev.active_function.trim()
+        : "";
+
+      if (fileName && activeFunction) {
+        return `${fileName} :: ${activeFunction}`;
+      }
+      if (fileName) {
+        return fileName;
+      }
+
+      const activeFile = data && typeof data.active_file === "object" ? data.active_file : null;
+      if (activeFile && typeof activeFile.active_file_name === "string" && activeFile.active_file_name.trim()) {
+        return activeFile.active_file_name.trim();
+      }
+
+      return "Active file unavailable";
+    }
+
+    function renderCompactHud(data) {
+      if (!compactNextActionEl || !compactBlockedEl || !compactConfidenceEl || !compactReasonEl || !compactContextEl) {
+        return;
+      }
+
+      const guidance = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
+      const recommendedAction = guidance && guidance.recommended_action
+        ? guidance.recommended_action
+        : (data && typeof data.recommended_next_action === "string" ? data.recommended_next_action : "Run analysis and ensure API is available.");
+
+      const decisionReason = data && typeof data.decision_reason === "string" ? data.decision_reason : "";
+      const guidanceReason = guidance && typeof guidance.reason === "string" ? guidance.reason : "";
+      const guidanceMessage = guidance && typeof guidance.message === "string" ? guidance.message : "";
+      const shortReason = _truncateText(decisionReason || guidanceReason || guidanceMessage || "No reason available", 110);
+
+      const blocking = guidance && typeof guidance.blocking === "boolean"
+        ? guidance.blocking
+        : (guidance && typeof guidance.level === "string" && guidance.level.toLowerCase() === "critical");
+
+      let confidenceSource = data && Number.isFinite(Number(data.decision_confidence))
+        ? data.decision_confidence
+        : null;
+      if (confidenceSource === null) {
+        const taskTracking = data && typeof data.task_tracking === "object" ? data.task_tracking : null;
+        confidenceSource = taskTracking && Number.isFinite(Number(taskTracking.task_confidence))
+          ? taskTracking.task_confidence
+          : null;
+      }
+
+      compactNextActionEl.textContent = _truncateText(recommendedAction, 120) || "Run analysis and ensure API is available.";
+      compactBlockedEl.textContent = blocking ? "Blocked" : "Not blocked";
+      compactConfidenceEl.textContent = _compactPercent(confidenceSource);
+      compactReasonEl.textContent = shortReason;
+      compactContextEl.textContent = _truncateText(_compactContext(data), 72);
+    }
+
+    function renderAiPrompt(data) {
+      if (!aiPromptTextEl || !copyPromptBtnEl) {
+        return;
+      }
+
+      const library = data && typeof data.prompt_library === "object" ? data.prompt_library : null;
+      _currentPromptLibrary = library;
+      _recommendedPromptKey = _promptTypeFromPayload(data ? data.recommended_prompt_type : "");
+
+      _currentAiPromptFallback = data && typeof data.ai_prompt === "string" && data.ai_prompt.trim()
+        ? data.ai_prompt.trim()
+        : "Prompt unavailable";
+
+      _selectedPromptKey = _recommendedPromptKey;
+
+      if (!_promptValueByKey("implementation_prompt") && _firstAvailablePromptKey()) {
+        _selectedPromptKey = _firstAvailablePromptKey();
+      }
+
+      if (!_firstAvailablePromptKey()) {
+        _selectedPromptKey = "implementation_prompt";
+      }
+
+      _updatePromptSelectorUi();
+      const prompt = _activePromptText() || "Prompt unavailable";
+
+      aiPromptTextEl.value = prompt;
+      copyPromptBtnEl.disabled = prompt === "Prompt unavailable";
+      if (promptCopyStatusEl) {
+        promptCopyStatusEl.textContent = "";
+      }
+    }
+
+    function renderTaskContinuity(data) {
+      if (!taskFallbackEl || !taskRowsEl || !taskCurrentEl || !taskLastEl || !taskNextEl || !taskConfidenceEl) {
+        return;
+      }
+
+      const trackingFromPayload = data && typeof data.task_tracking === "object" ? data.task_tracking : null;
+      if (trackingFromPayload) {
+        _lastKnownTaskTracking = trackingFromPayload;
+      }
+      const tracking = trackingFromPayload || _lastKnownTaskTracking;
+      if (!tracking) {
+        taskFallbackEl.textContent = "Task continuity unavailable";
+        taskFallbackEl.hidden = false;
+        taskRowsEl.hidden = true;
+        return;
+      }
+
+      const currentTask = normalize(tracking.current_task, "Task continuity unavailable");
+      const lastCompleted = normalize(tracking.last_completed_step, "Task continuity unavailable");
+      const nextStep = normalize(tracking.next_recommended_step, "Task continuity unavailable");
+      const confidenceRaw = tracking.task_confidence;
+      const confidence = typeof confidenceRaw === "number"
+        ? confidenceRaw.toFixed(2)
+        : normalize(confidenceRaw, "Task continuity unavailable");
+
+      taskCurrentEl.textContent = currentTask;
+      taskLastEl.textContent = lastCompleted;
+      taskNextEl.textContent = nextStep;
+      taskConfidenceEl.textContent = confidence;
+
+      taskFallbackEl.hidden = true;
+      taskRowsEl.hidden = false;
+    }
+
+    function renderDecisionInsight(data) {
+      if (!decisionFallbackEl || !decisionRowsEl || !decisionValueEl || !decisionConfidenceEl || !decisionReasonEl || !decisionFactorsEl) {
+        return;
+      }
+
+      const fromPayload = data && typeof data === "object" ? {
+        next_step_decision: typeof data.next_step_decision === "string" ? data.next_step_decision : "",
+        decision_reason: typeof data.decision_reason === "string" ? data.decision_reason : "",
+        decision_confidence: data.decision_confidence,
+        decision_factors: Array.isArray(data.decision_factors) ? data.decision_factors : [],
+      } : null;
+
+      const fromPayloadValid = Boolean(
+        fromPayload
+        && String(fromPayload.next_step_decision || "").trim()
+        && String(fromPayload.decision_reason || "").trim()
+        && Number.isFinite(Number(fromPayload.decision_confidence))
+        && Array.isArray(fromPayload.decision_factors)
+        && fromPayload.decision_factors.some((item) => typeof item === "string" && item.trim())
+      );
+
+      if (fromPayloadValid) {
+        _lastKnownDecisionInsight = fromPayload;
+      }
+
+      const source = fromPayloadValid ? fromPayload : _lastKnownDecisionInsight;
+      const decisionValue = source && typeof source.next_step_decision === "string" && source.next_step_decision.trim()
+        ? source.next_step_decision.trim()
+        : "";
+      const reasonValue = source && typeof source.decision_reason === "string" && source.decision_reason.trim()
+        ? source.decision_reason.trim()
+        : "";
+      const confidenceRaw = source ? source.decision_confidence : null;
+      const hasConfidence = Number.isFinite(Number(confidenceRaw));
+      const factors = source && Array.isArray(source.decision_factors)
+        ? source.decision_factors.filter((item) => typeof item === "string" && item.trim())
+        : [];
+
+      const hasRequiredFields = Boolean(decisionValue && reasonValue && hasConfidence && factors.length > 0);
+      if (!hasRequiredFields) {
+        decisionFallbackEl.textContent = "Decision insight unavailable";
+        decisionFallbackEl.hidden = false;
+        decisionRowsEl.hidden = true;
+        decisionFactorsEl.innerHTML = "";
+        return;
+      }
+
+      decisionValueEl.textContent = decisionValue;
+      decisionConfidenceEl.textContent = `${(Number(confidenceRaw) * 100).toFixed(0)}%`;
+      decisionReasonEl.textContent = reasonValue;
+      decisionFactorsEl.innerHTML = "";
+      for (const factor of factors) {
+        const item = document.createElement("li");
+        item.textContent = factor;
+        decisionFactorsEl.appendChild(item);
+      }
+
+      decisionFallbackEl.hidden = true;
+      decisionRowsEl.hidden = false;
+    }
+
+    async function copyPromptToClipboard() {
+      if (!aiPromptTextEl || !promptCopyStatusEl) {
+        return;
+      }
+
+      const text = aiPromptTextEl.value || "";
+      if (!text || text === "Prompt unavailable") {
+        promptCopyStatusEl.textContent = "Prompt unavailable";
+        return;
+      }
+
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          aiPromptTextEl.focus();
+          aiPromptTextEl.select();
+          document.execCommand("copy");
+          aiPromptTextEl.setSelectionRange(0, 0);
+        }
+        promptCopyStatusEl.textContent = "Prompt copied";
+      } catch (_err) {
+        promptCopyStatusEl.textContent = "Copy failed";
+      }
+    }
+
+    if (copyPromptBtnEl) {
+      copyPromptBtnEl.addEventListener("click", () => {
+        copyPromptToClipboard();
+      });
+    }
+
+    for (const button of promptSelectorButtons) {
+      button.addEventListener("click", () => {
+        const key = button.dataset.promptKey || "";
+        if (!key) {
+          return;
+        }
+        _selectedPromptKey = key;
+        _updatePromptSelectorUi();
+
+        const prompt = _activePromptText() || "Prompt unavailable";
+        if (aiPromptTextEl) {
+          aiPromptTextEl.value = prompt;
+        }
+        if (copyPromptBtnEl) {
+          copyPromptBtnEl.disabled = prompt === "Prompt unavailable";
+        }
+        if (promptCopyStatusEl) {
+          promptCopyStatusEl.textContent = "";
+        }
+      });
+    }
+
+    function updateDebugLine(lastSuccessText = "never") {
+      if (!debugLineEl) {
+        return;
+      }
+
+      debugLineEl.textContent = `Web app mode | Source: ${DISPLAY_SOURCE} | API: ${API_LATEST_URL} | Last success: ${lastSuccessText}`;
+    }
+
+    updateDebugLine();
+
+    const _persistedAtLoad = _readPersistedLastKnown();
+    if (_persistedAtLoad) {
+      _lastKnownHudPayload = _persistedAtLoad;
+      _lastKnownGuidancePriority = typeof _persistedAtLoad.guidance_priority === "object" ? _persistedAtLoad.guidance_priority : null;
+      _lastKnownTaskTracking = typeof _persistedAtLoad.task_tracking === "object" ? _persistedAtLoad.task_tracking : null;
+      _lastKnownDecisionInsight = {
+        next_step_decision: _persistedAtLoad.next_step_decision || "",
+        decision_reason: _persistedAtLoad.decision_reason || "",
+        decision_confidence: _persistedAtLoad.decision_confidence,
+        decision_factors: Array.isArray(_persistedAtLoad.decision_factors) ? _persistedAtLoad.decision_factors : [],
+      };
+    }
+
+    function normalize(value, fallback = "No data") {
+      if (value === null || value === undefined || value === "") {
+        return fallback;
+      }
+      return String(value);
+    }
+
+    function _setHudState(state, detail = "") {
+      const normalized = String(state || "stale").toLowerCase();
+      const label = normalized === "error" ? "Error" : normalized === "stale" ? "Stale" : "Connected";
+      statusEl.textContent = label.toUpperCase();
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
+      if (normalized === "error") {
+        statusEl.classList.add("error");
+      } else if (normalized === "stale") {
+        statusEl.classList.add("stale");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      connectionEl.textContent = detail ? `${label}: ${detail}` : label;
+    }
+
+    function _persistLastKnown(payload) {
+      _lastKnownHudPayload = payload;
+      try {
+        localStorage.setItem(LAST_KNOWN_PAYLOAD_KEY, JSON.stringify(payload));
+      } catch (_err) {
+        // Ignore persistence errors.
+      }
+    }
+
+    function _readPersistedLastKnown() {
+      try {
+        const raw = localStorage.getItem(LAST_KNOWN_PAYLOAD_KEY);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function _mergeLastKnown(data) {
+      const payload = data && typeof data === "object" ? { ...data } : {};
+      const fallback = _lastKnownHudPayload && typeof _lastKnownHudPayload === "object" ? _lastKnownHudPayload : null;
+      if (!fallback) {
+        return payload;
+      }
+
+      if ((!payload.guidance_priority || typeof payload.guidance_priority !== "object") && fallback.guidance_priority) {
+        payload.guidance_priority = fallback.guidance_priority;
+      }
+      if ((!payload.task_tracking || typeof payload.task_tracking !== "object") && fallback.task_tracking) {
+        payload.task_tracking = fallback.task_tracking;
+      }
+      const hasDecision = typeof payload.next_step_decision === "string" && payload.next_step_decision.trim();
+      if (!hasDecision && fallback.next_step_decision) {
+        payload.next_step_decision = fallback.next_step_decision;
+      }
+      if ((!payload.decision_reason || !String(payload.decision_reason).trim()) && fallback.decision_reason) {
+        payload.decision_reason = fallback.decision_reason;
+      }
+      if (!Array.isArray(payload.decision_factors) || payload.decision_factors.length === 0) {
+        payload.decision_factors = Array.isArray(fallback.decision_factors) ? fallback.decision_factors : [];
+      }
+      if (!Number.isFinite(Number(payload.decision_confidence))) {
+        payload.decision_confidence = fallback.decision_confidence;
+      }
+      return payload;
+    }
+
+    function setWaiting(message, state = "stale") {
+      titleEl.textContent = "Waiting for glasses display data...";
+      actionEl.textContent = message;
+      actionEl.classList.add("waiting");
+      confidenceEl.textContent = "No data";
+      _setHudState(state, "No fresh payload");
+      renderCompactHud(null);
+    }
+
+    function renderDisplay(display) {
+      const title = normalize(display.title, "No title");
+      const primaryAction = normalize(display.primary_action, "No primary action");
+      const confidence = normalize(display.confidence, "Unknown");
+      const status = normalize(display.status, "No data").toUpperCase();
+
+      titleEl.textContent = title;
+      actionEl.textContent = primaryAction;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = confidence;
+      statusEl.textContent = status;
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
+      if (status === "STUCK") {
+        statusEl.classList.add("stuck");
+      } else if (status === "ACTIVE") {
+        statusEl.classList.add("active");
+      }
+
+      _setHudState("connected", "display");
+    }
+
+    function renderPriority(priority) {
+      const headline = normalize(priority.headline, "No headline");
+      const primaryMessage = normalize(priority.primary_message, "No message");
+      const secondaryMessage = normalize(priority.secondary_message, "No details");
+      const status = normalize(priority.status, "No data").toUpperCase();
+      const mode = normalize(priority.mode, "active").toLowerCase();
+
+      titleEl.textContent = headline;
+      actionEl.textContent = primaryMessage;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = secondaryMessage;
+      statusEl.textContent = status;
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
+
+      if (status === "STUCK") {
+        statusEl.classList.add("stuck");
+      } else if (status === "SWITCH") {
+        statusEl.classList.add("switch");
+      } else if (status === "NEW") {
+        statusEl.classList.add("new");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      _setHudState("connected", mode);
+    }
+
+    function renderGuidancePriority(guidancePriority) {
+      const headline = normalize(guidancePriority.headline, "Resume guidance");
+      const recommendedAction = normalize(guidancePriority.recommended_action, "Continue current implementation.");
+      const level = normalize(guidancePriority.level, "info").toLowerCase();
+
+      titleEl.textContent = headline;
+      actionEl.textContent = recommendedAction;
+      actionEl.classList.remove("waiting");
+      confidenceEl.textContent = "Guidance";
+      statusEl.textContent = level.toUpperCase();
+      statusEl.classList.remove("active", "stuck", "switch", "new", "error", "stale");
+
+      if (level === "critical") {
+        statusEl.classList.add("stuck");
+      } else if (level === "high") {
+        statusEl.classList.add("new");
+      } else if (level === "medium") {
+        statusEl.classList.add("switch");
+      } else {
+        statusEl.classList.add("active");
+      }
+
+      _setHudState("connected", "guidance");
+    }
+
+    async function fetchResumeFallback() {
+      try {
+        const response = await fetch(LOCAL_RESUME_FALLBACK_URL, { cache: "no-store" });
+        if (!response.ok) {
+          return null;
+        }
+
+        const resumeData = await response.json();
+        if (!resumeData || typeof resumeData !== "object") {
+          return null;
+        }
+
+        const guidance = typeof resumeData.guidance_priority === "object" ? resumeData.guidance_priority : null;
+        return guidance;
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function updateTimestamp() {
+      const lastSuccessText = new Date().toLocaleTimeString();
+      updatedEl.textContent = `Last successful fetch: ${lastSuccessText}`;
+      updateDebugLine(lastSuccessText);
+    }
+
+    function _payloadKey(data) {
+      try { return JSON.stringify(data); } catch (_) { return String(data); }
+    }
+
+    async function fetchLatest() {
+      try {
+        const response = await fetch(API_LATEST_URL, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = _mergeLastKnown(await response.json());
+        const payloadFreshness = data && typeof data.payload_freshness === "object" ? data.payload_freshness : null;
+        const ageSeconds = payloadFreshness && Number.isFinite(Number(payloadFreshness.age_seconds))
+          ? Number(payloadFreshness.age_seconds)
+          : null;
+        const hudState = payloadFreshness && typeof payloadFreshness.state === "string"
+          ? payloadFreshness.state.toLowerCase()
+          : (data && typeof data.hud_status === "string" ? data.hud_status.toLowerCase() : "connected");
+        updateTimestamp();
+        renderActiveFileContext(data);
+        renderTaskContinuity(data);
+        renderDecisionInsight(data);
+        renderAiPrompt(data);
+        renderCompactHud(data);
+        const key = _payloadKey(data);
+        if (key === _lastPayloadKey) { return; }
+        _lastPayloadKey = key;
+
+        const guidancePriority = data && typeof data.guidance_priority === "object" ? data.guidance_priority : null;
+        const priority = data && typeof data.display_priority === "object" ? data.display_priority : null;
+        const display = data && typeof data.glasses_display === "object" ? data.glasses_display : null;
+        const fallbackGuidance = await fetchResumeFallback();
+        if (guidancePriority) {
+          _lastKnownGuidancePriority = guidancePriority;
+        }
+
+        if (guidancePriority || fallbackGuidance) {
+          _persistLastKnown(data);
+        }
+
+        const hudDetail = ageSeconds === null ? "fresh" : `${ageSeconds}s old`;
+        _setHudState(hudState, hudDetail);
+
+        if (guidancePriority) {
+          renderGuidancePriority(guidancePriority);
+          return;
+        }
+
+        if (fallbackGuidance) {
+          renderGuidancePriority(fallbackGuidance);
+          _setHudState(hudState, "resume fallback");
+          return;
+        }
+
+        if (!guidancePriority && _lastKnownGuidancePriority) {
+          renderGuidancePriority(_lastKnownGuidancePriority);
+          _setHudState("stale", "last known guidance");
+          return;
+        }
+
+        if (priority) {
+          renderPriority(priority);
+          return;
+        }
+
+        if (!display) {
+          setWaiting("Analyze an image to populate display_priority or glasses_display.", hudState === "error" ? "error" : "stale");
+          return;
+        }
+
+        renderDisplay(display);
+      } catch (_err) {
+        _lastPayloadKey = null;
+        const persisted = _readPersistedLastKnown();
+        if (persisted) {
+          _lastKnownHudPayload = persisted;
+          renderActiveFileContext(persisted);
+          renderTaskContinuity(persisted);
+          renderDecisionInsight(persisted);
+          renderAiPrompt(persisted);
+          renderCompactHud(persisted);
+          if (persisted.guidance_priority && typeof persisted.guidance_priority === "object") {
+            _lastKnownGuidancePriority = persisted.guidance_priority;
+            renderGuidancePriority(_lastKnownGuidancePriority);
+          }
+          _setHudState("error", "using last known payload");
+          return;
+        }
+
+        renderActiveFileContext(null);
+        renderTaskContinuity(null);
+        renderDecisionInsight(null);
+        renderAiPrompt(null);
+        renderCompactHud(null);
+        updateDebugLine(updatedEl.textContent.replace("Last successful fetch: ", "") || "never");
+        setWaiting(`Start API server on this machine with --host 0.0.0.0 and make sure port 8001 is reachable. (Trying: ${API_LATEST_URL})`, "error");
+      }
+    }
+
+    fetchLatest();
+    setInterval(fetchLatest, POLL_MS);
+
+    // == V18.1 manual visual input ================================
+    (function () {
+      const _vh = (!_currentHost || _currentHost === 'localhost') ? '127.0.0.1' : _currentHost;
+      const VISION_LATEST_URL  = 'http://' + _vh + ':8001/vision/latest';
+      const VISION_ANALYZE_URL = 'http://' + _vh + ':8001/vision/analyze';
+      const visionFileEl    = document.getElementById('vision_file');
+      const visionUploadEl  = document.getElementById('vision_upload');
+      const visionStatusEl  = document.getElementById('vision_status');
+      const visionSummaryEl = document.getElementById('vision_summary');
+      const visionObsEl     = document.getElementById('vision_obs');
+      const visionStepEl    = document.getElementById('vision_next_step');
+      const visionPromptEl  = document.getElementById('vision_prompt');
+      const visionCopyEl    = document.getElementById('vision_copy');
+      const visionUpdatedEl = document.getElementById('vision_updated');
+      const visionConfEl    = document.getElementById('vision_conf');
+      function _renderVision(data) {
+        if (!visionStatusEl) { return; }
+        const hasData = Boolean(data && data.has_data);
+        const obs = Array.isArray(data && data.observations) ? data.observations : [];
+        if (visionSummaryEl)  { visionSummaryEl.textContent  = (data && data.summary) || 'No data'; }
+        if (visionStepEl)     { visionStepEl.textContent     = (data && data.recommended_next_step) || 'No data'; }
+        if (visionPromptEl)   { visionPromptEl.value         = (data && data.copilot_prompt) || ''; }
+        if (visionConfEl)     { visionConfEl.textContent     = 'Confidence: ' + Number((data && data.confidence) || 0).toFixed(2); }
+        if (visionUpdatedEl)  { visionUpdatedEl.textContent  = 'Last vision update: ' + ((data && data.generated_at) || 'never'); }
+        visionStatusEl.textContent = hasData ? 'Visual analysis loaded.' : 'No visual analysis yet. Upload an image to generate prompt content.';
+        if (visionObsEl) {
+          visionObsEl.innerHTML = '';
+          (obs.length ? obs : ['No observations available.']).forEach(function (item) {
+            var li = document.createElement('li'); li.textContent = String(item); visionObsEl.appendChild(li);
+          });
+        }
+      }
+      async function _fetchVisionLatest() {
+        try {
+          var r = await fetch(VISION_LATEST_URL, { cache: 'no-store' });
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          _renderVision(await r.json());
+        } catch (_e) { if (visionStatusEl) { visionStatusEl.textContent = 'Vision API unavailable.'; } }
+      }
+      async function _uploadVision() {
+        var file = visionFileEl && visionFileEl.files ? visionFileEl.files[0] : null;
+        if (!file) { if (visionStatusEl) { visionStatusEl.textContent = 'Select a PNG or JPEG file first.'; } return; }
+        if (visionUploadEl) { visionUploadEl.disabled = true; }
+        if (visionStatusEl) { visionStatusEl.textContent = 'Uploading\u2026'; }
+        try {
+          var fd = new FormData(); fd.append('file', file);
+          var resp = await fetch(VISION_ANALYZE_URL, { method: 'POST', body: fd });
+          var data = await resp.json();
+          if (!resp.ok) { throw new Error(data && data.detail ? data.detail : 'HTTP ' + resp.status); }
+          _renderVision(data);
+          if (visionStatusEl) { visionStatusEl.textContent = 'Analysis complete.'; }
+        } catch (err) {
+          if (visionStatusEl) { visionStatusEl.textContent = 'Upload failed: ' + (err.message || 'Unknown error'); }
+        } finally {
+          if (visionUploadEl) { visionUploadEl.disabled = false; }
+        }
+      }
+      async function _copyVisionPrompt() {
+        var text = visionPromptEl ? visionPromptEl.value : '';
+        if (!text.trim()) { if (visionStatusEl) { visionStatusEl.textContent = 'No prompt available yet.'; } return; }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            visionPromptEl.focus(); visionPromptEl.select(); document.execCommand('copy'); visionPromptEl.setSelectionRange(0, 0);
+          }
+          if (visionStatusEl) { visionStatusEl.textContent = 'Prompt copied to clipboard.'; }
+        } catch (_e) { if (visionStatusEl) { visionStatusEl.textContent = 'Copy failed. Select text manually.'; } }
+      }
+      if (visionUploadEl) { visionUploadEl.addEventListener('click', _uploadVision); }
+      if (visionCopyEl)   { visionCopyEl.addEventListener('click', _copyVisionPrompt); }
+      _fetchVisionLatest();
+    })();
+    // == end V18.1 ================================================
+
+  </script>
+</body>
+</html>
