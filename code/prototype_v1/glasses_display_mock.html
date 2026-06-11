@@ -376,6 +376,28 @@
       font-family: Consolas, "Courier New", monospace;
     }
 
+    /* == V18.1 manual visual input panel ======================== */
+    .vision-panel {
+      width: 480px; max-width: 100%;
+      border: 1px solid var(--line); border-radius: 16px;
+      background: linear-gradient(180deg, #0d121a 0%, #090d14 100%);
+      padding: 18px; display: grid; gap: 10px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    }
+    .vision-panel-title { font-size: 1rem; font-weight: 700; color: var(--accent); }
+    .vision-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-size: 0.76rem; margin-bottom: 2px; }
+    .vision-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .vision-btn { border: 1px solid var(--line); border-radius: 8px; background: #132236; color: var(--text); padding: 7px 12px; font-size: 0.86rem; cursor: pointer; }
+    .vision-btn:hover { background: #18304d; }
+    .vision-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .vision-field { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: rgba(8,12,18,0.8); min-height: 36px; font-size: 0.86rem; color: var(--text); line-height: 1.35; }
+    .vision-obs-list { margin: 0; padding-left: 16px; }
+    .vision-obs-list li { margin: 2px 0; color: var(--muted); font-size: 0.82rem; }
+    .vision-prompt-ta { width: 100%; min-height: 130px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: #070b11; color: var(--text); padding: 9px; font-family: Consolas, "Courier New", monospace; font-size: 0.82rem; line-height: 1.4; }
+    .vision-footer { color: var(--muted); font-size: 0.78rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+    @media (max-width: 1100px) { .vision-panel { display: none; } }
+    /* == end V18.1 ============================================== */
+
     .prompt-status {
       color: var(--muted);
       font-size: 0.74rem;
@@ -556,6 +578,31 @@
     <textarea id="ai_prompt_text" class="prompt-text" readonly>Prompt unavailable</textarea>
     <div id="prompt_copy_status" class="prompt-status"></div>
   </section>
+
+  <aside class="vision-panel" id="vision_panel" aria-live="polite">
+    <div class="vision-panel-title">Manual Visual Input (Desktop)</div>
+    <div class="vision-label">Upload Image</div>
+    <div class="vision-controls">
+      <input id="vision_file" type="file" accept="image/png,image/jpeg">
+      <button id="vision_upload" class="vision-btn" type="button">Upload</button>
+    </div>
+    <div id="vision_status" class="vision-field">No visual analysis yet.</div>
+    <div class="vision-label">Summary</div>
+    <div id="vision_summary" class="vision-field">No data</div>
+    <div class="vision-label">Observations</div>
+    <ul id="vision_obs" class="vision-obs-list"></ul>
+    <div class="vision-label">Recommended Next Step</div>
+    <div id="vision_next_step" class="vision-field">No data</div>
+    <div class="vision-label">Copilot Prompt</div>
+    <textarea id="vision_prompt" class="vision-prompt-ta" readonly placeholder="Prompt will appear here after upload or refresh."></textarea>
+    <div class="vision-controls">
+      <button id="vision_copy" class="vision-btn" type="button">Copy Prompt</button>
+    </div>
+    <div class="vision-footer">
+      <span id="vision_updated">Last vision update: never</span>
+      <span id="vision_conf">Confidence: 0.00</span>
+    </div>
+  </aside>
   </div>
 
   <script>
@@ -1288,6 +1335,82 @@
 
     fetchLatest();
     setInterval(fetchLatest, POLL_MS);
+
+    // == V18.1 manual visual input ================================
+    (function () {
+      const _vh = (!_currentHost || _currentHost === 'localhost') ? '127.0.0.1' : _currentHost;
+      const VISION_LATEST_URL  = 'http://' + _vh + ':8001/vision/latest';
+      const VISION_ANALYZE_URL = 'http://' + _vh + ':8001/vision/analyze';
+      const visionFileEl    = document.getElementById('vision_file');
+      const visionUploadEl  = document.getElementById('vision_upload');
+      const visionStatusEl  = document.getElementById('vision_status');
+      const visionSummaryEl = document.getElementById('vision_summary');
+      const visionObsEl     = document.getElementById('vision_obs');
+      const visionStepEl    = document.getElementById('vision_next_step');
+      const visionPromptEl  = document.getElementById('vision_prompt');
+      const visionCopyEl    = document.getElementById('vision_copy');
+      const visionUpdatedEl = document.getElementById('vision_updated');
+      const visionConfEl    = document.getElementById('vision_conf');
+      function _renderVision(data) {
+        if (!visionStatusEl) { return; }
+        const hasData = Boolean(data && data.has_data);
+        const obs = Array.isArray(data && data.observations) ? data.observations : [];
+        if (visionSummaryEl)  { visionSummaryEl.textContent  = (data && data.summary) || 'No data'; }
+        if (visionStepEl)     { visionStepEl.textContent     = (data && data.recommended_next_step) || 'No data'; }
+        if (visionPromptEl)   { visionPromptEl.value         = (data && data.copilot_prompt) || ''; }
+        if (visionConfEl)     { visionConfEl.textContent     = 'Confidence: ' + Number((data && data.confidence) || 0).toFixed(2); }
+        if (visionUpdatedEl)  { visionUpdatedEl.textContent  = 'Last vision update: ' + ((data && data.generated_at) || 'never'); }
+        visionStatusEl.textContent = hasData ? 'Visual analysis loaded.' : 'No visual analysis yet. Upload an image to generate prompt content.';
+        if (visionObsEl) {
+          visionObsEl.innerHTML = '';
+          (obs.length ? obs : ['No observations available.']).forEach(function (item) {
+            var li = document.createElement('li'); li.textContent = String(item); visionObsEl.appendChild(li);
+          });
+        }
+      }
+      async function _fetchVisionLatest() {
+        try {
+          var r = await fetch(VISION_LATEST_URL, { cache: 'no-store' });
+          if (!r.ok) { throw new Error('HTTP ' + r.status); }
+          _renderVision(await r.json());
+        } catch (_e) { if (visionStatusEl) { visionStatusEl.textContent = 'Vision API unavailable.'; } }
+      }
+      async function _uploadVision() {
+        var file = visionFileEl && visionFileEl.files ? visionFileEl.files[0] : null;
+        if (!file) { if (visionStatusEl) { visionStatusEl.textContent = 'Select a PNG or JPEG file first.'; } return; }
+        if (visionUploadEl) { visionUploadEl.disabled = true; }
+        if (visionStatusEl) { visionStatusEl.textContent = 'Uploading\u2026'; }
+        try {
+          var fd = new FormData(); fd.append('file', file);
+          var resp = await fetch(VISION_ANALYZE_URL, { method: 'POST', body: fd });
+          var data = await resp.json();
+          if (!resp.ok) { throw new Error(data && data.detail ? data.detail : 'HTTP ' + resp.status); }
+          _renderVision(data);
+          if (visionStatusEl) { visionStatusEl.textContent = 'Analysis complete.'; }
+        } catch (err) {
+          if (visionStatusEl) { visionStatusEl.textContent = 'Upload failed: ' + (err.message || 'Unknown error'); }
+        } finally {
+          if (visionUploadEl) { visionUploadEl.disabled = false; }
+        }
+      }
+      async function _copyVisionPrompt() {
+        var text = visionPromptEl ? visionPromptEl.value : '';
+        if (!text.trim()) { if (visionStatusEl) { visionStatusEl.textContent = 'No prompt available yet.'; } return; }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            visionPromptEl.focus(); visionPromptEl.select(); document.execCommand('copy'); visionPromptEl.setSelectionRange(0, 0);
+          }
+          if (visionStatusEl) { visionStatusEl.textContent = 'Prompt copied to clipboard.'; }
+        } catch (_e) { if (visionStatusEl) { visionStatusEl.textContent = 'Copy failed. Select text manually.'; } }
+      }
+      if (visionUploadEl) { visionUploadEl.addEventListener('click', _uploadVision); }
+      if (visionCopyEl)   { visionCopyEl.addEventListener('click', _copyVisionPrompt); }
+      _fetchVisionLatest();
+    })();
+    // == end V18.1 ================================================
+
   </script>
 </body>
 </html>
