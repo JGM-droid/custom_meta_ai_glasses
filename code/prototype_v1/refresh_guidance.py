@@ -19,7 +19,9 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent.parent
-VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
+VENV_PYTHON = (
+    REPO_ROOT / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+).resolve()
 RESULTS_DIR = BASE_DIR / "results"
 RESUME_NOW_PATH = RESULTS_DIR / "resume_now.json"
 WATCH_LOCK_PATH = RESULTS_DIR / "refresh_guidance_watch.lock"
@@ -34,7 +36,8 @@ class StepResult:
 
 
 def _normalized_path(path: Path) -> str:
-    return str(path.resolve()).casefold()
+    normalized = str(path.resolve())
+    return normalized.casefold() if os.name == "nt" else normalized
 
 
 def _is_canonical_python() -> bool:

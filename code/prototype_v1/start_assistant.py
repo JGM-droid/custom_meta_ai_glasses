@@ -13,10 +13,15 @@ from urllib.parse import quote_plus
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from artifact_ownership import warn_if_multiple_writers
+
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent.parent
-VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
+PYTHON_EXECUTABLE = Path(sys.executable).resolve()
+VENV_PYTHON = (
+    REPO_ROOT / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+).resolve()
 START_ASSISTANT_LOCK = BASE_DIR / "results" / "start_assistant.lock"
 API_PORT = 8001
 API_LATEST_URL = f"http://127.0.0.1:{API_PORT}/latest"
@@ -24,7 +29,7 @@ DESKTOP_URL = f"http://127.0.0.1:{API_PORT}/glasses_display_mock.html"
 NGROK_API_URL = "http://127.0.0.1:4040/api/tunnels"
 
 API_COMMAND = [
-    str(VENV_PYTHON),
+    str(PYTHON_EXECUTABLE),
     "-m",
     "uvicorn",
     "api:app",
@@ -36,19 +41,20 @@ API_COMMAND = [
     str(BASE_DIR),
 ]
 REFRESH_WATCH_COMMAND = [
-    str(VENV_PYTHON),
+    str(PYTHON_EXECUTABLE),
     str(BASE_DIR / "refresh_guidance.py"),
     "--watch",
 ]
 
 
 def _normalized_path(path: Path) -> str:
-    return str(path.resolve()).casefold()
+    normalized = str(path.resolve())
+    return normalized.casefold() if os.name == "nt" else normalized
 
 
 def _is_canonical_python() -> bool:
     try:
-        return _normalized_path(Path(sys.executable)) == _normalized_path(VENV_PYTHON)
+        return _normalized_path(PYTHON_EXECUTABLE) == _normalized_path(VENV_PYTHON)
     except OSError:
         return False
 
@@ -131,14 +137,18 @@ def _terminate_process(process: subprocess.Popen[str] | None) -> None:
         process.wait(timeout=5)
 
 
-def _fetch_processes() -> list[dict[str, Any]]:
+def _fetch_windows_processes() -> list[dict[str, Any]]:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if not powershell:
+        return []
+
     command = (
         "Get-CimInstance Win32_Process | "
         "Select-Object ProcessId,Name,CommandLine | "
         "ConvertTo-Json -Compress"
     )
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
+        [powershell, "-NoProfile", "-Command", command],
         check=False,
         capture_output=True,
         text=True,
@@ -160,6 +170,41 @@ def _fetch_processes() -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         return [payload]
     return []
+
+
+def _fetch_posix_processes() -> list[dict[str, Any]]:
+    ps = shutil.which("ps")
+    if not ps:
+        return []
+
+    result = subprocess.run(
+        [ps, "-eo", "pid=,comm=,args="],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    processes: list[dict[str, Any]] = []
+    for line in (result.stdout or "").splitlines():
+        parts = line.strip().split(maxsplit=2)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        name = parts[1]
+        command_line = parts[2] if len(parts) == 3 else name
+        processes.append({"ProcessId": pid, "Name": name, "CommandLine": command_line})
+    return processes
+
+
+def _fetch_processes() -> list[dict[str, Any]]:
+    if os.name == "nt":
+        return _fetch_windows_processes()
+    return _fetch_posix_processes()
 
 
 def _cmdline(proc: dict[str, Any]) -> str:
@@ -291,8 +336,10 @@ def main() -> int:
     api_process: subprocess.Popen[str] | None = None
     refresh_process: subprocess.Popen[str] | None = None
 
+    warn_if_multiple_writers()
+
     if not _is_canonical_python():
-        print(f"start_assistant.py: refusing to start under {sys.executable}; use {VENV_PYTHON}")
+        print(f"start_assistant.py: refusing to start under {PYTHON_EXECUTABLE}; use {VENV_PYTHON}")
         return 1
 
     if not _acquire_single_instance_lock(START_ASSISTANT_LOCK, "start_assistant.py"):
