@@ -14,9 +14,12 @@ import sys
 import tempfile
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from investigations import InvestigationAnalyzeResponse, validate_investigation_request
 
 try:
     from openai import OpenAI
@@ -1173,3 +1176,20 @@ async def vision_analyze(request: Request, file: UploadFile = File(...)):
     payload["auto_analysis_status"] = "auto_analyzed" if is_auto else "manual_upload"
     _safe_write_json(VISION_CONTEXT_JSON, payload)
     return payload
+
+
+@app.post("/investigations/analyze", response_model=InvestigationAnalyzeResponse)
+async def investigations_analyze(
+    schema_version: str = Form(...),
+    session_id: str = Form(...),
+    idempotency_key: str = Form(...),
+    user_explanation: str = Form(""),
+    images: list[UploadFile] = File(...),
+):
+    return await validate_investigation_request(
+        schema_version=schema_version,
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        user_explanation=user_explanation,
+        images=images,
+    )
