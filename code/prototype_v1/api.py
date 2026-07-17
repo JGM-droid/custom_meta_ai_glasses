@@ -19,7 +19,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from investigations import InvestigationAnalyzeResponse, analyze_investigation_request
+from investigations import (
+    InvestigationAnalyzeResponse,
+    InvestigationDesktopProjection,
+    InvestigationGlassesProjection,
+    InvestigationStoreError,
+    InvestigationStoreNotFound,
+    analyze_investigation_request_with_retained,
+    build_desktop_projection,
+    build_glasses_projection,
+    investigation_stale_seconds,
+    load_latest_investigation_result,
+    save_latest_investigation_result,
+)
 
 try:
     from openai import OpenAI
@@ -51,6 +63,7 @@ RESUME_NOW_JSON = BASE_DIR / "results" / "resume_now.json"
 HUD_CACHE_JSON = BASE_DIR / "results" / "last_known_hud_payload.json"
 RESULTS_DIR = BASE_DIR / "results"
 VISION_CONTEXT_JSON = RESULTS_DIR / "vision_context.json"
+INVESTIGATION_LATEST_JSON = RESULTS_DIR / "investigation_latest.json"
 CONTEXT_FUSION_JSON = RESULTS_DIR / "context_fusion.json"
 DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
 GLASSES_WEBAPP_DIR = BASE_DIR / "glasses_webapp"
@@ -1006,6 +1019,13 @@ async def glasses_webapp():
     return FileResponse(str(GLASSES_WEBAPP_INDEX), media_type="text/html")
 
 
+@app.get("/investigations", response_class=FileResponse)
+async def investigations_page_alias():
+    if not DISPLAY_HTML.exists():
+        raise HTTPException(status_code=404, detail="Display mock not found.")
+    return FileResponse(str(DISPLAY_HTML), media_type="text/html")
+
+
 @app.get("/latest")
 async def latest():
     source_path: Path | None = None
@@ -1207,7 +1227,7 @@ async def investigations_analyze(
     user_explanation: str = Form(""),
     images: list[UploadFile] = File(...),
 ):
-    return await analyze_investigation_request(
+    public_response, retained_result = await analyze_investigation_request_with_retained(
         schema_version=schema_version,
         session_id=session_id,
         idempotency_key=idempotency_key,
@@ -1220,3 +1240,41 @@ async def investigations_analyze(
         extract_json_object=_extract_json_object,
         load_context_snapshot=_load_investigation_context_snapshot_from_context_fusion,
     )
+
+    try:
+        save_latest_investigation_result(INVESTIGATION_LATEST_JSON, retained_result)
+    except InvestigationStoreError as exc:
+        raise HTTPException(status_code=500, detail="Investigation result persistence failed.") from exc
+
+    return public_response
+
+
+@app.get("/investigations/latest", response_model=InvestigationDesktopProjection)
+async def investigations_latest() -> InvestigationDesktopProjection:
+    try:
+        retained_result = load_latest_investigation_result(INVESTIGATION_LATEST_JSON)
+    except InvestigationStoreNotFound as exc:
+        raise HTTPException(status_code=404, detail="No retained investigation result exists.") from exc
+    except InvestigationStoreError as exc:
+        raise HTTPException(status_code=500, detail="Retained investigation result is unavailable.") from exc
+
+    stale_seconds = investigation_stale_seconds()
+    return build_desktop_projection(retained_result, stale_seconds=stale_seconds)
+
+
+@app.get("/investigations/latest/glasses", response_model=InvestigationGlassesProjection)
+async def investigations_latest_glasses(request: Request, token: str = Query(default="")) -> InvestigationGlassesProjection:
+    if GLASSES_API_TOKEN:
+        candidate = token.strip() or _extract_bearer_token(request)
+        if candidate != GLASSES_API_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized token for glasses endpoint.")
+
+    try:
+        retained_result = load_latest_investigation_result(INVESTIGATION_LATEST_JSON)
+    except InvestigationStoreNotFound as exc:
+        raise HTTPException(status_code=404, detail="No retained investigation result exists.") from exc
+    except InvestigationStoreError as exc:
+        raise HTTPException(status_code=500, detail="Retained investigation result is unavailable.") from exc
+
+    stale_seconds = investigation_stale_seconds()
+    return build_glasses_projection(retained_result, stale_seconds=stale_seconds)

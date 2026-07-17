@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import api
+import investigations.result_store as investigation_result_store
 from investigations import InvestigationModelResult
+from investigations.models import InvestigationRetainedResult
+from investigations.service import build_glasses_projection
 
 
 client = TestClient(api.app)
@@ -253,6 +258,9 @@ def test_existing_routes_still_registered():
     assert "/latest" in route_paths
     assert "/glasses/latest" in route_paths
     assert "/investigations/analyze" in route_paths
+    assert "/investigations/latest" in route_paths
+    assert "/investigations/latest/glasses" in route_paths
+    assert "/investigations" in route_paths
 
 
 def test_valid_two_field_json_maps_to_public_response(monkeypatch):
@@ -711,3 +719,249 @@ def test_successful_in_process_generated_request(monkeypatch):
     payload = response.json()
     assert payload["image_order"] == ["1:generated-1.png", "2:generated-2.png"]
     assert payload["used_user_explanation"] == "generated explanation"
+
+
+def _retained_path(tmp_path: Path) -> Path:
+    return tmp_path / "investigation_latest.json"
+
+
+def _seed_retained_file(path: Path, *, diagnosis: str = "Seed diagnosis", required_next_action: str = "Seed action") -> None:
+    retained = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv_seed1234",
+        session_id="session-seed",
+        status="analyzed",
+        diagnosis=diagnosis,
+        required_next_action=required_next_action,
+        image_count=2,
+        image_order=["1:first.png", "2:second.png"],
+        used_user_explanation="seed explanation",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="Seed prompt",
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(retained.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def test_analyze_persists_retained_result_and_latest_projection(monkeypatch, tmp_path):
+    state = _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", _retained_path(tmp_path))
+
+    post_response = _post_investigation(
+        [
+            _image_part("first.png", b"a"),
+            _image_part("second.png", b"b"),
+        ]
+    )
+    assert post_response.status_code == 200
+    assert len(state["calls"]) == 1
+
+    latest_response = client.get("/investigations/latest")
+    assert latest_response.status_code == 200
+    payload = latest_response.json()
+    assert payload["investigation_id"].startswith("inv_")
+    assert payload["diagnosis"] == "Investigation indicates likely terminal/API mismatch."
+    assert payload["required_next_action"] == "Capture one clearer image of the exact terminal error line."
+    assert payload["freshness_state"] in {"fresh", "unknown"}
+    assert "Instructions for GitHub Copilot" in payload["copilot_prompt"]
+
+
+def test_analyze_failure_does_not_overwrite_previous_retained_result(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    _seed_retained_file(retained_path, diagnosis="existing-diagnosis", required_next_action="existing-action")
+    before = retained_path.read_text(encoding="utf-8")
+
+    _setup_fake_openai(monkeypatch, raised=TimeoutError("timed out"))
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", retained_path)
+
+    post_response = _post_investigation(
+        [
+            _image_part("first.png", b"a"),
+            _image_part("second.png", b"b"),
+        ]
+    )
+    assert post_response.status_code == 504
+    assert retained_path.read_text(encoding="utf-8") == before
+
+
+def test_atomic_store_replace_failure_preserves_previous_valid_result_and_cleans_temp(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    _seed_retained_file(retained_path, diagnosis="original-diagnosis", required_next_action="original-action")
+    original_text = retained_path.read_text(encoding="utf-8")
+
+    failing_result = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv_replace_fail",
+        session_id="session-replace-fail",
+        status="analyzed",
+        diagnosis="new-diagnosis-that-should-not-replace",
+        required_next_action="new-action-that-should-not-replace",
+        image_count=2,
+        image_order=["1:first.png", "2:second.png"],
+        used_user_explanation="new explanation",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="new prompt",
+    )
+
+    def _raise_replace(_src: str, _dst: str) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(investigation_result_store.os, "replace", _raise_replace)
+
+    try:
+        investigation_result_store.save_latest_investigation_result(retained_path, failing_result)
+    except investigation_result_store.InvestigationStoreError:
+        pass
+    else:
+        raise AssertionError("Expected InvestigationStoreError when atomic replace fails.")
+
+    assert retained_path.read_text(encoding="utf-8") == original_text
+    temp_candidates = list(retained_path.parent.glob(f"{retained_path.name}.*.tmp"))
+    assert temp_candidates == []
+
+
+def test_persistence_write_error_returns_500(monkeypatch, tmp_path):
+    _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", _retained_path(tmp_path))
+
+    def _raise_save(*_args, **_kwargs):
+        raise api.InvestigationStoreError("disk full")
+
+    monkeypatch.setattr(api, "save_latest_investigation_result", _raise_save)
+
+    post_response = _post_investigation(
+        [
+            _image_part("first.png", b"a"),
+            _image_part("second.png", b"b"),
+        ]
+    )
+    assert post_response.status_code == 500
+    assert post_response.json()["detail"] == "Investigation result persistence failed."
+
+
+def test_latest_returns_404_when_no_retained_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", _retained_path(tmp_path))
+    response = client.get("/investigations/latest")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No retained investigation result exists."
+
+
+def test_latest_returns_500_for_malformed_retained_json(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    retained_path.parent.mkdir(parents=True, exist_ok=True)
+    retained_path.write_text("{ malformed", encoding="utf-8")
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", retained_path)
+
+    response = client.get("/investigations/latest")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Retained investigation result is unavailable."
+
+
+def test_latest_projection_stale_state_respected(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    retained_path.parent.mkdir(parents=True, exist_ok=True)
+    retained = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv_stale1",
+        session_id="session-stale",
+        status="analyzed",
+        diagnosis="Likely stale diagnosis",
+        required_next_action="Inspect stale path",
+        image_count=2,
+        image_order=["1:a.png", "2:b.png"],
+        used_user_explanation="stale",
+        completed_at_utc=datetime.now(timezone.utc) - timedelta(seconds=95),
+        context_used=True,
+        context_staleness="stale",
+        context_signal_age_seconds=480,
+        copilot_prompt="prompt",
+    )
+    retained_path.write_text(json.dumps(retained.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", retained_path)
+    monkeypatch.setenv("INVESTIGATION_RESULT_STALE_SECONDS", "30")
+
+    response = client.get("/investigations/latest")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["freshness_state"] == "stale"
+    assert payload["age_seconds"] >= 90
+
+
+def test_latest_retrieval_performs_zero_openai_calls(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    _seed_retained_file(retained_path)
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", retained_path)
+
+    called = {"count": 0}
+
+    class _NoUseOpenAI:
+        def __init__(self, *_args, **_kwargs):
+            called["count"] += 1
+
+    monkeypatch.setattr(api, "OpenAI", _NoUseOpenAI)
+
+    response = client.get("/investigations/latest")
+    assert response.status_code == 200
+    assert called["count"] == 0
+
+
+def test_glasses_latest_requires_token_when_configured(monkeypatch, tmp_path):
+    retained_path = _retained_path(tmp_path)
+    _seed_retained_file(retained_path)
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", retained_path)
+    monkeypatch.setattr(api, "GLASSES_API_TOKEN", "secret-token")
+
+    unauthorized = client.get("/investigations/latest/glasses")
+    assert unauthorized.status_code == 401
+
+    authorized = client.get("/investigations/latest/glasses", params={"token": "secret-token"})
+    assert authorized.status_code == 200
+    payload = authorized.json()
+    assert "diagnosis_short" in payload
+    assert "required_next_action_short" in payload
+
+
+def test_glasses_projection_truncates_and_flags_uncertainty():
+    retained = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv_uncertain",
+        session_id="session-uncertain",
+        status="analyzed",
+        diagnosis="This is likely a partial failure and may involve stale state with insufficient evidence to confirm root cause.",
+        required_next_action=(
+            "Capture one complete terminal stack trace and the exact endpoint response body before changing implementation details "
+            "to keep the fix deterministic and bounded."
+        ),
+        image_count=2,
+        image_order=["1:a.png", "2:b.png"],
+        used_user_explanation="uncertain explanation",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="copilot prompt",
+    )
+
+    projection = build_glasses_projection(retained, stale_seconds=900)
+    assert projection.uncertainty_flag is True
+    assert len(projection.diagnosis_short) <= 120
+    assert len(projection.required_next_action_short) <= 140
+
+
+def test_frontend_investigation_panel_uses_latest_endpoint_and_safe_text_rendering():
+    html = Path(api.DISPLAY_HTML).read_text(encoding="utf-8")
+    assert "/investigations/latest" in html
+    assert "textContent = diagnosis" in html
+    assert "textContent = requiredNextAction" in html
+    assert "investigationDiagnosisEl.innerHTML" not in html
+    assert "investigationNextActionEl.innerHTML" not in html

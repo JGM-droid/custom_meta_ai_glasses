@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from uuid import NAMESPACE_URL, uuid5
@@ -9,11 +11,14 @@ from fastapi import HTTPException, UploadFile
 from pydantic import ValidationError
 
 from .models import (
+    InvestigationDesktopProjection,
     SUPPORTED_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
+    InvestigationGlassesProjection,
     InvestigationImagePayload,
     InvestigationModelResult,
     InvestigationNormalizedRequest,
+    InvestigationRetainedResult,
 )
 
 
@@ -152,6 +157,23 @@ def _compact_context_snapshot(payload: dict[str, object] | None) -> dict[str, ob
     return compact
 
 
+def _context_signal_age_seconds(signal_freshness: object) -> int | None:
+    if not isinstance(signal_freshness, dict):
+        return None
+
+    max_seconds = 0
+    found = False
+    for value in signal_freshness.values():
+        if not isinstance(value, (int, float)):
+            continue
+        found = True
+        max_seconds = max(max_seconds, int(value))
+
+    if not found:
+        return None
+    return max(0, max_seconds)
+
+
 def _build_system_prompt() -> str:
     return (
         "You are an investigation assistant for software and device workflow debugging. "
@@ -217,6 +239,176 @@ def _build_public_response(
     )
 
 
+def build_copilot_prompt(retained_result: InvestigationRetainedResult) -> str:
+    image_order_text = ", ".join(retained_result.image_order)
+    explanation_used = "yes" if bool(retained_result.used_user_explanation.strip()) else "no"
+    context_used = "yes" if retained_result.context_used else "no"
+
+    return (
+        "Context:\n"
+        f"Investigation ID: {retained_result.investigation_id}\n"
+        f"Status: {retained_result.status}\n"
+        f"Completed At: {retained_result.completed_at_utc.isoformat()}\n"
+        f"Images Analyzed: {retained_result.image_count}\n"
+        f"Image Order: {image_order_text}\n"
+        f"User Explanation Used: {explanation_used}\n"
+        f"Context Used: {context_used}\n"
+        f"Context Freshness: {retained_result.context_staleness}\n\n"
+        "Diagnosis:\n"
+        f"{retained_result.diagnosis}\n\n"
+        "Required Next Action:\n"
+        f"{retained_result.required_next_action}\n\n"
+        "Instructions for GitHub Copilot:\n"
+        "1. Inspect the relevant files and available evidence before editing.\n"
+        "2. Do not assume the proposed fix has already been applied.\n"
+        "3. Preserve the existing architecture and avoid unrelated refactoring.\n"
+        "4. If evidence is insufficient, identify the single most useful additional observation.\n"
+        "5. Propose the smallest safe change and the exact validation steps.\n"
+        "6. Do not commit or push unless explicitly requested."
+    )
+
+
+def _build_retained_result(
+    public_response: InvestigationAnalyzeResponse,
+    compact_context: dict[str, object] | None,
+    completed_at_utc: datetime,
+) -> InvestigationRetainedResult:
+    context_used = compact_context is not None
+    context_staleness = "unknown"
+    context_signal_age_seconds = None
+    if compact_context is not None:
+        context_staleness = str(compact_context.get("context_staleness") or "unknown").strip().lower()
+        if context_staleness not in {"fresh", "stale", "unknown"}:
+            context_staleness = "unknown"
+        context_signal_age_seconds = _context_signal_age_seconds(compact_context.get("signal_freshness"))
+
+    retained = InvestigationRetainedResult(
+        schema_version=public_response.schema_version,
+        projection_version="1.0",
+        investigation_id=public_response.investigation_id,
+        session_id=public_response.session_id,
+        status=public_response.status,
+        diagnosis=public_response.diagnosis,
+        required_next_action=public_response.required_next_action,
+        image_count=public_response.image_count,
+        image_order=public_response.image_order,
+        used_user_explanation=public_response.used_user_explanation,
+        completed_at_utc=completed_at_utc,
+        context_used=context_used,
+        context_staleness=context_staleness,
+        context_signal_age_seconds=context_signal_age_seconds,
+        copilot_prompt="placeholder",
+    )
+    retained.copilot_prompt = build_copilot_prompt(retained)
+    return retained
+
+
+def investigation_stale_seconds() -> int:
+    raw = str(os.environ.get("INVESTIGATION_RESULT_STALE_SECONDS") or "").strip()
+    if not raw:
+        return 900
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return 900
+    if parsed <= 0:
+        return 900
+    return parsed
+
+
+def retained_result_age_seconds(retained_result: InvestigationRetainedResult, now_utc: datetime | None = None) -> int | None:
+    now = now_utc or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    completed = retained_result.completed_at_utc
+    if completed.tzinfo is None:
+        return None
+    completed_utc = completed.astimezone(timezone.utc)
+    delta = (now.astimezone(timezone.utc) - completed_utc).total_seconds()
+    if delta < 0:
+        return None
+    return int(delta)
+
+
+def retained_freshness_state(retained_result: InvestigationRetainedResult, stale_seconds: int, now_utc: datetime | None = None) -> tuple[str, int | None]:
+    age_seconds = retained_result_age_seconds(retained_result, now_utc=now_utc)
+    if age_seconds is None:
+        return "unknown", None
+    if age_seconds > stale_seconds:
+        return "stale", age_seconds
+    return "fresh", age_seconds
+
+
+def _truncate_projection_text(value: str, max_chars: int) -> str:
+    text = " ".join(str(value or "").split()).strip()
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+
+    candidate = text[: max(0, max_chars - 1)].rstrip()
+    last_space = candidate.rfind(" ")
+    if last_space >= max_chars // 2:
+        candidate = candidate[:last_space].rstrip()
+    if not candidate:
+        candidate = text[: max(0, max_chars - 1)].rstrip()
+    return f"{candidate}..."
+
+
+def _uncertainty_flag(diagnosis: str) -> bool:
+    lowered = str(diagnosis or "").lower()
+    markers = [
+        "uncertain",
+        "not sure",
+        "insufficient",
+        "likely",
+        "possibly",
+        "may",
+        "might",
+    ]
+    return any(marker in lowered for marker in markers)
+
+
+def build_desktop_projection(retained_result: InvestigationRetainedResult, stale_seconds: int, now_utc: datetime | None = None) -> InvestigationDesktopProjection:
+    freshness_state, age_seconds = retained_freshness_state(retained_result, stale_seconds=stale_seconds, now_utc=now_utc)
+    return InvestigationDesktopProjection(
+        schema_version=retained_result.schema_version,
+        projection_version=retained_result.projection_version,
+        investigation_id=retained_result.investigation_id,
+        session_id=retained_result.session_id,
+        status=retained_result.status,
+        diagnosis=retained_result.diagnosis,
+        required_next_action=retained_result.required_next_action,
+        copilot_prompt=retained_result.copilot_prompt,
+        image_count=retained_result.image_count,
+        image_order=retained_result.image_order,
+        used_user_explanation=bool(retained_result.used_user_explanation.strip()),
+        completed_at_utc=retained_result.completed_at_utc,
+        context_used=retained_result.context_used,
+        context_staleness=retained_result.context_staleness,
+        context_signal_age_seconds=retained_result.context_signal_age_seconds,
+        freshness_state=freshness_state,
+        age_seconds=age_seconds,
+    )
+
+
+def build_glasses_projection(retained_result: InvestigationRetainedResult, stale_seconds: int, now_utc: datetime | None = None) -> InvestigationGlassesProjection:
+    freshness_state, age_seconds = retained_freshness_state(retained_result, stale_seconds=stale_seconds, now_utc=now_utc)
+    return InvestigationGlassesProjection(
+        schema_version=retained_result.schema_version,
+        projection_version=retained_result.projection_version,
+        investigation_id=retained_result.investigation_id,
+        status=retained_result.status,
+        diagnosis_short=_truncate_projection_text(retained_result.diagnosis, 120),
+        required_next_action_short=_truncate_projection_text(retained_result.required_next_action, 140),
+        uncertainty_flag=_uncertainty_flag(retained_result.diagnosis),
+        freshness_state=freshness_state,
+        completed_at_utc=retained_result.completed_at_utc,
+        age_seconds=age_seconds,
+    )
+
+
 def _is_timeout_error(exc: Exception) -> bool:
     name = type(exc).__name__.lower()
     if "timeout" in name:
@@ -248,6 +440,35 @@ async def analyze_investigation_request(
     extract_json_object: ResponseJsonExtractor,
     load_context_snapshot: ContextLoader | None = None,
 ) -> InvestigationAnalyzeResponse:
+    public_response, _retained_result = await analyze_investigation_request_with_retained(
+        schema_version=schema_version,
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        user_explanation=user_explanation,
+        images=images,
+        openai_client_factory=openai_client_factory,
+        load_openai_api_key=load_openai_api_key,
+        load_model_name=load_model_name,
+        prepare_image_for_openai=prepare_image_for_openai,
+        extract_json_object=extract_json_object,
+        load_context_snapshot=load_context_snapshot,
+    )
+    return public_response
+
+
+async def analyze_investigation_request_with_retained(
+    schema_version: str,
+    session_id: str,
+    idempotency_key: str,
+    user_explanation: str,
+    images: list[UploadFile],
+    openai_client_factory: OpenAIClientFactory,
+    load_openai_api_key: ApiKeyLoader,
+    load_model_name: ModelLoader,
+    prepare_image_for_openai: ImagePreparer,
+    extract_json_object: ResponseJsonExtractor,
+    load_context_snapshot: ContextLoader | None = None,
+) -> tuple[InvestigationAnalyzeResponse, InvestigationRetainedResult]:
     normalized_request = await normalize_investigation_request(
         schema_version=schema_version,
         session_id=session_id,
@@ -335,7 +556,10 @@ async def analyze_investigation_request(
     except ValidationError as exc:
         raise HTTPException(status_code=502, detail="OpenAI returned an invalid investigation result schema.") from exc
 
-    return _build_public_response(normalized_request, model_result)
+    public_response = _build_public_response(normalized_request, model_result)
+    completed_at_utc = datetime.now(timezone.utc)
+    retained_result = _build_retained_result(public_response, compact_context, completed_at_utc=completed_at_utc)
+    return public_response, retained_result
 
 
 async def validate_investigation_request(

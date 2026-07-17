@@ -85,6 +85,57 @@ Future delivery work:
 - concise glasses output publishing
 - detailed desktop web result presentation
 
+## Phase 1C: Retention And Delivery
+
+Phase 1C adds retained latest-result delivery without changing the `POST /investigations/analyze` response schema.
+
+### Retention Behavior
+
+- On successful `POST /investigations/analyze`, the backend writes one retained result file:
+  - `code/prototype_v1/results/investigation_latest.json`
+- Writes are atomic and replace the previous retained result only after a successful analysis.
+- On analysis failure, the previous retained result remains unchanged.
+- Retained data excludes raw image bytes.
+
+### New Retrieval Endpoints
+
+- `GET /investigations/latest`
+  - Returns desktop projection with:
+    - diagnosis
+    - required_next_action
+    - copilot_prompt
+    - freshness metadata
+  - `404` when no retained result exists
+  - `500` when retained result is unreadable or schema-invalid
+
+- `GET /investigations/latest/glasses`
+  - Returns compact glasses projection with:
+    - diagnosis_short
+    - required_next_action_short
+    - uncertainty_flag
+    - freshness metadata
+  - Follows the same `GLASSES_API_TOKEN` auth convention as other glasses endpoints
+  - `404` when no retained result exists
+
+- `GET /investigations`
+  - Optional desktop alias route to the existing mock display page.
+
+### Freshness
+
+- Projection freshness is derived from retained `completed_at_utc`.
+- `INVESTIGATION_RESULT_STALE_SECONDS` controls stale threshold.
+  - default: `900` seconds
+- `freshness_state` values:
+  - `fresh`
+  - `stale`
+  - `unknown`
+
+### Copilot Prompt Generation
+
+- One deterministic prompt is generated from retained fields.
+- Prompt includes diagnosis, required next action, context usage/freshness summary, and guarded implementation instructions.
+- No additional OpenAI calls are used for retrieval projections or prompt generation.
+
 ## Versioning Rule
 
 The backend rejects unsupported schema versions. Phase 1A supports only `1.0`.
