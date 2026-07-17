@@ -15,10 +15,13 @@ RISKS IF RUN:
   - Creates duplicate runtime chains that break the V16 artifact-ownership model.
 
 CANONICAL STARTUP COMMAND:
-  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+    .\\venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
 
 CANONICAL TUNNEL COMMAND:
   cloudflared.exe tunnel --url http://127.0.0.1:8001
+
+This file must not be used for new Investigation Session development. It
+remains temporarily for backward compatibility and historical verification.
 
 Do not run this file. If you must run it for historical reference only,
 pass --allow-legacy-run as the first argument.

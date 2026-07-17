@@ -1,3 +1,16 @@
+"""watch_latest_image.py — COMPATIBILITY / PROTOTYPE SCRIPT
+
+This file preserves the original direct single-image analysis workflow for
+backward compatibility and historical verification.
+
+It is not the canonical backend startup path, must not be used for new
+Investigation Session development, and remains temporarily to support older
+single-image scripts and manual verification flows.
+
+CANONICAL BACKEND STARTUP COMMAND:
+    .\venv\Scripts\python.exe code\prototype_v1\start_assistant.py
+"""
+
 from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path

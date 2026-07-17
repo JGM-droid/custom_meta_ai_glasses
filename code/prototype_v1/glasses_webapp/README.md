@@ -18,7 +18,9 @@ Render only compact guidance fields from `/glasses/latest`:
 
 1. Start backend:
 
-   - `python code/prototype_v1/start_assistant.py`
+   - `.\venv\Scripts\python.exe code\prototype_v1\start_assistant.py`
+
+   `start_assistant.py` is the canonical backend startup owner. It starts the API server and refresh process for the current backend runtime.
 
 2. Open:
 

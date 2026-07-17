@@ -13,7 +13,10 @@ RISKS IF RUN:
     unguarded runtime chains.
 
 CANONICAL STARTUP COMMAND:
-  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+    .\\venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+
+This file must not be used for new Investigation Session development. It
+remains temporarily for backward compatibility and historical verification.
 
 Do not run this file. If you must run it for historical reference only,
 pass --allow-legacy-run as the first argument.

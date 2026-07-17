@@ -14,10 +14,13 @@ RISKS IF RUN:
     for /glasses/latest, causing the HUD to display stale or malformed data.
 
 CANONICAL STARTUP COMMAND:
-  venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
+    .\\venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py
 
 CANONICAL resume_now.json WRITER:
   glasses_demo.py --auto (called by refresh_guidance.py --watch)
+
+This file must not be used for new Investigation Session development. It
+remains temporarily for backward compatibility and historical verification.
 
 Do not run this file. If you must run it for historical reference only,
 pass --allow-legacy-run as the first argument.

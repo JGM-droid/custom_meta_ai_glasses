@@ -1,2 +1,7 @@
-openai
-python-dotenv
+fastapi==0.136.3
+openai==2.38.0
+pillow==12.2.0
+python-dotenv==1.2.2
+python-multipart==0.0.30
+requests==2.34.2
+uvicorn==0.48.0

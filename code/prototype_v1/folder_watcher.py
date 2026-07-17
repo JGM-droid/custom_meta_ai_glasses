@@ -1,3 +1,16 @@
+"""folder_watcher.py — LEGACY / PROTOTYPE WATCHER
+
+This file is an older direct-pipeline watcher retained temporarily for
+backward compatibility and historical verification.
+
+It is not part of the canonical backend startup path, must not be used for new
+Investigation Session development, and should not be preferred over the current
+backend runtime started by `start_assistant.py`.
+
+CANONICAL BACKEND STARTUP COMMAND:
+    .\venv\Scripts\python.exe code\prototype_v1\start_assistant.py
+"""
+
 from pathlib import Path
 import time
 import subprocess

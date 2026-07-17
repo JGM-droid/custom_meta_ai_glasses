@@ -9,13 +9,21 @@ This prototype focuses on continuity across observations: it analyzes screenshot
 
 > **One startup path. One writer per artifact. Venv only.**
 
+Canonical backend interpreter:
+
+```
+.\venv\Scripts\python.exe
+```
+
+Do not use `.venv` as the active backend runtime for this repository.
+
 ### Start the assistant
 
 ```
-venv\Scripts\python.exe code\prototype_v1\start_assistant.py
+.\venv\Scripts\python.exe code\prototype_v1\start_assistant.py
 ```
 
-This is the **only valid startup command**. It starts the API server and the 5-second pipeline watcher as guarded subprocesses, pinned to the project venv, with single-instance lockfiles.
+This is the **only valid backend startup command**. `code\prototype_v1\start_assistant.py` owns canonical backend startup. It starts the API server and the 5-second refresh process as guarded subprocesses, pinned to the project `venv`, with single-instance lockfiles.
 
 ### Canonical runtime files
 
@@ -206,22 +214,31 @@ Prerequisites:
 
 Setup:
 
-1. Create and activate a virtual environment.
+1. Use the canonical project environment at `.\venv`.
 2. Install dependencies from [code/prototype_v1/requirements.txt](code/prototype_v1/requirements.txt).
 3. Run one analysis directly:
-   c:/Users/jesse/OneDrive/Documents/custom_meta_ai_glasses/venv/Scripts/python.exe code/prototype_v1/watch_latest_image.py code/prototype_v1/test_images/test_image.png
+   .\venv\Scripts\python.exe code\prototype_v1\watch_latest_image.py code\prototype_v1\test_images\test_image.png
 
-Optional dashboard view:
+Canonical backend startup:
 
-1. Start the API server:
-   python -m uvicorn api:app --host 127.0.0.1 --port 8001 --app-dir code/prototype_v1
+1. Start the backend:
+   .\venv\Scripts\python.exe code\prototype_v1\start_assistant.py
 2. Open [code/prototype_v1/dashboard.html](code/prototype_v1/dashboard.html).
+
+### Legacy / Diagnostic Commands
+
+These commands are retained only for diagnostics, historical reference, or compatibility verification. They are not the canonical production path and must not be used for new Investigation Session development.
+
+1. Direct manual Uvicorn startup:
+   `python -m uvicorn api:app --host 127.0.0.1 --port 8001 --app-dir code/prototype_v1`
+2. Legacy launchers under `code/prototype_v1/`:
+   `local_demo_launcher.py`, `ngrok_demo_launcher.py`, `demo_server_manager.py`, and `resume_now.py`
 
 ## Demo Workflow (Recruiter-Friendly)
 
 Run the repeatable demo scenario script:
 
-c:/Users/jesse/OneDrive/Documents/custom_meta_ai_glasses/venv/Scripts/python.exe code/prototype_v1/demo_scenario.py
+.\venv\Scripts\python.exe code\prototype_v1\demo_scenario.py
 
 What it does:
 

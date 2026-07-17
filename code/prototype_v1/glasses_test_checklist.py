@@ -12,12 +12,12 @@ def build_checklist_text() -> str:
     lines = [
         "First Glasses Test Checklist",
         "",
-        "1. Start API server in a terminal:",
-        "   python -m uvicorn api:app --host 127.0.0.1 --port 8001 --app-dir code/prototype_v1",
+        "1. Start the canonical backend in a terminal:",
+        "   .\\venv\\Scripts\\python.exe code\\prototype_v1\\start_assistant.py",
         "2. Run one-command demo:",
-        "   python code/prototype_v1/glasses_demo.py",
+        "   .\\venv\\Scripts\\python.exe code\\prototype_v1\\glasses_demo.py",
         "3. Optional voice check:",
-        "   python code/prototype_v1/glasses_demo.py --speak",
+        "   .\\venv\\Scripts\\python.exe code\\prototype_v1\\glasses_demo.py --speak",
         "4. Open display mock:",
         "   code/prototype_v1/glasses_display_mock.html",
         "5. Put on glasses.",
@@ -30,6 +30,9 @@ def build_checklist_text() -> str:
         "- Can read guidance quickly",
         "- Voice and display match",
         "- One-command demo updates the display",
+        "",
+        "Legacy / Diagnostic Commands",
+        "- Direct manual uvicorn startup is diagnostic-only and not the canonical backend path.",
     ]
     return "\n".join(lines) + "\n"
 
