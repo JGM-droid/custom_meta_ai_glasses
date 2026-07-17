@@ -1,6 +1,6 @@
 # Investigation Session API V1
 
-Phase 1A adds a validation-only backend contract for Investigation Sessions.
+Phase 1B performs one combined multimodal analysis for Investigation Sessions.
 
 ## Endpoint
 
@@ -25,7 +25,8 @@ Phase 1A adds a validation-only backend contract for Investigation Sessions.
 - only `image/jpeg` and `image/png` are accepted
 - empty uploaded files are rejected
 
-Phase 1A performs validation and normalization only. It does not perform combined multimodal analysis yet.
+Phase 1B uses one combined model request with all uploaded images (2 or 3) in capture order and the normalized spoken explanation.
+Optional Context Engine enrichment may be included when available.
 
 ## Response Model
 
@@ -50,7 +51,7 @@ Examples:
 - `1:capture.png`
 - `2:capture.png`
 
-Current Phase 1A placeholder values:
+Phase 1A baseline placeholder values were:
 
 - `status`: `validated`
 - `diagnosis`: `Investigation session received and validated.`
@@ -58,11 +59,37 @@ Current Phase 1A placeholder values:
 
 These values are deterministic placeholder outputs and are not an AI diagnosis.
 
+## Phase 1B Success Behavior
+
+- `status` is `analyzed`
+- `diagnosis` is produced by one combined multimodal model result
+- `required_next_action` is produced by the same model result
+- the model analyzes all images together as one investigation sequence
+- image upload order is used as capture sequence context
+- no per-image model calls are made
+
+The successful response model remains unchanged:
+
+- `schema_version`
+- `investigation_id`
+- `session_id`
+- `status`
+- `diagnosis`
+- `required_next_action`
+- `image_count`
+- `image_order`
+- `used_user_explanation`
+
+Future delivery work:
+
+- concise glasses output publishing
+- detailed desktop web result presentation
+
 ## Versioning Rule
 
 The backend rejects unsupported schema versions. Phase 1A supports only `1.0`.
 
-Combined multimodal analysis will be added in Phase 1B under the same endpoint contract unless a reviewed version increment becomes necessary.
+Phase 1B combined multimodal analysis is implemented under the same endpoint contract.
 
 ## Example PowerShell Request
 

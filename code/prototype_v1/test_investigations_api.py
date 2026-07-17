@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import io
+import json
+from typing import Any
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 import api
+from investigations import InvestigationModelResult
 
 
 client = TestClient(api.app)
@@ -26,7 +30,67 @@ def _post_investigation(files: list[tuple[str, io.BytesIO, str]], **overrides: s
     return client.post("/investigations/analyze", data=data, files=multipart)
 
 
-def test_valid_two_image_request():
+def _setup_fake_openai(monkeypatch, *, response_content: str | None = None, raised: Exception | None = None):
+    state: dict[str, Any] = {
+        "calls": [],
+        "api_keys": [],
+        "response_content": response_content
+        if response_content is not None
+        else json.dumps(
+            {
+                "diagnosis": "Investigation indicates likely terminal/API mismatch.",
+                "required_next_action": "Capture one clearer image of the exact terminal error line.",
+            }
+        ),
+        "raised": raised,
+    }
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            state["calls"].append(kwargs)
+            if state["raised"] is not None:
+                raise state["raised"]
+
+            message = type("Message", (), {"content": state["response_content"]})()
+            choice = type("Choice", (), {"message": message})()
+            return type("Response", (), {"choices": [choice]})()
+
+    class _FakeChat:
+        def __init__(self):
+            self.completions = _FakeCompletions()
+
+    class _FakeOpenAI:
+        def __init__(self, api_key: str):
+            state["api_keys"].append(api_key)
+            self.chat = _FakeChat()
+
+    monkeypatch.setattr(api, "OpenAI", _FakeOpenAI)
+    monkeypatch.setattr(api, "_load_openai_api_key", lambda: "test-key")
+    monkeypatch.setattr(api, "_vision_model_name", lambda: "gpt-4o-mini")
+
+    def _fake_prepare_image(image_bytes: bytes):
+        token = image_bytes.decode("utf-8", errors="replace")
+        return f"encoded-{token}", {"processed_size": [10, 10]}
+
+    monkeypatch.setattr(api, "_prepare_image_for_openai", _fake_prepare_image)
+    monkeypatch.setattr(api, "_extract_json_object", lambda text: text)
+    monkeypatch.setattr(api, "_load_investigation_context_snapshot_from_context_fusion", lambda: None)
+    return state
+
+
+def _extract_outgoing_content(state: dict[str, Any]) -> list[dict[str, Any]]:
+    assert len(state["calls"]) == 1
+    call = state["calls"][0]
+    messages = call["messages"]
+    assert isinstance(messages, list)
+    user_message = messages[1]
+    content = user_message["content"]
+    assert isinstance(content, list)
+    return content
+
+
+def test_valid_two_image_request(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("first.png", b"first-image"),
@@ -37,15 +101,16 @@ def test_valid_two_image_request():
     assert response.status_code == 200
     payload = response.json()
     assert payload["schema_version"] == "1.0"
-    assert payload["status"] == "validated"
+    assert payload["status"] == "analyzed"
     assert payload["image_count"] == 2
     assert payload["image_order"] == ["1:first.png", "2:second.png"]
     assert payload["used_user_explanation"] == "explain this issue"
-    assert payload["diagnosis"] == "Investigation session received and validated."
-    assert payload["required_next_action"] == "Proceed to combined multimodal analysis integration."
+    assert payload["diagnosis"] == "Investigation indicates likely terminal/API mismatch."
+    assert payload["required_next_action"] == "Capture one clearer image of the exact terminal error line."
 
 
-def test_valid_three_image_request():
+def test_valid_three_image_request(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("one.png", b"1"),
@@ -58,7 +123,8 @@ def test_valid_three_image_request():
     assert response.json()["image_count"] == 3
 
 
-def test_image_order_preserved():
+def test_image_order_preserved(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("b.png", b"bbb"),
@@ -70,7 +136,8 @@ def test_image_order_preserved():
     assert response.json()["image_order"] == ["1:b.png", "2:a.png"]
 
 
-def test_duplicate_filenames_preserve_explicit_order():
+def test_duplicate_filenames_preserve_explicit_order(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("capture.png", b"first-capture"),
@@ -82,7 +149,8 @@ def test_duplicate_filenames_preserve_explicit_order():
     assert response.json()["image_order"] == ["1:capture.png", "2:capture.png"]
 
 
-def test_explanation_whitespace_normalized():
+def test_explanation_whitespace_normalized(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("first.png", b"1"),
@@ -187,11 +255,16 @@ def test_existing_routes_still_registered():
     assert "/investigations/analyze" in route_paths
 
 
-def test_new_endpoint_does_not_invoke_openai(monkeypatch):
-    def _unexpected_openai_call(*args, **kwargs):
-        raise AssertionError("OpenAI should not be invoked during Phase 1A validation.")
-
-    monkeypatch.setattr(api, "_call_openai_vision", _unexpected_openai_call)
+def test_valid_two_field_json_maps_to_public_response(monkeypatch):
+    _setup_fake_openai(
+        monkeypatch,
+        response_content=json.dumps(
+            {
+                "diagnosis": "The latest image suggests the process is blocked on auth.",
+                "required_next_action": "Capture one image showing the full auth error message and HTTP status.",
+            }
+        ),
+    )
 
     response = _post_investigation(
         [
@@ -201,9 +274,431 @@ def test_new_endpoint_does_not_invoke_openai(monkeypatch):
     )
 
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "analyzed"
+    assert payload["diagnosis"] == "The latest image suggests the process is blocked on auth."
+    assert payload["required_next_action"] == "Capture one image showing the full auth error message and HTTP status."
 
 
-def test_successful_in_process_generated_request():
+def test_single_openai_invocation_for_two_images(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 200
+    assert len(state["calls"]) == 1
+
+
+def test_single_openai_invocation_for_three_images(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+            _image_part("third.png", b"3"),
+        ]
+    )
+
+    assert response.status_code == 200
+    assert len(state["calls"]) == 1
+
+
+def test_outgoing_multimodal_structure_and_order_for_two_images(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"first"),
+            _image_part("second.png", b"second"),
+        ]
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    assert len([item for item in content if item.get("type") == "text"]) == 1
+    images = [item for item in content if item.get("type") == "image_url"]
+    assert len(images) == 2
+    assert images[0]["image_url"]["url"].endswith("encoded-first")
+    assert images[1]["image_url"]["url"].endswith("encoded-second")
+
+
+def test_outgoing_multimodal_structure_and_order_for_three_images(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("one.png", b"one"),
+            _image_part("two.png", b"two"),
+            _image_part("three.png", b"three"),
+        ]
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    images = [item for item in content if item.get("type") == "image_url"]
+    assert len(images) == 3
+    assert images[0]["image_url"]["url"].endswith("encoded-one")
+    assert images[1]["image_url"]["url"].endswith("encoded-two")
+    assert images[2]["image_url"]["url"].endswith("encoded-three")
+
+
+def test_normalized_user_explanation_included_in_outgoing_text(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ],
+        user_explanation="  one\n\n two   three  ",
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    text_item = [item for item in content if item.get("type") == "text"][0]
+    assert "user_explanation: one two three" in str(text_item.get("text"))
+
+
+def test_context_snapshot_included_compact_when_available(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(
+        api,
+        "_load_investigation_context_snapshot_from_context_fusion",
+        lambda: {
+            "active_branch": "master",
+            "modified_files": 2,
+            "staged_files": 1,
+            "has_terminal_error": True,
+            "selected_source": "terminal_error_context",
+            "active_file": {"active_file_name": "api.py"},
+            "development_context": {"active_function": "investigations_analyze()"},
+            "primary_guidance": {"headline": "Resolve error"},
+            "guidance_priority": {"level": "critical"},
+            "git_risk_context": {"risk_level": "high"},
+            "validation_evidence_available": True,
+            "signal_freshness": {"context_fusion_generated_at": "2026-07-17T00:00:00+00:00", "snapshot_seconds": 12},
+            "extra_field": "ignored",
+        },
+    )
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    text_item = [item for item in content if item.get("type") == "text"][0]
+    text = str(text_item.get("text"))
+    assert '"active_branch": "master"' in text
+    assert '"extra_field"' not in text
+
+
+def test_missing_context_does_not_block_analysis(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(api, "_load_investigation_context_snapshot_from_context_fusion", lambda: None)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 200
+    assert len(state["calls"]) == 1
+
+
+def test_stale_context_marked_as_stale(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(
+        api,
+        "_load_investigation_context_snapshot_from_context_fusion",
+        lambda: {
+            "active_branch": "master",
+            "signal_freshness": {"snapshot_seconds": 720},
+        },
+    )
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    text = str([item for item in content if item.get("type") == "text"][0].get("text"))
+    assert '"context_staleness": "stale"' in text
+
+
+def test_missing_diagnosis_returns_502(monkeypatch):
+    _setup_fake_openai(monkeypatch, response_content=json.dumps({"required_next_action": "x"}))
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_missing_required_next_action_returns_502(monkeypatch):
+    _setup_fake_openai(monkeypatch, response_content=json.dumps({"diagnosis": "x"}))
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_empty_diagnosis_returns_502(monkeypatch):
+    _setup_fake_openai(
+        monkeypatch,
+        response_content=json.dumps({"diagnosis": "   ", "required_next_action": "Capture logs"}),
+    )
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_empty_required_next_action_returns_502(monkeypatch):
+    _setup_fake_openai(
+        monkeypatch,
+        response_content=json.dumps({"diagnosis": "Likely issue", "required_next_action": "   "}),
+    )
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_extra_model_fields_return_502(monkeypatch):
+    _setup_fake_openai(
+        monkeypatch,
+        response_content=json.dumps(
+            {
+                "diagnosis": "Likely issue",
+                "required_next_action": "Capture one clearer error image.",
+                "extra": "not allowed",
+            }
+        ),
+    )
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_malformed_json_returns_502(monkeypatch):
+    _setup_fake_openai(monkeypatch, response_content="not-json")
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 502
+
+
+def test_missing_api_key_returns_503(monkeypatch):
+    _setup_fake_openai(monkeypatch)
+    monkeypatch.setattr(api, "_load_openai_api_key", lambda: "")
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 503
+
+
+def test_openai_timeout_returns_504(monkeypatch):
+    _setup_fake_openai(monkeypatch, raised=TimeoutError("timed out"))
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 504
+
+
+def test_never_invokes_openai_once_per_image(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+            _image_part("third.png", b"3"),
+        ]
+    )
+
+    assert response.status_code == 200
+    assert len(state["calls"]) == 1
+
+
+def test_context_engine_exception_does_not_block_analysis(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+
+    def _raise_context_error():
+        raise RuntimeError("context unavailable")
+
+    monkeypatch.setattr(api, "_load_investigation_context_snapshot_from_context_fusion", _raise_context_error)
+
+    response = _post_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 200
+    assert len(state["calls"]) == 1
+
+
+def test_required_next_action_accepts_multi_verb_single_workflow():
+    result = InvestigationModelResult.model_validate(
+        {
+            "diagnosis": "Likely mismatch in expected endpoint response.",
+            "required_next_action": "Open the terminal, run pytest, and inspect the first failing test.",
+        }
+    )
+    assert result.required_next_action == "Open the terminal, run pytest, and inspect the first failing test."
+
+
+def test_required_next_action_accepts_command_line_action():
+    result = InvestigationModelResult.model_validate(
+        {
+            "diagnosis": "Tests indicate a reproducible failure.",
+            "required_next_action": "Run .\\venv\\Scripts\\python.exe -m pytest -q code\\prototype_v1\\test_investigations_api.py and inspect the first failure.",
+        }
+    )
+    assert "python.exe -m pytest" in result.required_next_action
+
+
+def test_required_next_action_accepts_file_path_action():
+    result = InvestigationModelResult.model_validate(
+        {
+            "diagnosis": "Routing mismatch likely in investigation endpoint.",
+            "required_next_action": "Open api.py, locate the investigation route, and verify the configured model name.",
+        }
+    )
+    assert "api.py" in result.required_next_action
+
+
+def test_required_next_action_accepts_one_action_with_supporting_detail():
+    result = InvestigationModelResult.model_validate(
+        {
+            "diagnosis": "Evidence is partial due to cropped error output.",
+            "required_next_action": "Capture the complete traceback and include the HTTP status in the same screenshot.",
+        }
+    )
+    assert "HTTP status" in result.required_next_action
+
+
+def test_required_next_action_accepts_numbered_or_bulleted_single_workflow_formatting():
+    result = InvestigationModelResult.model_validate(
+        {
+            "diagnosis": "Need clearer evidence from one workflow step.",
+            "required_next_action": "1. Open the terminal and run pytest.\n2. Inspect the first failing test in the same run.",
+        }
+    )
+    assert result.required_next_action.startswith("1. Open")
+
+
+def test_required_next_action_rejects_either_or_alternative():
+    try:
+        InvestigationModelResult.model_validate(
+            {
+                "diagnosis": "Competing actions detected.",
+                "required_next_action": "Either restart the server or reinstall the package.",
+            }
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Expected ValidationError for explicit either/or alternative.")
+
+
+def test_required_next_action_rejects_option_1_option_2():
+    try:
+        InvestigationModelResult.model_validate(
+            {
+                "diagnosis": "Competing options detected.",
+                "required_next_action": "Option 1: change the model. Option 2: disable validation.",
+            }
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Expected ValidationError for explicit option 1 / option 2 alternatives.")
+
+
+def test_required_next_action_rejects_alternatively_competition():
+    try:
+        InvestigationModelResult.model_validate(
+            {
+                "diagnosis": "Conflicting fallback offered.",
+                "required_next_action": "Capture the full error output. Alternatively, delete the file instead.",
+            }
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Expected ValidationError for explicit alternatively competing action.")
+
+
+def test_required_next_action_rejects_multiple_independent_alternatives():
+    try:
+        InvestigationModelResult.model_validate(
+            {
+                "diagnosis": "Competing branches are present.",
+                "required_next_action": "You can either capture another image or ignore the error.",
+            }
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Expected ValidationError for multiple independent alternatives.")
+
+
+def test_successful_in_process_generated_request(monkeypatch):
+    _setup_fake_openai(monkeypatch)
     response = _post_investigation(
         [
             _image_part("generated-1.png", b"png-a"),

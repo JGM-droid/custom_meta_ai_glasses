@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from investigations import InvestigationAnalyzeResponse, validate_investigation_request
+from investigations import InvestigationAnalyzeResponse, analyze_investigation_request
 
 try:
     from openai import OpenAI
@@ -971,6 +971,27 @@ def _build_glasses_payload(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _load_investigation_context_snapshot_from_context_fusion() -> dict[str, object] | None:
+    # Phase 1B integration debt: context_fusion._build_payload is the currently
+    # canonical available context snapshot producer, but it is private.
+    # Keep this adapter isolated and fail-open so context issues never block
+    # investigation analysis.
+    try:
+        from context_fusion import _build_payload as build_context_payload
+    except Exception:
+        return None
+
+    if not callable(build_context_payload):
+        return None
+
+    try:
+        payload = build_context_payload()
+    except Exception:
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
 @app.get("/glasses_display_mock.html", response_class=FileResponse)
 async def display_mock():
     if not DISPLAY_HTML.exists():
@@ -1186,10 +1207,16 @@ async def investigations_analyze(
     user_explanation: str = Form(""),
     images: list[UploadFile] = File(...),
 ):
-    return await validate_investigation_request(
+    return await analyze_investigation_request(
         schema_version=schema_version,
         session_id=session_id,
         idempotency_key=idempotency_key,
         user_explanation=user_explanation,
         images=images,
+        openai_client_factory=OpenAI,
+        load_openai_api_key=_load_openai_api_key,
+        load_model_name=_vision_model_name,
+        prepare_image_for_openai=_prepare_image_for_openai,
+        extract_json_object=_extract_json_object,
+        load_context_snapshot=_load_investigation_context_snapshot_from_context_fusion,
     )
