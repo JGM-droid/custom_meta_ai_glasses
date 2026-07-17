@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+import pytest
 
 import api
 import investigations.result_store as investigation_result_store
@@ -17,6 +18,11 @@ from investigations.service import build_glasses_projection
 
 
 client = TestClient(api.app)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_investigation_latest_json(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", tmp_path / "investigation_latest.json")
 
 
 def _image_part(name: str, content: bytes, content_type: str = "image/png") -> tuple[str, io.BytesIO, str]:
@@ -300,6 +306,11 @@ def test_single_openai_invocation_for_two_images(monkeypatch):
 
     assert response.status_code == 200
     assert len(state["calls"]) == 1
+
+
+def test_investigation_latest_result_path_is_isolated_per_test(tmp_path: Path):
+    assert api.INVESTIGATION_LATEST_JSON.parent == tmp_path
+    assert api.INVESTIGATION_LATEST_JSON.name == "investigation_latest.json"
 
 
 def test_single_openai_invocation_for_three_images(monkeypatch):

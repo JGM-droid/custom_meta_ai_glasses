@@ -12,20 +12,33 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from uuid import UUID
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from investigations import (
     InvestigationAnalyzeResponse,
     InvestigationDesktopProjection,
     InvestigationGlassesProjection,
+    InvestigationSession,
+    InvestigationSessionCreateRequest,
+    InvestigationSessionInvalidId,
+    InvestigationSessionLifecycleError,
+    InvestigationSessionMutationRequest,
+    InvestigationSessionNotFound,
+    InvestigationSessionStore,
+    InvestigationSessionStoreError,
     InvestigationStoreError,
     InvestigationStoreNotFound,
     analyze_investigation_request_with_retained,
+    apply_cancel_transition,
+    apply_pause_transition,
+    apply_resume_transition,
     build_desktop_projection,
     build_glasses_projection,
     investigation_stale_seconds,
@@ -64,6 +77,7 @@ HUD_CACHE_JSON = BASE_DIR / "results" / "last_known_hud_payload.json"
 RESULTS_DIR = BASE_DIR / "results"
 VISION_CONTEXT_JSON = RESULTS_DIR / "vision_context.json"
 INVESTIGATION_LATEST_JSON = RESULTS_DIR / "investigation_latest.json"
+INVESTIGATION_SESSIONS_ROOT = RESULTS_DIR / "investigation_sessions"
 CONTEXT_FUSION_JSON = RESULTS_DIR / "context_fusion.json"
 DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
 GLASSES_WEBAPP_DIR = BASE_DIR / "glasses_webapp"
@@ -76,6 +90,13 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
 if GLASSES_WEBAPP_DIR.exists() and GLASSES_WEBAPP_DIR.is_dir():
     app.mount("/glasses/static", StaticFiles(directory=str(GLASSES_WEBAPP_DIR)), name="glasses_static")
+
+
+def _build_session_store() -> InvestigationSessionStore:
+    return InvestigationSessionStore(INVESTIGATION_SESSIONS_ROOT)
+
+
+SESSION_STORE = _build_session_store()
 
 
 def _normalized_path(path: Path) -> str:
@@ -877,6 +898,40 @@ def _extract_bearer_token(request: Request) -> str:
     return ""
 
 
+def _raise_session_http_error(status_code: int, category: str, message: str) -> None:
+    raise HTTPException(status_code=status_code, detail={"category": category, "message": message})
+
+
+def _ensure_optional_glasses_token_auth(request: Request, token: str, *, unauthorized_message: str) -> None:
+    if GLASSES_API_TOKEN:
+        candidate = token.strip() or _extract_bearer_token(request)
+        if candidate != GLASSES_API_TOKEN:
+            _raise_session_http_error(status_code=401, category="unauthorized", message=unauthorized_message)
+
+
+def _parse_session_create_payload(payload: dict[str, object] | None) -> InvestigationSessionCreateRequest:
+    raw = payload or {}
+    try:
+        return InvestigationSessionCreateRequest.model_validate(raw)
+    except ValidationError as exc:
+        _raise_session_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+
+def _parse_session_mutation_payload(payload: dict[str, object] | None) -> InvestigationSessionMutationRequest:
+    raw = payload or {}
+    try:
+        return InvestigationSessionMutationRequest.model_validate(raw)
+    except ValidationError as exc:
+        _raise_session_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+
+def _validate_session_id_or_422(session_id: str) -> str:
+    try:
+        return str(UUID(str(session_id).strip()))
+    except ValueError:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+
+
 def _truncate_text(value: object, max_chars: int) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1278,3 +1333,134 @@ async def investigations_latest_glasses(request: Request, token: str = Query(def
 
     stale_seconds = investigation_stale_seconds()
     return build_glasses_projection(retained_result, stale_seconds=stale_seconds)
+
+
+@app.post("/investigation-sessions", response_model=InvestigationSession, status_code=201)
+async def create_investigation_session(
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    create_request = _parse_session_create_payload(payload)
+
+    try:
+        return SESSION_STORE.create_session(client_metadata=create_request.client_metadata)
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.get("/investigation-sessions/{session_id}", response_model=InvestigationSession)
+async def get_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        return SESSION_STORE.load_session(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.post("/investigation-sessions/{session_id}/pause", response_model=InvestigationSession)
+async def pause_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    mutation = _parse_session_mutation_payload(payload)
+
+    try:
+        return SESSION_STORE.mutate_session(
+            normalized_session_id,
+            lambda session: apply_pause_transition(session, expected_revision=mutation.expected_revision),
+        )
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionLifecycleError as exc:
+        _raise_session_http_error(status_code=409, category=exc.category, message=exc.message)
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.post("/investigation-sessions/{session_id}/resume", response_model=InvestigationSession)
+async def resume_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    mutation = _parse_session_mutation_payload(payload)
+
+    try:
+        return SESSION_STORE.mutate_session(
+            normalized_session_id,
+            lambda session: apply_resume_transition(session, expected_revision=mutation.expected_revision),
+        )
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionLifecycleError as exc:
+        _raise_session_http_error(status_code=409, category=exc.category, message=exc.message)
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.post("/investigation-sessions/{session_id}/cancel", response_model=InvestigationSession)
+async def cancel_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    mutation = _parse_session_mutation_payload(payload)
+
+    try:
+        return SESSION_STORE.mutate_session(
+            normalized_session_id,
+            lambda session: apply_cancel_transition(session, expected_revision=mutation.expected_revision),
+        )
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionLifecycleError as exc:
+        _raise_session_http_error(status_code=409, category=exc.category, message=exc.message)
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")

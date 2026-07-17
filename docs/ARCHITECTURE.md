@@ -70,6 +70,35 @@ GET /investigations/latest/glasses
 - Retrieval endpoints do not invoke OpenAI.
 - Atomic persistence protects the retained investigation from partial writes.
 
+## Phase 2A Implemented Architecture
+
+```text
+POST /investigation-sessions
+GET /investigation-sessions/{session_id}
+POST /investigation-sessions/{session_id}/pause
+POST /investigation-sessions/{session_id}/resume
+POST /investigation-sessions/{session_id}/cancel
+        |
+        v
+InvestigationSession lifecycle state machine
+  states: created, collecting, paused, cancelled
+        |
+        v
+Filesystem session store
+  code/prototype_v1/results/investigation_sessions/
+  - sessions/
+  - corrupt/
+  - archive/
+  - temp/
+```
+
+- Phase 2A session endpoints perform zero OpenAI calls.
+- Phase 2A session endpoints perform zero Context Engine calls.
+- Session persistence uses one JSON file per session with atomic replace semantics.
+- Session mutation supports optional optimistic concurrency via expected_revision.
+- Authentication reuses the existing optional GLASSES_API_TOKEN behavior.
+- Evidence upload and session analysis endpoints remain deferred to later milestones.
+
 ## Component Descriptions
 
 - Pipeline entrypoint: [code/prototype_v1/watch_latest_image.py](code/prototype_v1/watch_latest_image.py)

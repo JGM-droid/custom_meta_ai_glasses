@@ -1,15 +1,34 @@
 from .models import (
+    INVESTIGATION_SESSION_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
     InvestigationDesktopProjection,
     InvestigationGlassesProjection,
     InvestigationModelResult,
     InvestigationRetainedResult,
+    InvestigationSession,
+    InvestigationSessionCreateRequest,
+    InvestigationSessionErrorMetadata,
+    InvestigationSessionMutationRequest,
+    InvestigationSessionStatus,
+    create_new_investigation_session,
 )
 from .result_store import (
     InvestigationStoreError,
     InvestigationStoreNotFound,
     load_latest_investigation_result,
     save_latest_investigation_result,
+)
+from .session_lifecycle import (
+    InvestigationSessionLifecycleError,
+    apply_cancel_transition,
+    apply_pause_transition,
+    apply_resume_transition,
+)
+from .session_store import (
+    InvestigationSessionInvalidId,
+    InvestigationSessionNotFound,
+    InvestigationSessionStore,
+    InvestigationSessionStoreError,
 )
 from .service import (
     analyze_investigation_request,
@@ -22,11 +41,18 @@ from .service import (
 )
 
 __all__ = [
+    "INVESTIGATION_SESSION_SCHEMA_VERSION",
     "InvestigationAnalyzeResponse",
     "InvestigationDesktopProjection",
     "InvestigationGlassesProjection",
     "InvestigationModelResult",
     "InvestigationRetainedResult",
+    "InvestigationSession",
+    "InvestigationSessionCreateRequest",
+    "InvestigationSessionErrorMetadata",
+    "InvestigationSessionMutationRequest",
+    "InvestigationSessionStatus",
+    "create_new_investigation_session",
     "analyze_investigation_request",
     "analyze_investigation_request_with_retained",
     "build_desktop_projection",
@@ -35,6 +61,14 @@ __all__ = [
     "investigation_stale_seconds",
     "InvestigationStoreError",
     "InvestigationStoreNotFound",
+    "InvestigationSessionLifecycleError",
+    "apply_pause_transition",
+    "apply_resume_transition",
+    "apply_cancel_transition",
+    "InvestigationSessionStore",
+    "InvestigationSessionStoreError",
+    "InvestigationSessionNotFound",
+    "InvestigationSessionInvalidId",
     "load_latest_investigation_result",
     "save_latest_investigation_result",
     "validate_investigation_request",
