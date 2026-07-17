@@ -39,6 +39,37 @@ Metrics Snapshot
 Dashboard / Glasses Guidance
 ```
 
+## Phase 1C Completed Architecture
+
+```text
+Meta Ray-Ban Display Glasses
+  |
+  | Capture ordered investigation images
+  v
+POST /investigations/analyze
+  |
+  | Single OpenAI multimodal request
+  v
+Context Engine
+  |
+  v
+Canonical Retained Investigation
+  |
+  |--------------|
+  |              |
+  v              v
+Desktop Projection   Glasses Projection
+  |              |
+GET /investigations/latest
+GET /investigations/latest/glasses
+```
+
+- Only one OpenAI request occurs during investigation analysis.
+- The retained investigation is the canonical source of truth.
+- Desktop and glasses responses are projections of the same retained result.
+- Retrieval endpoints do not invoke OpenAI.
+- Atomic persistence protects the retained investigation from partial writes.
+
 ## Component Descriptions
 
 - Pipeline entrypoint: [code/prototype_v1/watch_latest_image.py](code/prototype_v1/watch_latest_image.py)
