@@ -657,33 +657,28 @@ Mutation concurrency contract (Phase 2A):
 - Purpose: readiness validation and transition to ready.
 - OpenAI: no.
 
-### Phase 2C candidate endpoints (defer from 2A)
+### Phase 2C finalization and result retrieval
 
-9) `POST /investigation-sessions/{session_id}/analyze`
+9) `POST /investigation-sessions/{session_id}/finalize`
 
-- Purpose: trigger one combined analysis using existing service adapter.
-- OpenAI: yes, exactly one request.
-- Allowed states: `ready`.
+- Purpose: freeze analysis-ready evidence and perform the initial analysis through the canonical Phase 1 service path.
+- OpenAI: yes, exactly one provider invocation per successful attempt.
+- Allowed states: `collecting` for fresh finalization; `finalizing`, `analyzing`, `failed`, and `completed` only through idempotent retry or replay rules.
 
 10) `GET /investigation-sessions/{session_id}/result`
 
-- Purpose: desktop projection retrieval from retained result reference.
+- Purpose: desktop projection retrieval from the canonical result linked to the session.
 - OpenAI: no.
 
 11) `GET /investigation-sessions/{session_id}/result/glasses`
 
-- Purpose: concise glasses projection retrieval.
-- OpenAI: no.
-
-12) `GET /investigation-sessions/latest`
-
-- Purpose: convenience lookup for most recent session.
+- Purpose: glasses projection retrieval from the same canonical result.
 - OpenAI: no.
 
 Preservation requirement:
 
 - Keep existing `POST /investigations/analyze`, `GET /investigations/latest`, and `GET /investigations/latest/glasses` unchanged.
-- Session Manager should call existing investigation service internally for initial analysis path, not duplicate reasoning logic.
+- Session Manager should call the existing investigation service internally for the initial analysis path, not duplicate reasoning logic or parse provider output twice.
 
 Authentication expectations:
 
@@ -990,6 +985,828 @@ Logging policy:
 - do not log full transcripts by default
 - do not log sensitive full context payloads by default
 
+# Phase 2C — Finalization and Analysis Integration
+
+Phase 2C finalizes a collecting investigation session, freezes the exact evidence package that will be analyzed, invokes the existing Phase 1 analysis pipeline once, and persists one canonical session-specific result without changing completed Phase 1, Phase 2A, or Phase 2B behavior.
+
+### 20.1 Canonical Result Ownership
+
+Canonical result store:
+
+```text
+code/prototype_v1/results/investigations/
+    results/
+        <result_id>.json
+    latest.json
+```
+
+Ownership rules:
+
+- `results/<result_id>.json` is the canonical durable retained result for one completed analysis.
+- `latest.json` is only a compatibility pointer or compatibility copy to the most recently completed result and is not the historical owner.
+- Each completed session stores `finalization/result_link.json` that points to one specific canonical `result_id`.
+- Session A remains retrievable after session B completes because retrieval resolves the session link to a stable `result_id`, not the latest pointer.
+- Desktop and glasses endpoints project from the same canonical result file.
+- No second result model is introduced; the canonical result is the existing retained result envelope with stable session/result metadata.
+
+Canonical result fields:
+
+- `schema_version`
+- `result_id`
+- `session_id`
+- `analysis_attempt_id`
+- `created_at_utc`
+- `completed_at_utc`
+- `result_hash` (optional)
+- canonical investigation result data
+- desktop projection
+- glasses projection
+- deterministic Copilot prompt
+
+Result link fields:
+
+- `schema_version`
+- `result_id`
+- `session_id`
+- `analysis_attempt_id`
+- canonical relative storage reference
+- `completed_at_utc`
+- `result_hash` (optional)
+
+Compatibility approach for the existing Phase 1 result store:
+
+- extend the existing result_store abstraction to support save by result_id, load by result_id, update latest pointer, and load latest result
+- keep `load_latest_investigation_result` and `save_latest_investigation_result` as compatibility APIs
+- `save_latest_investigation_result` may internally persist the canonical result by `result_id` and then update `latest.json`
+- no historical session retrieval depends on `latest.json`
+
+### 20.2 Image Readiness Revision
+
+Phase 2C finalization requires exactly 2 or 3 image evidence items.
+
+Rejected by readiness:
+
+- zero images
+- one image
+- more than three images
+
+Audio remains optional and does not satisfy the image minimum. No automatic image-selection algorithm is introduced in Phase 2C.
+
+Stable failure categories:
+
+- `insufficient_image_evidence`
+- `evidence_limit_exceeded`
+
+Failure behavior:
+
+- HTTP `422` for readiness validation failures
+- session remains `collecting`
+- no frozen manifest is created
+- no analysis attempt is created
+- revision does not change
+- evidence remains mutable
+- retry is allowed after correcting evidence
+
+### 20.3 Complete Readiness Contract
+
+Finalization may begin only when all of the following are true:
+
+- session status is `collecting`
+- optional `expected_revision` matches the current session revision when supplied
+- exactly 2 or 3 image evidence items exist
+- at most 1 audio evidence item exists for the session finalization package
+- audio is optional
+- all evidence metadata validates
+- all referenced payloads exist
+- all payloads are non-empty
+- each payload SHA-256 matches the persisted evidence `content_hash`
+- MIME type remains supported
+- no corrupt or quarantined evidence record is part of the active set
+- no duplicate evidence IDs are present
+- sequence numbers are unique and strictly increasing
+- sequence gaps are permitted only if caused by deletion, and ordering remains deterministic
+- the evidence sequence manifest exists and is valid
+- deleted evidence is excluded from the frozen set
+- cancelled, paused, created, completed, finalizing, analyzing, and failed sessions cannot begin a fresh finalization unless the current request is an idempotent replay or an explicit retry of a durable failed attempt
+
+Failure contract summary:
+
+| Failure category | HTTP status | Session afterward | Revision behavior | Frozen-manifest behavior | Retry eligibility |
+|---|---|---|---|---|---|
+| `insufficient_image_evidence` | 422 | collecting | no change | no manifest | yes, after adding evidence |
+| `evidence_limit_exceeded` | 422 | collecting | no change | no manifest | yes, after correcting evidence |
+| invalid state | 409 | unchanged | no change | no manifest | yes, when state changes |
+| revision conflict | 409 | unchanged | no change | no manifest | yes, with current revision |
+| metadata / payload validation failure | 422 | collecting | no change | no manifest | yes, after fixing evidence |
+| duplicate evidence ID | 422 | collecting | no change | no manifest | yes, after correcting evidence |
+
+### 20.4 Evidence Freeze Integrity
+
+The frozen manifest is the canonical frozen evidence-set owner. Raw evidence is not copied into a second snapshot directory.
+
+At freeze time:
+
+- load ordered evidence records from the canonical evidence repository
+- verify each payload exists
+- recompute SHA-256 for each payload
+- compare each recomputed hash with the persisted `content_hash`
+- persist trusted relative storage references
+- persist verified content hashes
+- persist immutable copied metadata values
+- persist deterministic ordered entries
+- calculate `frozen_manifest_hash`
+
+Immediately before Context Engine and provider invocation:
+
+- recompute every payload SHA-256 again from the frozen manifest references
+- compare against the frozen manifest
+- fail with `evidence_integrity_error` if any payload changed, disappeared, or became unreadable
+- do not invoke OpenAI on mismatch
+
+Safe behavior if evidence changes between freeze and invocation:
+
+- the attempt transitions to a failed state
+- the frozen manifest remains immutable and visible for recovery/audit
+- uploads and deletes are already blocked by session state
+- retry does not silently proceed with mutated bytes
+- evidence-integrity failures are not automatically retried because the analyzed input is no longer trustworthy
+
+### 20.5 Canonical Manifest Hash
+
+`frozen_manifest_hash` is defined precisely as SHA-256 over a canonical UTF-8 JSON serialization with these rules:
+
+- compact serialization with no whitespace formatting
+- lexicographically sorted object keys
+- evidence entries ordered strictly by `sequence_number`
+- object fields ordered deterministically by the serializer
+- `schema_version` included explicitly
+- optional fields represented as `null` rather than omitted
+- UTC timestamps serialized in normalized ISO-8601 form with `Z`
+- metadata keys sorted lexicographically
+- metadata values are scalar only
+- platform-independent `/` relative path separators only
+
+Hash input includes:
+
+- `schema_version`
+- `session_id`
+- normalized session client metadata relevant to analysis
+- ordered evidence entries, each containing:
+  - `evidence_id`
+  - `sequence_number`
+  - `evidence_type`
+  - `content_hash`
+  - normalized `storage_ref`
+  - `mime_type`
+  - `filename`
+  - `width`
+  - `height`
+  - `duration_seconds`
+  - normalized `client_timestamp_utc`
+  - normalized `metadata`
+
+Hash input excludes:
+
+- manifest creation timestamp
+- temporary paths
+- absolute paths
+- mutable attempt state
+- provider metadata
+
+### 20.6 Context Engine Snapshot Timing
+
+The Context Engine snapshot is captured once during finalization, after readiness validation and before provider invocation.
+
+The local context-fusion adapter is invoked exactly once per frozen finalization package and its normalized output is persisted as `finalization/context_snapshot.json`.
+
+Required fields:
+
+- `schema_version`
+- `captured_at_utc`
+- normalized architecture context
+- normalized active coding context
+- provenance
+- `context_snapshot_hash`
+
+Retry behavior:
+
+- retries reuse the same context snapshot for the same frozen finalization package
+- the context snapshot is not recomputed for retries of the same package
+- a materially changed coding context requires a new investigation session, not a retry of the old one
+
+### 20.7 Canonical Analysis Package
+
+One explicit package schema is used for the existing Phase 1 analysis adapter.
+
+Required fields:
+
+- `schema_version`
+- `session_id`
+- `frozen_manifest_hash`
+- `context_snapshot_hash`
+- `finalized_at_utc`
+- ordered image entries
+- optional audio metadata
+- optional client-supplied normalized spoken explanation text
+- session client metadata
+- architecture context
+- active coding context
+- provenance
+- `request_fingerprint`
+
+Package rules:
+
+- image count is exactly 2 or 3
+- raw image bytes are loaded from verified frozen references by the existing Phase 1 service adapter
+- raw audio is not sent to OpenAI in Phase 2C
+- audio is retained as evidence metadata only
+- no transcription is performed in Phase 2C
+- audio without client-supplied explanation text provides provenance but not semantic provider input
+
+`request_fingerprint` is a canonical SHA-256 over:
+
+- `frozen_manifest_hash`
+- `context_snapshot_hash`
+- normalized explanation text
+- analysis schema version
+- model/request configuration fields that materially affect output
+
+### 20.8 Analysis Attempt Ownership
+
+Current attempt pointer:
+
+- the session record stores `current_analysis_attempt_id`
+
+Attempt files:
+
+- `finalization/analysis_attempts/<analysis_attempt_id>.json`
+
+Canonical attempt statuses:
+
+- `prepared`
+- `provider_call_started`
+- `completed`
+- `failed_pre_call`
+- `failed_provider_confirmed`
+- `failed_result_persistence`
+- `ambiguous_completion`
+
+Attempt ownership rules:
+
+- only one active attempt is allowed per session
+- retry creates a new attempt number
+- prior attempts remain immutable after reaching a terminal attempt status, except for one final atomic transition into that terminal state
+- completed and ambiguous attempts cannot auto-retry
+- attempt numbering survives restart
+- current attempt ownership is discoverable from `current_analysis_attempt_id`
+
+Required attempt fields:
+
+- `analysis_attempt_id`
+- `session_id`
+- `attempt_number`
+- `status`
+- `frozen_manifest_hash`
+- `context_snapshot_hash`
+- `request_fingerprint`
+- `created_at_utc`
+- `started_at_utc`
+- `completed_at_utc`
+- `failure_metadata`
+- `canonical_result_id`
+- `provider_request_id` (optional diagnostic metadata only)
+- `recovery_state`
+- `retryable`
+
+### 20.9 Retry Contract
+
+Public retry mechanism:
+
+- repeat `POST /investigation-sessions/{session_id}/finalize`
+
+Behavior by current session state:
+
+- `collecting`: perform fresh readiness validation and freeze
+- `finalizing` or `analyzing`: return `202` with current attempt status and never start another provider call
+- `completed`: return `200` with the existing canonical result and never call Context Engine or OpenAI again
+- `failed_pre_call` and retryable: reuse the frozen manifest and context snapshot, create a new attempt number, and permit a new provider invocation only if the prior attempt definitively never invoked the provider
+- `failed_provider_confirmed`: require `retry=true` in the finalize request, create a new attempt, and expect a provider invocation
+- `ambiguous_completion`: return `409 ambiguous_provider_completion`, no automatic provider retry, manual/admin recovery only
+- `cancelled`: return `409 invalid_state_transition`
+
+### 20.10 Provider Call Boundary
+
+Durable states before provider invocation:
+
+1. frozen manifest durable
+2. context snapshot durable
+3. request fingerprint durable
+4. attempt record durable as `prepared`
+5. session transitioned to `finalizing`
+6. attempt atomically transitioned to `provider_call_started`
+7. session transitioned to `analyzing`
+
+Then invoke the canonical Phase 1 analysis service once.
+
+Durable writes after provider returns:
+
+1. validate structured result
+2. persist canonical result by `result_id`
+3. persist result link
+4. mark attempt completed
+5. mark session completed
+6. update global latest pointer last
+
+Crash rule:
+
+- if the attempt is `provider_call_started` and no canonical result is discoverable after restart, classify the attempt as `ambiguous_completion`, do not automatically invoke the provider again, and return a controlled `409` or recovery status that requires manual reconciliation
+
+### 20.11 Revision Semantics
+
+Revision increments are deterministic:
+
+- `collecting -> finalizing`: `+1`
+- `finalizing -> analyzing`: `+1`
+- `analyzing -> completed`: `+1`
+- any transition to a failed session state: `+1`
+- readiness validation failure that leaves the session `collecting`: no revision change
+- duplicate finalize while `finalizing` or `analyzing`: no revision change
+- duplicate finalize when `completed`: no revision change
+- retry from `failed_pre_call` or `failed_provider_confirmed` into a new attempt: `+1`
+- idempotent reads: no revision change
+
+For a permitted retry from `failed`, create a new analysis attempt, keep the prior attempt immutable, reuse the frozen manifest and context snapshot, increment session revision exactly once when re-entering active analysis, and do not change revision from failed-state reads or rejected retry requests.
+
+`updated_at_utc` changes whenever revision changes.
+
+### 20.12 Complete State Transition Table
+
+| State | resume | pause | cancel | upload | delete | finalize | retry finalize | get result / glasses | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| `created` | reject `409` | allowed `200 -> paused` | allowed `200 -> cancelled` | reject `409` | reject `409` | reject `409` | reject `409` | `404` | no fresh finalization |
+| `collecting` | n/a | allowed `200 -> paused` | allowed `200 -> cancelled` | allowed | allowed | allowed `200 -> finalizing/analyzing/completed` | same as finalize | `404` | readiness failure stays collecting |
+| `paused` | allowed `200 -> collecting` | idempotent `200` | allowed `200 -> cancelled` | reject `409` | reject `409` | reject `409` | reject `409` | `404` | no evidence mutation |
+| `finalizing` | reject `409` | reject `409` | allowed only before `provider_call_started`; otherwise reject `409` | reject `409` | reject `409` | idempotent `202` | idempotent `202` | `202` | no second provider call |
+| `analyzing` | reject `409` | reject `409` | reject `409` | reject `409` | reject `409` | idempotent `202` | idempotent `202` | `202` | provider may already have been called |
+| `failed` | reject `409` | reject `409` | reject `409` | reject `409` | reject `409` | allowed only by retry rules | allowed only by retry rules | `409` | failed never returns to collecting |
+| `completed` | reject `409` | reject `409` | reject `409` | reject `409` | reject `409` | idempotent `200` | idempotent `200` | `200` | terminal |
+| `cancelled` | reject `409` | reject `409` | idempotent `200` | reject `409` | reject `409` | reject `409` | reject `409` | `404` | terminal |
+
+Rules that apply to every transition:
+
+- `cancel` from `finalizing` is allowed only before `provider_call_started`
+- `cancel` from `analyzing` is rejected
+- `completed` and `cancelled` are terminal
+- `failed` is recoverable only when the attempt failure is retryable and the status is not `ambiguous_completion`
+- evidence remains frozen while failed
+- readiness failures remain collecting and do not create failed state
+
+### 20.13 Finalize API Contract
+
+Endpoint:
+
+- `POST /investigation-sessions/{session_id}/finalize`
+
+Request body:
+
+- `expected_revision` (optional)
+- `retry` (optional, only when retrying a confirmed provider failure)
+- `normalized_explanation_text` (optional)
+
+Request body does not allow:
+
+- client-supplied attempt ID
+- client-supplied manifest hash
+- client-supplied result ID
+
+Success status:
+
+- `200` for the first successful synchronous finalization
+- `200` for completed idempotent replay
+- `202` for an existing finalizing or analyzing attempt
+
+Error status:
+
+- `422` with category `request_validation_error` when `session_id` is not valid UUID syntax; no session lookup is attempted, no filesystem mutation occurs, and no Context Engine or provider call is attempted
+- `404` with category `session_not_found` when `session_id` is a valid UUID but no session exists; no filesystem mutation occurs and no Context Engine or provider call is attempted
+- `409` for invalid state, revision conflict, non-retryable failure, or ambiguous completion
+- `422` for readiness/validation failures
+- `500` / `502` / `504` for controlled internal or provider failures
+
+Timeout and disconnect behavior:
+
+- the server continues only while the request process remains alive; there is no background queue
+- durable `provider_call_started` state is recoverable but may become ambiguous after disconnect or process failure
+- a client retry observes the durable current attempt
+- no second provider call starts automatically
+
+### 20.14 Result Endpoint Contract
+
+Endpoints:
+
+- `GET /investigation-sessions/{session_id}/result`
+- `GET /investigation-sessions/{session_id}/result/glasses`
+
+Responses:
+
+- `422` with category `request_validation_error` for invalid `session_id` UUID syntax; no session lookup, no filesystem mutation, and no Context Engine/provider call
+- `404` with category `session_not_found` for valid UUID session IDs that do not exist; no filesystem mutation and no Context Engine/provider call
+- `200` for `completed`
+- `202` for `finalizing` or `analyzing` with a safe status object
+- `409` for `failed` with a safe failure summary
+- `404` for `created`, `collecting`, `paused`, or `cancelled` when no completed result exists
+- `404` `result_not_available` for created/collecting/paused/cancelled sessions without a completed result
+
+The glasses endpoint derives its projection from the same canonical result as the desktop endpoint.
+
+### 20.15 Multi-File Write Order and Crash Recovery
+
+Finalization start order:
+
+1. validate mutable evidence
+2. persist frozen manifest
+3. persist context snapshot
+4. persist prepared attempt
+5. update session to `finalizing` and set `current_analysis_attempt_id`
+6. update attempt to `provider_call_started`
+7. update session to `analyzing`
+8. provider call
+
+Completion order:
+
+1. persist canonical result under `result_id`
+2. persist session `result_link`
+3. mark attempt completed
+4. mark session completed
+5. update latest pointer
+
+Failure order:
+
+1. persist attempt failure
+2. update session failed
+
+Completion visibility rule:
+
+- a session must never be considered completed unless the canonical result and the result link both exist and validate
+- latest-pointer failure does not invalidate the completed session result
+- latest pointer can be reconciled later
+- result-link visibility follows canonical-result durability
+
+Crash recovery matrix:
+
+| Crash point | Files visible on restart | Session state | Attempt state | Provider may have been called? | Automatic recovery | Retry allowed |
+|---|---|---|---|---|---|---|
+| before frozen manifest | session collecting only | collecting | none | no | restart finalize from scratch | yes |
+| after frozen manifest | frozen manifest only | collecting or finalizing | prepared | no | reuse frozen manifest | yes |
+| after context snapshot | frozen manifest + context snapshot | collecting or finalizing | prepared | no | reuse snapshot | yes |
+| after attempt prepared | frozen manifest + context snapshot + prepared attempt | finalizing | prepared | no | continue finalize | yes |
+| after session finalizing | same as above | finalizing | prepared | no | continue finalize | yes |
+| after provider_call_started | durable active attempt | analyzing | provider_call_started | maybe | ambiguous completion handling | no automatic retry |
+| during Context Engine | durable frozen inputs | finalizing/analyzing | prepared or provider_call_started | no or unknown | retry from durable inputs | yes |
+| after Context Engine before provider invocation | frozen inputs + provider-ready attempt | analyzing | provider_call_started not yet durable or prepared | no | continue finalize | yes if provider not started |
+| during provider invocation | active attempt | analyzing | provider_call_started | yes | ambiguous completion handling | no automatic retry |
+| after provider return before canonical result | active attempt only | analyzing | provider_call_started | yes | ambiguous completion handling | no automatic retry |
+| after canonical result before result link | canonical result only | analyzing | provider_call_started or failed_result_persistence | yes | reconcile result link | yes only after manual repair |
+| after result link before attempt completed | canonical result + link | analyzing | provider_call_started | yes | complete attempt | yes |
+| after attempt completed before session completed | canonical result + link + completed attempt | analyzing | completed | yes | complete session | yes |
+| after session completed before latest update | completed session + canonical result + link | completed | completed | yes | update latest pointer | yes |
+
+### 20.16 Result Store Compatibility
+
+The existing Phase 1 retained-result storage abstraction evolves, not splits.
+
+Compatibility APIs remain:
+
+- `save_latest_investigation_result`
+- `load_latest_investigation_result`
+- `build_desktop_projection`
+- `build_glasses_projection`
+- `build_copilot_prompt`
+
+Implementation-facing evolution:
+
+- save result by `result_id`
+- load result by `result_id`
+- update latest pointer
+- load latest result
+
+Compatibility guarantee:
+
+- existing Phase 1 endpoints remain unchanged externally
+- Phase 2C session result endpoints load by `result_id` from `finalization/result_link.json`
+- the global latest file remains a compatibility pointer only
+
+### 20.17 Analysis Package and OpenAI SDK Assumptions
+
+Repository-grounded assumptions:
+
+- the installed OpenAI SDK version is `2.38.0`
+- Phase 2C reuses the existing Phase 1 provider request path
+- no provider transactional idempotency is assumed
+- no raw audio input is added
+- no unsupported API feature is assumed
+- provider request ID is optional diagnostic metadata only
+- no real provider call is made in tests
+
+### 20.18 Test Plan Additions
+
+Add explicit tests for:
+
+- session A completes, session B completes, latest points to B, and session A result endpoint still returns A
+- session B result endpoint returns B
+- 0 images rejected
+- 1 image rejected
+- 2 images accepted
+- 3 images accepted
+- 4 images rejected
+- reordered metadata dictionaries produce the same manifest hash
+- restart reload produces the same manifest hash
+- changed evidence fields change the hash
+- timestamps excluded from the hash do not change the hash
+- payload hash changes after freeze block provider invocation
+- context snapshot is captured once and reused on duplicate finalize and retry
+- exact session revision increments for each state transition
+- no revision increment on idempotent duplicate finalize or readiness failure
+- retry from failed increments revision exactly once when active analysis restarts and does not change revision for failed-state reads or rejected retries
+- deterministic concurrency test: two concurrent `POST /investigation-sessions/{session_id}/finalize` requests against the same collecting session use barrier/mocked synchronization with no sleep, create exactly one frozen manifest, exactly one context snapshot, exactly one active analysis attempt, and exactly one provider call
+- deterministic concurrency test assertions: attempt numbering is not duplicated, one request may perform analysis while the other returns existing in-progress/completed state, no second provider call starts, final session state is coherent, canonical result and result link are singular and valid, and no orphan attempt/result/manifest/temp file remains
+- duplicate finalize coverage while `finalizing`, duplicate finalize coverage while `analyzing`, and duplicate finalize coverage after `completed`
+- finalize endpoint UUID and session existence contract: invalid UUID returns `422 request_validation_error` with zero lookup/mutation/provider/context calls; missing session returns `404 session_not_found` with zero mutation/provider/context calls
+- result endpoints UUID and session existence contract: invalid UUID returns `422 request_validation_error`; missing session returns `404 session_not_found`
+- every crash-recovery boundary in the table above
+- ambiguous provider completion does not retry automatically
+- canonical result without result link reconciles safely
+- result link without completed session reconciles safely
+- latest-pointer failure does not lose the session result
+- result endpoints return the exact state-specific status codes
+
+### 20.19 Milestone Refinements
+
+Phase 2C.1:
+
+- scope:
+    - new states
+    - session revision rules
+    - canonical result ownership design preparation
+    - models only
+    - no public finalize endpoint
+- likely files:
+    - `code/prototype_v1/investigations/models.py`
+    - `code/prototype_v1/investigations/result_store.py`
+- acceptance criteria:
+    - state and model changes are isolated and deterministic
+    - revision semantics are documented and testable
+    - no externally visible Phase 2C route exists
+- required tests:
+    - model/state validation tests
+    - revision-rule unit coverage
+- non-goals:
+    - readiness/freeze logic
+    - attempt persistence
+    - provider integration
+    - public Phase 2C endpoints
+- rollback point:
+    - revert Phase 2C state/model additions and result-store interface preparation, preserve all Phase 1/2A/2B behavior, keep no public Phase 2C route, and return repository behavior to Phase 2B release state without data migration
+
+Phase 2C.2:
+
+- scope:
+    - readiness validator
+    - canonical frozen manifest
+    - manifest hashing
+    - context snapshot
+- likely files:
+    - `code/prototype_v1/investigations/evidence_store.py`
+    - `code/prototype_v1/investigations/session_store.py`
+    - `code/prototype_v1/investigations/models.py`
+    - `code/prototype_v1/test_investigation_sessions_phase2c.py`
+- acceptance criteria:
+    - readiness/freeze/hash/context snapshot behavior is deterministic
+    - no provider integration exists
+    - no public finalize route exists
+- required tests:
+    - readiness boundary tests
+    - manifest hash determinism tests
+    - frozen-manifest immutability tests
+    - context snapshot capture/reuse tests
+- non-goals:
+    - attempt lifecycle persistence
+    - provider orchestration
+    - public endpoint behavior
+- rollback point:
+    - remove readiness/freeze/context-snapshot modules and tests, retain only independently approved Phase 2C.1 model changes, keep no provider integration or public finalize route, and ensure no production session data depends on frozen manifests yet
+
+Phase 2C.3:
+
+- scope:
+    - analysis-attempt persistence
+    - retry/idempotency
+    - crash reconciliation
+    - still no provider integration
+- likely files:
+    - `code/prototype_v1/investigations/session_store.py`
+    - `code/prototype_v1/investigations/models.py`
+    - `code/prototype_v1/test_investigation_sessions_phase2c.py`
+- acceptance criteria:
+    - one active attempt per session is durable and discoverable
+    - retry semantics are deterministic and status-driven
+    - crash-recovery pre-provider behavior is deterministic
+    - no provider call path exists
+- required tests:
+    - attempt ownership tests
+    - retry/idempotency tests
+    - reconciliation state tests
+- non-goals:
+    - provider request execution
+    - public finalize/result endpoints
+- rollback point:
+    - remove attempt persistence, retry, idempotency, and reconciliation logic, preserve approved Phase 2C.1/2C.2 layers, keep no OpenAI/provider integration, and keep no public endpoint dependent on analysis-attempt records
+
+Phase 2C.4:
+
+- scope:
+    - thin Phase 1 analysis adapter
+    - exactly one mocked Context Engine/provider call
+    - canonical result persistence
+    - result link
+- likely files:
+    - `code/prototype_v1/investigations/service.py`
+    - `code/prototype_v1/investigations/result_store.py`
+    - `code/prototype_v1/investigations/session_store.py`
+    - `code/prototype_v1/test_investigation_sessions_phase2c.py`
+- acceptance criteria:
+    - adapter reuse is thin and does not duplicate Phase 1 pipeline
+    - exactly one provider invocation occurs per successful attempt
+    - canonical result and result link are persisted in order
+    - no public Phase 2C finalize endpoint is exposed yet
+- required tests:
+    - provider-boundary ordering tests
+    - result-link durability tests
+    - one-call adapter reuse tests
+- non-goals:
+    - public finalize/result route exposure
+    - new analysis pipeline design
+- rollback point:
+    - remove the Phase 1 analysis adapter, canonical result-link integration, and provider orchestration, preserve validated freeze/attempt layers, restore Phase 1 analysis behavior unchanged, and keep no public Phase 2C finalize endpoint exposed
+
+Phase 2C.5:
+
+- scope:
+    - finalize and result endpoints
+    - desktop/glasses retrieval
+    - compatibility regression
+    - docs
+    - strict review
+- likely files:
+    - `code/prototype_v1/api.py`
+    - `code/prototype_v1/investigations/result_store.py`
+    - `code/prototype_v1/investigations/service.py`
+    - `code/prototype_v1/test_investigation_sessions_phase2c.py`
+    - `docs/ARCHITECTURE.md`
+    - `docs/releases.md`
+- acceptance criteria:
+    - endpoint contracts match documented state/status behavior
+    - session-specific result retrieval resolves by `result_id`
+    - desktop and glasses projections derive from the same canonical result
+    - Phase 1 external compatibility remains intact
+- required tests:
+    - endpoint contract tests including `422 request_validation_error` and `404 session_not_found`
+    - deterministic concurrent finalize tests (same session, one active attempt, one Context Engine call, one provider call)
+    - regression suites for Phase 1/2A/2B compatibility
+- non-goals:
+    - distributed background workers
+    - multi-user authorization redesign
+    - provider idempotency guarantees beyond current boundary
+- rollback point:
+    - remove or disable public Phase 2C endpoints, preserve reviewed internal Phase 2C services, retain Phase 1 endpoint compatibility, and return externally visible API to the last approved milestone
+
+### 20.20 Contradictions Removed
+
+- one image versus 2–3 images is resolved in favor of exactly 2 or 3 images
+- global latest versus historical result ownership is resolved with canonical per-result storage plus a latest compatibility pointer
+- failed is recoverable only for retryable non-ambiguous failures and never returns to collecting
+- evidence mutation after freeze is rejected by state and validated again by payload hash checks
+- automatic retry after ambiguous completion is disallowed
+- Context Engine timing is frozen once per finalization package
+- audio is metadata-only and does not imply transcription
+- milestone definitions are narrowed so the public finalize/result surface arrives last
+
+### 20.21 Picture-to-Prompt Latency and Observability Clarification
+
+Primary product KPI:
+
+- `picture_to_prompt_ms`
+- definition: elapsed monotonic time from application acknowledgement of the final required image for an analysis request until a complete, usable Copilot prompt is available to the user
+- Quick Fix interpretation: the final required image is the single captured image
+- Investigation interpretation: the final required image is the last accepted image before the user finalizes the session
+- scope: excludes Copilot-side processing and code-editing time after prompt delivery
+
+Initial engineering latency targets (must be validated on real devices):
+
+- Quick Fix typical target: `<= 10s`
+- Quick Fix acceptable degraded: `<= 15s`
+- Quick Fix product concern threshold: `> 15s`
+- Quick Fix unacceptable routine latency: `> 20s`
+- Investigation typical target: `<= 15s`
+- Investigation acceptable degraded: `<= 20s`
+- Investigation product concern threshold: `> 20s`
+- Investigation unacceptable routine latency: `> 30s`
+- these are initial engineering targets only and are not a claim that targets are already achieved
+
+Monotonic timing stages:
+
+- `capture_acknowledged`
+- `evidence_ready`
+- `context_collection_started`
+- `context_collection_completed`
+- `provider_request_started`
+- `provider_response_completed`
+- `result_persisted`
+- `prompt_available`
+
+Derived durations:
+
+- `evidence_preparation_ms = evidence_ready - capture_acknowledged`
+- `context_collection_ms = context_collection_completed - context_collection_started`
+- `provider_round_trip_ms = provider_response_completed - provider_request_started`
+- `result_processing_ms = prompt_available - provider_response_completed`
+- `picture_to_prompt_ms = prompt_available - capture_acknowledged`
+
+Clock contract:
+
+- elapsed durations must be computed from monotonic clocks
+- UTC timestamps may also be recorded for audit/debug chronology
+- UTC timestamps must not be used to compute elapsed latency values
+
+Runtime constraints for initial prompt-generation path:
+
+- one provider/model request per normal analysis attempt
+- avoid sequential model calls for diagnosis and prompt formatting in the initial path
+- produce the Copilot-ready prompt as the primary response artifact
+- avoid waiting for nonessential context after latency budget is exceeded
+- bound image count and image size
+- avoid unbounded filesystem or network operations
+- expose immediate analysis status to the UI
+
+Graceful degradation when optional context collection exceeds budget:
+
+- proceed with available image evidence and user explanation
+- mark omitted context in safe metadata
+- do not block indefinitely waiting for perfect context
+- do not silently issue additional provider calls
+- return a usable but appropriately qualified Copilot prompt
+- automatic retries for ambiguous provider completion are not defined by this latency clarification
+
+Observability safety constraints (bounded timing metadata):
+
+- timing metadata must be bounded and include only:
+    - stage names
+    - durations
+    - outcome status
+    - non-sensitive size/count metadata
+- timing metadata must not include:
+    - image contents
+    - prompts
+    - source code
+    - secrets
+    - absolute filesystem paths
+    - raw provider responses
+
+Planned attachment points for timing metadata:
+
+- analysis attempt record
+- canonical result metadata
+- structured application logs
+
+Implementation note:
+
+- detailed instrumentation and storage implementation is deferred to a later implementation milestone
+
+Latency/observability acceptance criteria:
+
+- timing instrumentation overhead is negligible in local execution
+- `picture_to_prompt_ms` is measurable deterministically
+- timing-instrumentation failures never fail analysis itself
+- no timing field changes the canonical Copilot prompt
+- no additional model request is introduced solely for telemetry
+- existing Phase 1 and Phase 2 behavior remains compatible
+- real-device benchmarking is completed before declaring latency goals achieved
+
+Future benchmark matrix (design requirement):
+
+- one-image Quick Fix
+- two-image investigation
+- three-image investigation
+- small and large image payloads
+- normal and degraded network conditions
+- warm and cold application state
+- provider success, timeout, and confirmed failure
+
+Benchmark reporting requirement:
+
+- report median, p90, and p95 for `picture_to_prompt_ms`
+- do not claim target achievement until measured on the real glasses-to-phone-to-backend path
+
 ## 21. Testing Strategy
 
 ### Unit tests
@@ -1134,43 +1951,53 @@ Implementation risk:
 
 - moderate (upload durability and idempotency)
 
-### Phase 2C - Session Analysis Integration
+### Phase 2C - Finalization and Analysis Integration
 
 Objective:
 
-- connect Session Manager to existing investigation analysis path
+- freeze analysis-ready evidence, invoke the existing analysis pipeline once, and persist a durable canonical result plus session link.
 
 Deliverables:
 
-- analyze endpoint by session state
-- internal adapter to existing service (`analyze_investigation_request_with_retained` path)
-- canonical session-result references
-- desktop and glasses session result retrieval endpoints
+- state and model additions
+- readiness validator
+- canonical frozen manifest and manifest hashing
+- context snapshot capture
+- analysis-attempt persistence and retry rules
+- thin Phase 1 analysis adapter
+- canonical result persistence and result link
+- finalize and result endpoints
 
 Dependencies:
 
 - Phase 2B readiness and evidence records
-- existing investigation service and result projection logic
+- existing investigation service and retained-result projection logic
 
 Non-goals:
 
 - replacing Phase 1 analysis endpoints
+- follow-up analysis revisions
+- automatic retry after ambiguous completion
 
 Acceptance criteria:
 
-- one OpenAI request for initial analysis
+- exactly 2 to 3 images are required to finalize
+- one OpenAI request for each successful logical attempt
 - zero OpenAI on retrieval
+- session-specific result retrieval remains valid after later sessions complete
 - atomic result persistence retained
 
 Tests:
 
-- analyze lifecycle tests
-- call-count tests
+- readiness tests
+- finalization idempotency and retry tests
+- canonical result ownership tests
+- crash recovery tests
 - projection consistency tests
 
 Implementation risk:
 
-- medium-high (orchestration correctness)
+- high (multi-file orchestration correctness)
 
 ### Phase 2D - Glasses and Android Interaction
 
@@ -1296,7 +2123,7 @@ Repository-based rationale:
 | What transcript source will be canonical across clients (Meta native vs companion vs backend transcription)? | Affects consistency and trust model | Normalize transcript source metadata and validate provenance | Phase 2B |
 | Where should raw evidence media be stored? | Affects persistence and privacy | Filesystem under bounded session directories for prototype | Phase 2B |
 | Should raw audio be retained? | Privacy and storage risk | Default no raw retention; transcript only | Phase 2B |
-| What is maximum image count per session? | Performance and UX | Collect up to 5, analyze selected 2 to 3 initially | Phase 2B |
+| What is the analysis-ready image count? | Readiness and provider compatibility | Require exactly 2 to 3 images for Phase 2C finalization | Phase 2C |
 | When does re-analysis become a new investigation? | Product consistency | New revision within same session unless user explicitly starts new session | Phase 2E |
 | How should accidental duplicate captures be handled? | Prevents evidence noise | hash+idempotency dedupe with duplicate-accepted response | Phase 2B |
 | What evidence retention window and archival policy should apply to media and transcripts? | Privacy, storage, and compliance tradeoffs | Keep prototype bounded retention with explicit archive policies | Phase 2B |
