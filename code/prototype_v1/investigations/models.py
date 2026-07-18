@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SUPPORTED_SCHEMA_VERSION = "1.0"
 INVESTIGATION_SESSION_SCHEMA_VERSION = "2.0"
+INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION = "2.0"
+INVESTIGATION_RESULT_LINK_SCHEMA_VERSION = "2.0"
+INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION = "1.0"
 
 _MAX_CLIENT_METADATA_ENTRIES = 16
 _MAX_CLIENT_METADATA_KEY_LENGTH = 64
@@ -28,12 +31,18 @@ _MAX_EVIDENCE_MIME_TYPE_LENGTH = 100
 _MAX_EVIDENCE_STORAGE_REF_LENGTH = 512
 _MAX_EVIDENCE_DIMENSION = 100000
 _MAX_EVIDENCE_DURATION_SECONDS = 86400
+_MAX_SAFE_FAILURE_TEXT_LENGTH = 300
+_MAX_PROVIDER_REQUEST_ID_LENGTH = 128
 
 
 class InvestigationSessionStatus(str, Enum):
     CREATED = "created"
     COLLECTING = "collecting"
     PAUSED = "paused"
+    FINALIZING = "finalizing"
+    ANALYZING = "analyzing"
+    FAILED = "failed"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
 
 
@@ -61,11 +70,6 @@ class InvestigationEvidenceType(str, Enum):
 class InvestigationEvidenceValidationStatus(str, Enum):
     ACCEPTED = "accepted"
     DUPLICATE_ACCEPTED = "duplicate_accepted"
-
-
-class InvestigationEvidenceType(str, Enum):
-    IMAGE = "image"
-    AUDIO = "audio"
 
 
 InvestigationEvidenceKind = InvestigationEvidenceType
@@ -248,6 +252,8 @@ class InvestigationSession(BaseModel):
     paused_at_utc: datetime | None = None
     cancelled_at_utc: datetime | None = None
     client_metadata: dict[str, str | int | float | bool | None] | None = None
+    current_analysis_attempt_id: str | None = None
+    completed_result_id: str | None = None
     last_error: InvestigationSessionErrorMetadata | None = None
 
     @field_validator("schema_version")
@@ -267,6 +273,20 @@ class InvestigationSession(BaseModel):
             parsed = UUID(text)
         except ValueError as exc:
             raise ValueError("session_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator("current_analysis_attempt_id", "completed_result_id")
+    @classmethod
+    def _validate_optional_uuid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("Optional UUID fields must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("Optional UUID fields must be valid UUIDs.") from exc
         return str(parsed)
 
     @field_validator("created_at_utc", "updated_at_utc", "paused_at_utc", "cancelled_at_utc")
@@ -347,8 +367,229 @@ def create_new_investigation_session(
         paused_at_utc=None,
         cancelled_at_utc=None,
         client_metadata=client_metadata,
+        current_analysis_attempt_id=None,
+        completed_result_id=None,
         last_error=None,
     )
+
+
+class InvestigationAnalysisAttemptStatus(str, Enum):
+    PREPARED = "prepared"
+    PROVIDER_CALL_STARTED = "provider_call_started"
+    COMPLETED = "completed"
+    FAILED_PRE_CALL = "failed_pre_call"
+    FAILED_PROVIDER_CONFIRMED = "failed_provider_confirmed"
+    FAILED_RESULT_PERSISTENCE = "failed_result_persistence"
+    AMBIGUOUS_COMPLETION = "ambiguous_completion"
+
+
+class InvestigationAttemptFailureMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    category: str = Field(..., min_length=1, max_length=64)
+    safe_message: str = Field(..., min_length=1, max_length=_MAX_SAFE_FAILURE_TEXT_LENGTH)
+    retryable: bool
+
+
+class InvestigationAnalysisAttempt(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    analysis_attempt_id: str
+    session_id: str
+    attempt_number: int = Field(..., gt=0)
+    status: InvestigationAnalysisAttemptStatus
+    frozen_manifest_hash: str = Field(..., min_length=64, max_length=64)
+    context_snapshot_hash: str = Field(..., min_length=64, max_length=64)
+    request_fingerprint: str = Field(..., min_length=64, max_length=64)
+    created_at_utc: datetime
+    started_at_utc: datetime | None = None
+    completed_at_utc: datetime | None = None
+    failure_metadata: InvestigationAttemptFailureMetadata | None = None
+    canonical_result_id: str | None = None
+    provider_request_id: str | None = Field(default=None, max_length=_MAX_PROVIDER_REQUEST_ID_LENGTH)
+    recovery_state: str | None = Field(default=None, max_length=64)
+    retryable: bool
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("analysis_attempt_id", "session_id", "canonical_result_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("frozen_manifest_hash", "context_snapshot_hash", "request_fingerprint")
+    @classmethod
+    def _validate_hash_fields(cls, value: str) -> str:
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("Hash fields must be 64-character hex digests.")
+        return text
+
+    @field_validator("created_at_utc", "started_at_utc", "completed_at_utc")
+    @classmethod
+    def _validate_utc_timestamps(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("Timestamps must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("provider_request_id", "recovery_state")
+    @classmethod
+    def _validate_optional_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("Optional text fields must be non-empty when provided.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_status_specific_fields(self) -> "InvestigationAnalysisAttempt":
+        if self.status == InvestigationAnalysisAttemptStatus.COMPLETED:
+            if self.completed_at_utc is None:
+                raise ValueError("completed_at_utc is required for completed attempts.")
+            if self.canonical_result_id is None:
+                raise ValueError("canonical_result_id is required for completed attempts.")
+
+        failure_states = {
+            InvestigationAnalysisAttemptStatus.FAILED_PRE_CALL,
+            InvestigationAnalysisAttemptStatus.FAILED_PROVIDER_CONFIRMED,
+            InvestigationAnalysisAttemptStatus.FAILED_RESULT_PERSISTENCE,
+            InvestigationAnalysisAttemptStatus.AMBIGUOUS_COMPLETION,
+        }
+        if self.status in failure_states and self.failure_metadata is None:
+            raise ValueError("failure_metadata is required for failed attempts.")
+
+        return self
+
+
+class InvestigationResultLink(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    result_id: str
+    session_id: str
+    analysis_attempt_id: str
+    canonical_storage_ref: str = Field(..., min_length=1, max_length=_MAX_EVIDENCE_STORAGE_REF_LENGTH)
+    completed_at_utc: datetime
+    result_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_RESULT_LINK_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {INVESTIGATION_RESULT_LINK_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("result_id", "session_id", "analysis_attempt_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields are required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("completed_at_utc")
+    @classmethod
+    def _validate_completed_at_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("completed_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("canonical_storage_ref")
+    @classmethod
+    def _validate_canonical_storage_ref(cls, value: str) -> str:
+        ref = value.strip()
+        if "\\" in ref:
+            raise ValueError("canonical_storage_ref must use '/' separators.")
+        if not ref:
+            raise ValueError("canonical_storage_ref is required.")
+        if ref.startswith("/") or re.match(r"^[a-zA-Z]:", ref):
+            raise ValueError("canonical_storage_ref must be relative.")
+        parts = ref.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("canonical_storage_ref must be normalized and non-traversing.")
+        return ref
+
+    @field_validator("result_hash")
+    @classmethod
+    def _validate_result_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("result_hash must be a 64-character hex digest.")
+        return text
+
+
+class InvestigationCanonicalResultEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    result_id: str
+    session_id: str | None = None
+    analysis_attempt_id: str | None = None
+    created_at_utc: datetime
+    retained_result: InvestigationRetainedResult
+    result_hash: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("result_id", "session_id", "analysis_attempt_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("created_at_utc")
+    @classmethod
+    def _validate_created_at_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("created_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("result_hash")
+    @classmethod
+    def _validate_result_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("result_hash must be a 64-character hex digest.")
+        return text
 
 
 class InvestigationImageMetadata(BaseModel):
