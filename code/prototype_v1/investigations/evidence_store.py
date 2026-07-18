@@ -315,6 +315,26 @@ class InvestigationEvidenceStore:
 
         return self.session_store.run_with_session_lock(normalized, _list)
 
+    def list_evidence_for_analysis(self, session_id: str) -> list[InvestigationEvidence]:
+        normalized = self.session_store.validate_session_id(session_id)
+
+        def _list_any_state(_session: InvestigationSession) -> list[InvestigationEvidence]:
+            return self._list_evidence_unlocked(normalized)
+
+        return self.session_store.run_with_session_lock(normalized, _list_any_state)
+
+    def load_evidence_for_analysis(self, *, session_id: str, evidence_id: str) -> InvestigationEvidence:
+        normalized_session_id = self.session_store.validate_session_id(session_id)
+        normalized_evidence_id = _normalize_uuid_text(evidence_id)
+
+        def _load_any_state(_session: InvestigationSession) -> InvestigationEvidence:
+            metadata_path = self._session_evidence_dir(normalized_session_id) / f"{normalized_evidence_id}.json"
+            if not metadata_path.exists() or not metadata_path.is_file():
+                raise InvestigationEvidenceNotFound("Evidence does not exist.")
+            return self._load_evidence_from_path(metadata_path, normalized_session_id)
+
+        return self.session_store.run_with_session_lock(normalized_session_id, _load_any_state)
+
     def _validate_request(self, request: InvestigationEvidenceCreateRequest) -> InvestigationEvidenceCreateRequest:
         return InvestigationEvidenceCreateRequest.model_validate(request.model_dump(mode="python"))
 

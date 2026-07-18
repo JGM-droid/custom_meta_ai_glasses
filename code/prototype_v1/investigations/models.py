@@ -18,6 +18,8 @@ INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION = "1.0"
 INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION = "1.0"
 INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION = "1.0"
 INVESTIGATION_LATENCY_METADATA_SCHEMA_VERSION = "1.0"
+INVESTIGATION_ANALYSIS_REQUEST_PACKAGE_SCHEMA_VERSION = "1.0"
+INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION = "1.0"
 
 _MAX_CLIENT_METADATA_ENTRIES = 16
 _MAX_CLIENT_METADATA_KEY_LENGTH = 64
@@ -42,6 +44,20 @@ _MAX_RENDERER_VERSION_LENGTH = 32
 _MAX_STRUCTURED_LIST_ITEMS = 12
 _MAX_STRUCTURED_TEXT_LENGTH = 1000
 _MAX_SELECTED_IMAGE_COUNT = 3
+_MAX_REQUEST_INSTRUCTION_LENGTH = 6000
+_MAX_EXPLANATION_TEXT_LENGTH = 1000
+_MAX_ATTACHMENT_METADATA_ENTRIES = 8
+_MAX_ATTACHMENT_METADATA_KEY_LENGTH = 64
+_MAX_ATTACHMENT_METADATA_VALUE_LENGTH = 160
+_MAX_RESPONSE_DIAGNOSIS_LENGTH = 500
+_MAX_RESPONSE_ACTION_LENGTH = 280
+_MAX_RESPONSE_WARNING_LENGTH = 300
+_MAX_RESPONSE_FOLLOW_UP_LENGTH = 280
+
+SUPPORTED_ANALYSIS_REQUEST_IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+}
 
 
 class InvestigationSessionStatus(str, Enum):
@@ -571,6 +587,191 @@ class InvestigationFrozenEvidenceManifest(BaseModel):
             raise ValueError("selected_evidence selection_index values must be zero-based and ordered.")
 
         return self
+
+
+class InvestigationAnalysisEvidenceAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    evidence_id: str
+    capture_timestamp_utc: datetime | None = None
+    media_type: str = Field(..., min_length=1, max_length=_MAX_EVIDENCE_MIME_TYPE_LENGTH)
+    storage_ref: str = Field(..., min_length=1, max_length=_MAX_EVIDENCE_STORAGE_REF_LENGTH)
+    evidence_metadata: dict[str, str] | None = None
+
+    @field_validator("evidence_id")
+    @classmethod
+    def _validate_evidence_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("evidence_id is required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("evidence_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator("capture_timestamp_utc")
+    @classmethod
+    def _validate_capture_timestamp_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("capture_timestamp_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("media_type")
+    @classmethod
+    def _validate_media_type(cls, value: str) -> str:
+        media_type = value.strip().lower()
+        if media_type not in SUPPORTED_ANALYSIS_REQUEST_IMAGE_MIME_TYPES:
+            raise ValueError("media_type is unsupported for analysis packaging.")
+        return media_type
+
+    @field_validator("storage_ref")
+    @classmethod
+    def _validate_storage_ref(cls, value: str) -> str:
+        storage_ref = value.strip().replace("\\", "/")
+        if not storage_ref:
+            raise ValueError("storage_ref is required.")
+        if storage_ref.startswith("/") or re.match(r"^[a-zA-Z]:", storage_ref):
+            raise ValueError("storage_ref must be relative.")
+        parts = storage_ref.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("storage_ref must be normalized and non-traversing.")
+        return storage_ref
+
+    @field_validator("evidence_metadata")
+    @classmethod
+    def _validate_evidence_metadata(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        if len(value) > _MAX_ATTACHMENT_METADATA_ENTRIES:
+            raise ValueError("evidence_metadata contains too many entries.")
+
+        normalized: dict[str, str] = {}
+        for key, item in value.items():
+            cleaned_key = str(key).strip()
+            cleaned_value = str(item).strip()
+            if not cleaned_key:
+                raise ValueError("evidence_metadata keys must be non-empty.")
+            if not cleaned_value:
+                raise ValueError("evidence_metadata values must be non-empty.")
+            if len(cleaned_key) > _MAX_ATTACHMENT_METADATA_KEY_LENGTH:
+                raise ValueError("evidence_metadata key is too long.")
+            if len(cleaned_value) > _MAX_ATTACHMENT_METADATA_VALUE_LENGTH:
+                raise ValueError("evidence_metadata value is too long.")
+            normalized[cleaned_key] = cleaned_value
+        return normalized
+
+
+class InvestigationAnalysisRequestPackage(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    session_id: str
+    analysis_attempt_id: str
+    attempt_number: int = Field(..., gt=0)
+    frozen_manifest_id: str | None = None
+    frozen_manifest_hash: str = Field(..., min_length=64, max_length=64)
+    normalized_explanation_text: str | None = Field(default=None, min_length=1, max_length=_MAX_EXPLANATION_TEXT_LENGTH)
+    deterministic_system_instructions: str = Field(..., min_length=1, max_length=_MAX_REQUEST_INSTRUCTION_LENGTH)
+    deterministic_context_instructions: str = Field(..., min_length=1, max_length=_MAX_REQUEST_INSTRUCTION_LENGTH)
+    ordered_evidence_inputs: list[InvestigationAnalysisEvidenceAttachment] = Field(
+        ...,
+        min_length=1,
+        max_length=_MAX_SELECTED_IMAGE_COUNT,
+    )
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_ANALYSIS_REQUEST_PACKAGE_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {INVESTIGATION_ANALYSIS_REQUEST_PACKAGE_SCHEMA_VERSION}."
+            )
+        return value
+
+    @field_validator("session_id", "analysis_attempt_id", "frozen_manifest_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("frozen_manifest_hash")
+    @classmethod
+    def _validate_manifest_hash(cls, value: str) -> str:
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("frozen_manifest_hash must be a 64-character hex digest.")
+        return text
+
+    @field_validator("normalized_explanation_text")
+    @classmethod
+    def _validate_optional_explanation_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("normalized_explanation_text must be non-empty when provided.")
+        return text
+
+
+class InvestigationAnalysisResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    concise_diagnosis: str = Field(..., min_length=1, max_length=_MAX_RESPONSE_DIAGNOSIS_LENGTH)
+    immediate_recommended_action: str = Field(..., min_length=1, max_length=_MAX_RESPONSE_ACTION_LENGTH)
+    supporting_observations: list[str] = Field(..., min_length=1, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+    confidence_or_uncertainty: str = Field(..., min_length=1, max_length=_MAX_STRUCTURED_TEXT_LENGTH)
+    warning_or_blocker: str | None = Field(default=None, min_length=1, max_length=_MAX_RESPONSE_WARNING_LENGTH)
+    follow_up_capture_request: str | None = Field(default=None, min_length=1, max_length=_MAX_RESPONSE_FOLLOW_UP_LENGTH)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION}."
+            )
+        return value
+
+    @field_validator(
+        "concise_diagnosis",
+        "immediate_recommended_action",
+        "confidence_or_uncertainty",
+        "warning_or_blocker",
+        "follow_up_capture_request",
+    )
+    @classmethod
+    def _validate_trimmed_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("Text fields must be non-empty when provided.")
+        return text
+
+    @field_validator("supporting_observations", mode="after")
+    @classmethod
+    def _validate_supporting_observations(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if not text:
+                raise ValueError("supporting_observations items must be non-empty.")
+            if len(text) > _MAX_STRUCTURED_TEXT_LENGTH:
+                raise ValueError("supporting_observations item is too long.")
+            normalized.append(text)
+        return normalized
 
 
 class InvestigationStructuredAnalysis(BaseModel):

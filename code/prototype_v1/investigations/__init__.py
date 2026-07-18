@@ -3,11 +3,16 @@ from .models import (
     INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION,
     INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION,
     INVESTIGATION_LATENCY_METADATA_SCHEMA_VERSION,
+    INVESTIGATION_ANALYSIS_REQUEST_PACKAGE_SCHEMA_VERSION,
+    INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
     INVESTIGATION_RESULT_LINK_SCHEMA_VERSION,
     INVESTIGATION_SESSION_SCHEMA_VERSION,
     INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
     InvestigationAnalysisAttempt,
+    InvestigationAnalysisEvidenceAttachment,
+    InvestigationAnalysisRequestPackage,
+    InvestigationAnalysisResponse,
     InvestigationAnalysisAttemptStatus,
     InvestigationAttemptFailureMetadata,
     InvestigationCanonicalResultEnvelope,
@@ -29,6 +34,7 @@ from .models import (
     InvestigationSessionStatus,
     InvestigationEvidenceType,
     InvestigationEvidenceValidationStatus,
+    SUPPORTED_ANALYSIS_REQUEST_IMAGE_MIME_TYPES,
     create_new_investigation_session,
 )
 from .result_store import (
@@ -44,6 +50,7 @@ from .result_store import (
 )
 from .session_lifecycle import (
     InvestigationSessionLifecycleError,
+    apply_start_transition,
     apply_analysis_started_transition,
     apply_cancel_transition,
     apply_complete_transition,
@@ -51,6 +58,20 @@ from .session_lifecycle import (
     apply_finalize_transition,
     apply_pause_transition,
     apply_resume_transition,
+)
+from .interaction_state_machine import (
+    INTERACTION_STATE_SCHEMA_VERSION,
+    InvestigationInteractionContext,
+    InvestigationInteractionError,
+    InvestigationInteractionEvent,
+    InvestigationInteractionInvalidTransition,
+    InvestigationInteractionOutcome,
+    InvestigationInteractionState,
+    InvestigationInteractionStateMachine,
+    InvestigationInteractionTransitionResult,
+    InvestigationInteractionValidationError,
+    map_session_status_to_interaction_terminal_state,
+    new_interaction_context,
 )
 from .session_store import (
     InvestigationSessionInvalidId,
@@ -66,6 +87,17 @@ from .analysis_attempt_store import (
     InvestigationAnalysisAttemptStoreError,
     InvestigationAttemptOwnershipResult,
 )
+from .analysis_contract_errors import (
+    InvestigationAnalysisContractError,
+    InvestigationAnalysisIdentityMismatchError,
+    InvestigationAnalysisMissingEvidenceError,
+    InvestigationAnalysisRequestBuildError,
+    InvestigationAnalysisResponseValidationError,
+    InvestigationAnalysisUnsupportedEvidenceError,
+)
+from .analysis_prompt_renderer import PROMPT_RENDERER_VERSION, render_deterministic_analysis_instructions
+from .analysis_request_builder import build_deterministic_analysis_request_package
+from .analysis_response_validator import validate_structured_analysis_response
 from .evidence_store import (
     EVIDENCE_SCHEMA_VERSION,
     MAX_AUDIO_UPLOAD_BYTES,
@@ -89,6 +121,8 @@ from .service import (
 )
 
 __all__ = [
+    "INVESTIGATION_ANALYSIS_REQUEST_PACKAGE_SCHEMA_VERSION",
+    "INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION",
     "INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION",
     "INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION",
     "INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION",
@@ -98,6 +132,9 @@ __all__ = [
     "INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION",
     "InvestigationAnalyzeResponse",
     "InvestigationAnalysisAttempt",
+    "InvestigationAnalysisEvidenceAttachment",
+    "InvestigationAnalysisRequestPackage",
+    "InvestigationAnalysisResponse",
     "InvestigationAnalysisAttemptStatus",
     "InvestigationAttemptFailureMetadata",
     "InvestigationCanonicalResultEnvelope",
@@ -119,6 +156,7 @@ __all__ = [
     "InvestigationSessionStatus",
     "InvestigationEvidenceType",
     "InvestigationEvidenceValidationStatus",
+    "SUPPORTED_ANALYSIS_REQUEST_IMAGE_MIME_TYPES",
     "create_new_investigation_session",
     "analyze_investigation_request",
     "analyze_investigation_request_with_retained",
@@ -130,6 +168,7 @@ __all__ = [
     "InvestigationStoreError",
     "InvestigationStoreNotFound",
     "InvestigationSessionLifecycleError",
+    "apply_start_transition",
     "apply_finalize_transition",
     "apply_analysis_started_transition",
     "apply_complete_transition",
@@ -137,6 +176,18 @@ __all__ = [
     "apply_pause_transition",
     "apply_resume_transition",
     "apply_cancel_transition",
+    "INTERACTION_STATE_SCHEMA_VERSION",
+    "InvestigationInteractionState",
+    "InvestigationInteractionEvent",
+    "InvestigationInteractionContext",
+    "InvestigationInteractionTransitionResult",
+    "InvestigationInteractionOutcome",
+    "InvestigationInteractionError",
+    "InvestigationInteractionInvalidTransition",
+    "InvestigationInteractionValidationError",
+    "InvestigationInteractionStateMachine",
+    "new_interaction_context",
+    "map_session_status_to_interaction_terminal_state",
     "InvestigationSessionStore",
     "InvestigationSessionStoreError",
     "InvestigationSessionNotFound",
@@ -147,6 +198,16 @@ __all__ = [
     "InvestigationAnalysisAttemptConflict",
     "InvestigationAnalysisAttemptOwnershipError",
     "InvestigationAttemptOwnershipResult",
+    "InvestigationAnalysisContractError",
+    "InvestigationAnalysisRequestBuildError",
+    "InvestigationAnalysisIdentityMismatchError",
+    "InvestigationAnalysisMissingEvidenceError",
+    "InvestigationAnalysisUnsupportedEvidenceError",
+    "InvestigationAnalysisResponseValidationError",
+    "PROMPT_RENDERER_VERSION",
+    "render_deterministic_analysis_instructions",
+    "build_deterministic_analysis_request_package",
+    "validate_structured_analysis_response",
     "EVIDENCE_SCHEMA_VERSION",
     "MAX_AUDIO_UPLOAD_BYTES",
     "MAX_IMAGE_UPLOAD_BYTES",
