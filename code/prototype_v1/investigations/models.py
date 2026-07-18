@@ -15,6 +15,9 @@ INVESTIGATION_SESSION_SCHEMA_VERSION = "2.0"
 INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION = "2.0"
 INVESTIGATION_RESULT_LINK_SCHEMA_VERSION = "2.0"
 INVESTIGATION_CANONICAL_RESULT_SCHEMA_VERSION = "1.0"
+INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION = "1.0"
+INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION = "1.0"
+INVESTIGATION_LATENCY_METADATA_SCHEMA_VERSION = "1.0"
 
 _MAX_CLIENT_METADATA_ENTRIES = 16
 _MAX_CLIENT_METADATA_KEY_LENGTH = 64
@@ -33,6 +36,12 @@ _MAX_EVIDENCE_DIMENSION = 100000
 _MAX_EVIDENCE_DURATION_SECONDS = 86400
 _MAX_SAFE_FAILURE_TEXT_LENGTH = 300
 _MAX_PROVIDER_REQUEST_ID_LENGTH = 128
+_MAX_PROMPT_LENGTH = 12000
+_MAX_SELECTION_POLICY_VERSION_LENGTH = 32
+_MAX_RENDERER_VERSION_LENGTH = 32
+_MAX_STRUCTURED_LIST_ITEMS = 12
+_MAX_STRUCTURED_TEXT_LENGTH = 1000
+_MAX_SELECTED_IMAGE_COUNT = 3
 
 
 class InvestigationSessionStatus(str, Enum):
@@ -253,6 +262,8 @@ class InvestigationSession(BaseModel):
     cancelled_at_utc: datetime | None = None
     client_metadata: dict[str, str | int | float | bool | None] | None = None
     current_analysis_attempt_id: str | None = None
+    active_analysis_attempt_id: str | None = None
+    latest_analysis_attempt_id: str | None = None
     completed_result_id: str | None = None
     last_error: InvestigationSessionErrorMetadata | None = None
 
@@ -275,7 +286,12 @@ class InvestigationSession(BaseModel):
             raise ValueError("session_id must be a valid UUID.") from exc
         return str(parsed)
 
-    @field_validator("current_analysis_attempt_id", "completed_result_id")
+    @field_validator(
+        "current_analysis_attempt_id",
+        "active_analysis_attempt_id",
+        "latest_analysis_attempt_id",
+        "completed_result_id",
+    )
     @classmethod
     def _validate_optional_uuid(cls, value: str | None) -> str | None:
         if value is None:
@@ -368,6 +384,8 @@ def create_new_investigation_session(
         cancelled_at_utc=None,
         client_metadata=client_metadata,
         current_analysis_attempt_id=None,
+        active_analysis_attempt_id=None,
+        latest_analysis_attempt_id=None,
         completed_result_id=None,
         last_error=None,
     )
@@ -391,6 +409,282 @@ class InvestigationAttemptFailureMetadata(BaseModel):
     retryable: bool
 
 
+class InvestigationFrozenEvidenceItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    evidence_id: str
+    session_id: str
+    storage_ref: str = Field(..., min_length=1, max_length=_MAX_EVIDENCE_STORAGE_REF_LENGTH)
+    evidence_type: InvestigationEvidenceType
+    mime_type: str = Field(..., min_length=1, max_length=_MAX_EVIDENCE_MIME_TYPE_LENGTH)
+    captured_at_utc: datetime | None = None
+    content_hash: str = Field(..., min_length=64, max_length=64)
+    size_bytes: int = Field(..., gt=0)
+    selection_index: int = Field(..., ge=0)
+
+    @field_validator("evidence_id", "session_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields are required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("storage_ref")
+    @classmethod
+    def _validate_storage_ref(cls, value: str) -> str:
+        storage_ref = value.strip().replace("\\", "/")
+        if not storage_ref:
+            raise ValueError("storage_ref is required.")
+        if storage_ref.startswith("/") or re.match(r"^[a-zA-Z]:", storage_ref):
+            raise ValueError("storage_ref must be relative.")
+        parts = storage_ref.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("storage_ref must be normalized and non-traversing.")
+        return storage_ref
+
+    @field_validator("mime_type")
+    @classmethod
+    def _validate_mime_type(cls, value: str) -> str:
+        mime_type = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+", mime_type):
+            raise ValueError("mime_type is invalid.")
+        return mime_type
+
+    @field_validator("captured_at_utc")
+    @classmethod
+    def _validate_captured_at_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("captured_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("content_hash")
+    @classmethod
+    def _validate_content_hash(cls, value: str) -> str:
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("content_hash must be a 64-character hex digest.")
+        return text
+
+
+class InvestigationFrozenEvidenceManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    manifest_id: str
+    session_id: str
+    analysis_attempt_id: str
+    created_at_utc: datetime
+    selection_policy_version: str = Field(default="1.0", min_length=1, max_length=_MAX_SELECTION_POLICY_VERSION_LENGTH)
+    selected_evidence: list[InvestigationFrozenEvidenceItem] = Field(
+        ...,
+        min_length=1,
+        max_length=_MAX_SELECTED_IMAGE_COUNT,
+    )
+    selected_evidence_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=_MAX_SELECTED_IMAGE_COUNT,
+    )
+    evidence_count: int = Field(..., ge=1, le=_MAX_SELECTED_IMAGE_COUNT)
+    manifest_hash: str = Field(..., min_length=64, max_length=64)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {INVESTIGATION_FROZEN_EVIDENCE_MANIFEST_SCHEMA_VERSION}."
+            )
+        return value
+
+    @field_validator("manifest_id", "session_id", "analysis_attempt_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("UUID fields are required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("created_at_utc")
+    @classmethod
+    def _validate_created_at_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("created_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("selected_evidence_ids")
+    @classmethod
+    def _validate_selected_evidence_ids(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = item.strip()
+            if not text:
+                raise ValueError("selected_evidence_ids must contain non-empty UUIDs.")
+            try:
+                parsed = str(UUID(text))
+            except ValueError as exc:
+                raise ValueError("selected_evidence_ids must contain valid UUIDs.") from exc
+            if parsed in seen:
+                raise ValueError("selected_evidence_ids must be unique.")
+            seen.add(parsed)
+            normalized.append(parsed)
+        return normalized
+
+    @field_validator("manifest_hash")
+    @classmethod
+    def _validate_manifest_hash(cls, value: str) -> str:
+        text = value.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", text):
+            raise ValueError("manifest_hash must be a 64-character hex digest.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_manifest_consistency(self) -> "InvestigationFrozenEvidenceManifest":
+        if self.evidence_count != len(self.selected_evidence):
+            raise ValueError("evidence_count must match selected_evidence length.")
+        if len(self.selected_evidence_ids) != len(self.selected_evidence):
+            raise ValueError("selected_evidence_ids must match selected_evidence length.")
+
+        ids_from_items = [item.evidence_id for item in self.selected_evidence]
+        if ids_from_items != self.selected_evidence_ids:
+            raise ValueError("selected_evidence_ids must exactly match selected_evidence order.")
+
+        if any(item.evidence_type != InvestigationEvidenceType.IMAGE for item in self.selected_evidence):
+            raise ValueError("selected_evidence must contain only image evidence items.")
+
+        if any(item.session_id != self.session_id for item in self.selected_evidence):
+            raise ValueError("selected_evidence session_id must match manifest session_id.")
+
+        if any(item.selection_index != index for index, item in enumerate(self.selected_evidence)):
+            raise ValueError("selected_evidence selection_index values must be zero-based and ordered.")
+
+        return self
+
+
+class InvestigationStructuredAnalysis(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    observed_evidence: list[str] = Field(..., min_length=1, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+    likely_issue: str = Field(..., min_length=1, max_length=_MAX_STRUCTURED_TEXT_LENGTH)
+    confidence_or_uncertainty: str = Field(..., min_length=1, max_length=_MAX_STRUCTURED_TEXT_LENGTH)
+    recommended_checks: list[str] = Field(..., min_length=1, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+    recommended_changes: list[str] = Field(default_factory=list, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+    relevant_safe_filenames: list[str] = Field(default_factory=list, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+    limitations: list[str] = Field(default_factory=list, max_length=_MAX_STRUCTURED_LIST_ITEMS)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {INVESTIGATION_STRUCTURED_ANALYSIS_SCHEMA_VERSION}."
+            )
+        return value
+
+    @field_validator(
+        "observed_evidence",
+        "recommended_checks",
+        "recommended_changes",
+        "limitations",
+        mode="after",
+    )
+    @classmethod
+    def _validate_text_lists(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            text = str(item).strip()
+            if not text:
+                raise ValueError("Structured analysis text list items must be non-empty.")
+            if len(text) > _MAX_STRUCTURED_TEXT_LENGTH:
+                raise ValueError("Structured analysis text list item is too long.")
+            normalized.append(text)
+        return normalized
+
+    @field_validator("relevant_safe_filenames", mode="after")
+    @classmethod
+    def _validate_safe_filenames(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in value:
+            text = str(item).strip().replace("\\", "/")
+            if not text:
+                raise ValueError("relevant_safe_filenames items must be non-empty.")
+            if text.startswith("/") or re.match(r"^[a-zA-Z]:", text):
+                raise ValueError("relevant_safe_filenames must use relative paths.")
+            parts = text.split("/")
+            if any(part in {"", ".", ".."} for part in parts):
+                raise ValueError("relevant_safe_filenames must be normalized and non-traversing.")
+            normalized.append(text)
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("relevant_safe_filenames must be unique.")
+        return normalized
+
+
+class InvestigationLatencyMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    device_picture_to_prompt_ms: int | None = Field(default=None, ge=0)
+    backend_picture_to_prompt_ms: int | None = Field(default=None, ge=0)
+    capture_acknowledged_utc: datetime | None = None
+    evidence_ready_utc: datetime | None = None
+    context_collection_started_utc: datetime | None = None
+    context_collection_completed_utc: datetime | None = None
+    provider_request_started_utc: datetime | None = None
+    provider_response_completed_utc: datetime | None = None
+    result_persisted_utc: datetime | None = None
+    prompt_available_utc: datetime | None = None
+    backend_request_accepted_utc: datetime | None = None
+    client_capture_acknowledged_utc: datetime | None = None
+    client_request_started_utc: datetime | None = None
+    evidence_preparation_ms: int | None = Field(default=None, ge=0)
+    context_collection_ms: int | None = Field(default=None, ge=0)
+    provider_round_trip_ms: int | None = Field(default=None, ge=0)
+    result_processing_ms: int | None = Field(default=None, ge=0)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != INVESTIGATION_LATENCY_METADATA_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {INVESTIGATION_LATENCY_METADATA_SCHEMA_VERSION}."
+            )
+        return value
+
+    @field_validator(
+        "capture_acknowledged_utc",
+        "evidence_ready_utc",
+        "context_collection_started_utc",
+        "context_collection_completed_utc",
+        "provider_request_started_utc",
+        "provider_response_completed_utc",
+        "result_persisted_utc",
+        "prompt_available_utc",
+        "backend_request_accepted_utc",
+        "client_capture_acknowledged_utc",
+        "client_request_started_utc",
+    )
+    @classmethod
+    def _validate_optional_utc_timestamps(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("Latency timestamp fields must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+
 class InvestigationAnalysisAttempt(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -405,7 +699,15 @@ class InvestigationAnalysisAttempt(BaseModel):
     created_at_utc: datetime
     started_at_utc: datetime | None = None
     completed_at_utc: datetime | None = None
+    failed_at_utc: datetime | None = None
     failure_metadata: InvestigationAttemptFailureMetadata | None = None
+    safe_error_category: str | None = Field(default=None, min_length=1, max_length=64)
+    safe_error_message: str | None = Field(default=None, min_length=1, max_length=_MAX_SAFE_FAILURE_TEXT_LENGTH)
+    frozen_manifest_id: str | None = None
+    structured_analysis: InvestigationStructuredAnalysis | None = None
+    rendered_prompt: str | None = Field(default=None, min_length=1, max_length=_MAX_PROMPT_LENGTH)
+    prompt_renderer_version: str | None = Field(default=None, min_length=1, max_length=_MAX_RENDERER_VERSION_LENGTH)
+    latency_metadata: InvestigationLatencyMetadata | None = None
     canonical_result_id: str | None = None
     provider_request_id: str | None = Field(default=None, max_length=_MAX_PROVIDER_REQUEST_ID_LENGTH)
     recovery_state: str | None = Field(default=None, max_length=64)
@@ -418,7 +720,7 @@ class InvestigationAnalysisAttempt(BaseModel):
             raise ValueError(f"Unsupported schema_version. Use {INVESTIGATION_ANALYSIS_ATTEMPT_SCHEMA_VERSION}.")
         return value
 
-    @field_validator("analysis_attempt_id", "session_id", "canonical_result_id")
+    @field_validator("analysis_attempt_id", "session_id", "canonical_result_id", "frozen_manifest_id")
     @classmethod
     def _validate_uuid_fields(cls, value: str | None) -> str | None:
         if value is None:
@@ -440,7 +742,7 @@ class InvestigationAnalysisAttempt(BaseModel):
             raise ValueError("Hash fields must be 64-character hex digests.")
         return text
 
-    @field_validator("created_at_utc", "started_at_utc", "completed_at_utc")
+    @field_validator("created_at_utc", "started_at_utc", "completed_at_utc", "failed_at_utc")
     @classmethod
     def _validate_utc_timestamps(cls, value: datetime | None) -> datetime | None:
         if value is None:
@@ -449,7 +751,7 @@ class InvestigationAnalysisAttempt(BaseModel):
             raise ValueError("Timestamps must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
 
-    @field_validator("provider_request_id", "recovery_state")
+    @field_validator("provider_request_id", "recovery_state", "prompt_renderer_version")
     @classmethod
     def _validate_optional_text_fields(cls, value: str | None) -> str | None:
         if value is None:
@@ -457,6 +759,16 @@ class InvestigationAnalysisAttempt(BaseModel):
         text = value.strip()
         if not text:
             raise ValueError("Optional text fields must be non-empty when provided.")
+        return text
+
+    @field_validator("safe_error_category", "safe_error_message")
+    @classmethod
+    def _validate_optional_safe_error_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("Optional safe error fields must be non-empty when provided.")
         return text
 
     @model_validator(mode="after")
@@ -475,6 +787,9 @@ class InvestigationAnalysisAttempt(BaseModel):
         }
         if self.status in failure_states and self.failure_metadata is None:
             raise ValueError("failure_metadata is required for failed attempts.")
+
+        if self.failed_at_utc is not None and self.status not in failure_states:
+            raise ValueError("failed_at_utc is only allowed for failed attempt statuses.")
 
         return self
 
