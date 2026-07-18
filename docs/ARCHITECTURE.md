@@ -97,7 +97,9 @@ Filesystem session store
 - Session persistence uses one JSON file per session with atomic replace semantics.
 - Session mutation supports optional optimistic concurrency via expected_revision.
 - Authentication reuses the existing optional GLASSES_API_TOKEN behavior.
-- Evidence upload and session analysis endpoints remain deferred to later milestones.
+- Phase 2B evidence storage is implemented as a separate per-session evidence workspace under code/prototype_v1/results/investigation_sessions/<session_id>/evidence/.
+- Evidence uploads use server-managed sequence numbers, hard delete, quarantine for malformed records, and zero OpenAI / zero Context Engine execution.
+- Session metadata ownership remains with the Phase 2A session store.
 
 ## Component Descriptions
 

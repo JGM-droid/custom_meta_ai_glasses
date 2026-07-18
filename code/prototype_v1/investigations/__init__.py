@@ -1,6 +1,8 @@
 from .models import (
     INVESTIGATION_SESSION_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
+    InvestigationEvidence,
+    InvestigationEvidenceCreateRequest,
     InvestigationDesktopProjection,
     InvestigationGlassesProjection,
     InvestigationModelResult,
@@ -10,6 +12,8 @@ from .models import (
     InvestigationSessionErrorMetadata,
     InvestigationSessionMutationRequest,
     InvestigationSessionStatus,
+    InvestigationEvidenceType,
+    InvestigationEvidenceValidationStatus,
     create_new_investigation_session,
 )
 from .result_store import (
@@ -30,6 +34,18 @@ from .session_store import (
     InvestigationSessionStore,
     InvestigationSessionStoreError,
 )
+from .evidence_store import (
+    EVIDENCE_SCHEMA_VERSION,
+    MAX_AUDIO_UPLOAD_BYTES,
+    MAX_IMAGE_UPLOAD_BYTES,
+    UPLOAD_CHUNK_SIZE,
+    InvestigationEvidenceInvalidContentType,
+    InvestigationEvidenceInvalidId,
+    InvestigationEvidenceNotFound,
+    InvestigationEvidenceStateError,
+    InvestigationEvidenceStore,
+    InvestigationEvidenceStoreError,
+)
 from .service import (
     analyze_investigation_request,
     analyze_investigation_request_with_retained,
@@ -43,6 +59,8 @@ from .service import (
 __all__ = [
     "INVESTIGATION_SESSION_SCHEMA_VERSION",
     "InvestigationAnalyzeResponse",
+    "InvestigationEvidence",
+    "InvestigationEvidenceCreateRequest",
     "InvestigationDesktopProjection",
     "InvestigationGlassesProjection",
     "InvestigationModelResult",
@@ -52,6 +70,8 @@ __all__ = [
     "InvestigationSessionErrorMetadata",
     "InvestigationSessionMutationRequest",
     "InvestigationSessionStatus",
+    "InvestigationEvidenceType",
+    "InvestigationEvidenceValidationStatus",
     "create_new_investigation_session",
     "analyze_investigation_request",
     "analyze_investigation_request_with_retained",
@@ -69,6 +89,16 @@ __all__ = [
     "InvestigationSessionStoreError",
     "InvestigationSessionNotFound",
     "InvestigationSessionInvalidId",
+    "EVIDENCE_SCHEMA_VERSION",
+    "MAX_AUDIO_UPLOAD_BYTES",
+    "MAX_IMAGE_UPLOAD_BYTES",
+    "UPLOAD_CHUNK_SIZE",
+    "InvestigationEvidenceInvalidContentType",
+    "InvestigationEvidenceInvalidId",
+    "InvestigationEvidenceNotFound",
+    "InvestigationEvidenceStateError",
+    "InvestigationEvidenceStore",
+    "InvestigationEvidenceStoreError",
     "load_latest_investigation_result",
     "save_latest_investigation_result",
     "validate_investigation_request",

@@ -7,7 +7,7 @@ import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
@@ -25,6 +25,9 @@ class InvestigationSessionNotFound(InvestigationSessionStoreError):
 
 class InvestigationSessionInvalidId(InvestigationSessionStoreError):
     pass
+
+
+T = TypeVar("T")
 
 
 class InvestigationSessionStore:
@@ -50,6 +53,10 @@ class InvestigationSessionStore:
                 lock = threading.Lock()
                 self._session_locks[session_id] = lock
             return lock
+
+    def session_workspace_dir(self, session_id: str) -> Path:
+        normalized = self.validate_session_id(session_id)
+        return self.root / normalized
 
     @staticmethod
     def validate_session_id(session_id: str) -> str:
@@ -184,3 +191,10 @@ class InvestigationSessionStore:
                 self._save_session_no_lock(updated)
                 return updated
             return current
+
+    def run_with_session_lock(self, session_id: str, callback: Callable[[InvestigationSession], T]) -> T:
+        normalized = self.validate_session_id(session_id)
+        lock = self._get_session_lock(normalized)
+        with lock:
+            current = self._load_session_no_lock(normalized)
+            return callback(current)

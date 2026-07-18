@@ -14,7 +14,7 @@ import sys
 import tempfile
 from uuid import UUID
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -24,6 +24,15 @@ from pydantic import ValidationError
 from investigations import (
     InvestigationAnalyzeResponse,
     InvestigationDesktopProjection,
+    InvestigationEvidence,
+    InvestigationEvidenceCreateRequest,
+    InvestigationEvidenceInvalidContentType,
+    InvestigationEvidenceInvalidId,
+    InvestigationEvidenceNotFound,
+    InvestigationEvidenceStateError,
+    InvestigationEvidenceStore,
+    InvestigationEvidenceStoreError,
+    InvestigationEvidenceType,
     InvestigationGlassesProjection,
     InvestigationSession,
     InvestigationSessionCreateRequest,
@@ -35,6 +44,9 @@ from investigations import (
     InvestigationSessionStoreError,
     InvestigationStoreError,
     InvestigationStoreNotFound,
+    MAX_AUDIO_UPLOAD_BYTES,
+    MAX_IMAGE_UPLOAD_BYTES,
+    UPLOAD_CHUNK_SIZE,
     analyze_investigation_request_with_retained,
     apply_cancel_transition,
     apply_pause_transition,
@@ -97,6 +109,13 @@ def _build_session_store() -> InvestigationSessionStore:
 
 
 SESSION_STORE = _build_session_store()
+
+
+def _build_evidence_store() -> InvestigationEvidenceStore:
+    return InvestigationEvidenceStore(SESSION_STORE)
+
+
+EVIDENCE_STORE = _build_evidence_store()
 
 
 def _normalized_path(path: Path) -> str:
@@ -185,6 +204,10 @@ _ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 _VISION_ALLOWED_MIME = {"image/jpeg", "image/png"}
 _VISION_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 _VISION_MAX_EDGE = 1024
+_EVIDENCE_IMAGE_ALLOWED_MIME = {"image/jpeg", "image/png"}
+_EVIDENCE_IMAGE_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+_EVIDENCE_AUDIO_ALLOWED_MIME = {"audio/mpeg", "audio/mp4", "audio/aac", "audio/ogg", "audio/wav", "audio/x-wav"}
+_EVIDENCE_AUDIO_ALLOWED_EXTENSIONS = {".mp3", ".m4a", ".aac", ".ogg", ".wav"}
 
 
 def _safe_load_json(path: Path) -> dict[str, object]:
@@ -932,6 +955,103 @@ def _validate_session_id_or_422(session_id: str) -> str:
         _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
 
 
+def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+
+    candidate = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise ValueError("captured_at_utc must be a valid UTC timestamp.") from exc
+
+    if parsed.tzinfo is None:
+        raise ValueError("captured_at_utc must be timezone-aware UTC.")
+
+    return parsed.astimezone(timezone.utc)
+
+
+async def _read_bounded_upload(file: UploadFile, *, max_bytes: int) -> tuple[bytes, str, str]:
+    filename = Path(file.filename or "upload.bin").name
+    content_type = str(file.content_type or "").strip().lower()
+    buffer = bytearray()
+    try:
+        while True:
+            chunk = await file.read(UPLOAD_CHUNK_SIZE)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+            if len(buffer) > max_bytes:
+                raise HTTPException(status_code=413, detail={"category": "upload_too_large", "message": "Evidence upload is too large."})
+        return bytes(buffer), content_type, filename
+    finally:
+        await file.close()
+
+
+def _parse_evidence_create_request(
+    *,
+    source: str,
+    client_timestamp_utc: str | None,
+    normalized_text: str | None,
+    metadata: str | None,
+    filename: str | None,
+    mime_type: str | None,
+    width: int | None,
+    height: int | None,
+    duration_seconds: float | None,
+) -> InvestigationEvidenceCreateRequest:
+    metadata_payload: dict[str, object] | None = None
+    normalized_source = str(source or "").strip() or "backend"
+    normalized_text = str(normalized_text or "").strip() or None
+    normalized_filename = str(filename or "").strip() or None
+    normalized_mime_type = str(mime_type or "").strip() or None
+    metadata_text = str(metadata or "").strip()
+    if metadata_text:
+        try:
+            parsed = json.loads(metadata_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("metadata must be valid JSON.") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("metadata must be a JSON object.")
+        metadata_payload = parsed
+
+    return InvestigationEvidenceCreateRequest.model_validate(
+        {
+            "source": normalized_source,
+            "client_timestamp_utc": _parse_optional_utc_datetime(client_timestamp_utc),
+            "normalized_text": normalized_text,
+            "metadata": metadata_payload,
+            "filename": normalized_filename,
+            "mime_type": normalized_mime_type,
+            "width": width,
+            "height": height,
+            "duration_seconds": duration_seconds,
+        }
+    )
+
+
+def _validate_evidence_media_type(*, evidence_type: InvestigationEvidenceType, content_type: str, filename: str) -> None:
+    suffix = Path(filename or "").suffix.lower()
+    normalized_content_type = str(content_type or "").strip().lower()
+
+    if evidence_type == InvestigationEvidenceType.IMAGE:
+        if normalized_content_type not in _EVIDENCE_IMAGE_ALLOWED_MIME:
+            raise HTTPException(status_code=415, detail={"category": "unsupported_media_type", "message": "Use image/jpeg or image/png for image evidence."})
+        if suffix and suffix not in _EVIDENCE_IMAGE_ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=415, detail={"category": "unsupported_media_type", "message": "Use .jpg, .jpeg, or .png for image evidence."})
+        return
+
+    if evidence_type == InvestigationEvidenceType.AUDIO:
+        if normalized_content_type not in _EVIDENCE_AUDIO_ALLOWED_MIME:
+            raise HTTPException(status_code=415, detail={"category": "unsupported_media_type", "message": "Use a supported audio content type for audio evidence."})
+        if suffix and suffix not in _EVIDENCE_AUDIO_ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=415, detail={"category": "unsupported_media_type", "message": "Use .mp3, .m4a, .aac, .ogg, or .wav for audio evidence."})
+        return
+
+    raise HTTPException(status_code=415, detail={"category": "unsupported_media_type", "message": "Unsupported evidence type."})
+
+
 def _truncate_text(value: object, max_chars: int) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1464,3 +1584,188 @@ async def cancel_investigation_session(
         _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+async def _upload_investigation_session_evidence(
+    *,
+    response: Response,
+    session_id: str,
+    request: Request,
+    token: str,
+    file: UploadFile,
+    evidence_type: InvestigationEvidenceType,
+    source: str,
+    client_timestamp_utc: str | None,
+    normalized_text: str | None,
+    metadata: str | None,
+    width: int | None,
+    height: int | None,
+    duration_seconds: float | None,
+) -> InvestigationEvidence:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        max_bytes = MAX_IMAGE_UPLOAD_BYTES if evidence_type == InvestigationEvidenceType.IMAGE else MAX_AUDIO_UPLOAD_BYTES
+        raw_bytes, content_type, filename = await _read_bounded_upload(file, max_bytes=max_bytes)
+    except HTTPException:
+        raise
+
+    if not raw_bytes:
+        raise HTTPException(status_code=422, detail={"category": "invalid_upload", "message": "Uploaded evidence file is empty."})
+
+    _validate_evidence_media_type(evidence_type=evidence_type, content_type=content_type, filename=filename)
+
+    try:
+        create_request = _parse_evidence_create_request(
+            source=source,
+            client_timestamp_utc=client_timestamp_utc,
+            normalized_text=normalized_text,
+            metadata=metadata,
+            filename=filename,
+            mime_type=content_type,
+            width=width,
+            height=height,
+            duration_seconds=duration_seconds,
+        )
+    except ValueError as exc:
+        category = "invalid_upload" if "metadata must" in str(exc).lower() else "validation_error"
+        raise HTTPException(status_code=422, detail={"category": category, "message": str(exc)}) from exc
+
+    try:
+        evidence, created = EVIDENCE_STORE.upload_evidence(
+            session_id=normalized_session_id,
+            evidence_type=evidence_type,
+            raw_bytes=raw_bytes,
+            original_filename=filename,
+            request=create_request,
+            mime_type=content_type,
+        )
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationEvidenceStateError as exc:
+        _raise_session_http_error(status_code=409, category="invalid_state_transition", message=str(exc))
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
+
+    response.status_code = 201 if created else 200
+    return evidence
+
+
+@app.post("/investigation-sessions/{session_id}/evidence/image", response_model=InvestigationEvidence, status_code=201)
+async def upload_investigation_session_image_evidence(
+    session_id: str,
+    request: Request,
+    response: Response,
+    token: str = Query(default=""),
+    file: UploadFile = File(...),
+    source: str = Form(default="backend"),
+    client_timestamp_utc: str | None = Form(default=""),
+    normalized_text: str | None = Form(default=""),
+    metadata: str | None = Form(default=""),
+    width: int | None = Form(default=None),
+    height: int | None = Form(default=None),
+) -> InvestigationEvidence:
+    return await _upload_investigation_session_evidence(
+        response=response,
+        session_id=session_id,
+        request=request,
+        token=token,
+        file=file,
+        evidence_type=InvestigationEvidenceType.IMAGE,
+        source=source,
+        client_timestamp_utc=client_timestamp_utc,
+        normalized_text=normalized_text,
+        metadata=metadata,
+        width=width,
+        height=height,
+        duration_seconds=None,
+    )
+
+
+@app.post("/investigation-sessions/{session_id}/evidence/audio", response_model=InvestigationEvidence, status_code=201)
+async def upload_investigation_session_audio_evidence(
+    session_id: str,
+    request: Request,
+    response: Response,
+    token: str = Query(default=""),
+    file: UploadFile = File(...),
+    source: str = Form(default="backend"),
+    client_timestamp_utc: str | None = Form(default=""),
+    normalized_text: str | None = Form(default=""),
+    metadata: str | None = Form(default=""),
+    duration_seconds: float | None = Form(default=None),
+) -> InvestigationEvidence:
+    return await _upload_investigation_session_evidence(
+        response=response,
+        session_id=session_id,
+        request=request,
+        token=token,
+        file=file,
+        evidence_type=InvestigationEvidenceType.AUDIO,
+        source=source,
+        client_timestamp_utc=client_timestamp_utc,
+        normalized_text=normalized_text,
+        metadata=metadata,
+        width=None,
+        height=None,
+        duration_seconds=duration_seconds,
+    )
+
+
+@app.get("/investigation-sessions/{session_id}/evidence", response_model=list[InvestigationEvidence])
+async def list_investigation_session_evidence(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+) -> list[InvestigationEvidence]:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+
+    try:
+        return EVIDENCE_STORE.list_evidence(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
+
+
+@app.delete("/investigation-sessions/{session_id}/evidence/{evidence_id}", response_model=InvestigationEvidence)
+async def delete_investigation_session_evidence(
+    session_id: str,
+    evidence_id: str,
+    request: Request,
+    token: str = Query(default=""),
+) -> InvestigationEvidence:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+
+    try:
+        return EVIDENCE_STORE.delete_evidence(normalized_session_id, evidence_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationEvidenceNotFound:
+        _raise_session_http_error(status_code=404, category="evidence_not_found", message="Evidence does not exist.")
+    except InvestigationEvidenceInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_evidence_id", message="evidence_id must be a valid UUID.")
+    except InvestigationEvidenceStateError as exc:
+        _raise_session_http_error(status_code=409, category="invalid_state_transition", message=str(exc))
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")

@@ -1,5 +1,15 @@
 # Release Notes
 
+## Phase 2B
+
+- Added evidence collection endpoints for image and audio uploads, evidence listing, and hard delete.
+- Added per-session evidence workspace storage under code/prototype_v1/results/investigation_sessions/<session_id>/evidence/ with atomic payload and metadata writes.
+- Added server-managed sequence allocation persisted in a per-session evidence manifest so ordering survives restart and deletion does not renumber history.
+- Added safe storage-ref validation, quarantine for malformed or unsafe evidence records, and controlled delete safety checks.
+- Added bounded upload limits for image and audio evidence with controlled oversized-upload rejection.
+- Added deterministic Phase 2B model/store/API tests covering ordering, rollback, dedupe, quarantine, auth, and zero OpenAI / zero Context Engine guarantees.
+- Phase 2B remains storage-only and does not invoke OpenAI, Context Engine, transcription, embeddings, or streaming.
+
 ## Phase 2A
 
 - Added InvestigationSession Phase 2A model with validated UUID identity, UTC timestamps, revision semantics, bounded metadata, and safe failure metadata.
@@ -15,7 +25,7 @@
 - Added controlled session error categories for not found, invalid session ID, invalid transitions, revision conflicts, storage failures, validation failures, and unauthorized access.
 - Added token enforcement on session endpoints using existing optional GLASSES_API_TOKEN behavior.
 - Added deterministic Phase 2A model/store/lifecycle/API tests, including zero OpenAI and zero Context Engine invocation checks.
-- Phase 2A explicitly defers evidence upload, voice transcription, and session analysis integration.
+- Phase 2A still defers voice transcription and session analysis integration.
 
 ## Phase 1C
 
