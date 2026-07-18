@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import base64
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from enum import Enum
 import io
 from pathlib import Path
 import json
@@ -12,17 +14,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from uuid import UUID
+import threading
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from investigations import (
+    INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
+    InvestigationAnalysisAttemptStore,
+    InvestigationAnalysisProviderMissingApiKeyError,
+    InvestigationAnalysisRequestPackage,
+    InvestigationAnalysisResponse,
     InvestigationDesktopProjection,
     InvestigationEvidence,
     InvestigationEvidenceCreateRequest,
@@ -42,20 +50,32 @@ from investigations import (
     InvestigationSessionNotFound,
     InvestigationSessionStore,
     InvestigationSessionStoreError,
+    InvestigationInteractionContext,
+    InvestigationInteractionState,
+    InvestigationOpenAIProviderConfig,
+    InvestigationOrchestrator,
+    InvestigationOrchestrationError,
+    InvestigationOrchestrationOutcome,
+    InvestigationOrchestrationProgressEvent,
+    InvestigationOrchestrationStage,
     InvestigationStoreError,
     InvestigationStoreNotFound,
+    InvestigationRetainedResult,
     MAX_AUDIO_UPLOAD_BYTES,
     MAX_IMAGE_UPLOAD_BYTES,
     UPLOAD_CHUNK_SIZE,
     analyze_investigation_request_with_retained,
     apply_cancel_transition,
+    apply_start_transition,
     apply_pause_transition,
     apply_resume_transition,
+    build_copilot_prompt,
     build_desktop_projection,
     build_glasses_projection,
     investigation_stale_seconds,
     load_latest_investigation_result,
     save_latest_investigation_result,
+    OpenAIInvestigationAnalysisProvider,
 )
 
 try:
@@ -97,6 +117,8 @@ GLASSES_WEBAPP_INDEX = GLASSES_WEBAPP_DIR / "index.html"
 GLASSES_API_TOKEN = (os.environ.get("GLASSES_API_TOKEN") or "").strip()
 REPO_DOTENV_PATH = REPO_ROOT / ".env"
 LOCAL_DOTENV_PATH = BASE_DIR / ".env"
+DEFAULT_DEMO_MODEL = "gpt-4.1-mini"
+DEFAULT_DEMO_TIMEOUT_SECONDS = 45.0
 
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
@@ -116,6 +138,180 @@ def _build_evidence_store() -> InvestigationEvidenceStore:
 
 
 EVIDENCE_STORE = _build_evidence_store()
+
+
+class InvestigationDemoMode(str, Enum):
+    DRY_RUN = "dry_run"
+    LIVE = "live"
+
+
+class InvestigationDemoGitRecommendation(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    reason: str
+    commands: list[str] = Field(default_factory=list)
+
+
+class InvestigationDemoProductAction(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action_status: str
+    copilot_prompt: str | None = None
+    why_this_should_work: str | None = None
+    verification_items: list[str] = Field(default_factory=list)
+    primary_next_step: str | None = None
+    glasses_guidance: str | None = None
+    follow_up_capture_required: bool = False
+    follow_up_capture_message: str | None = None
+    git_recommendation: InvestigationDemoGitRecommendation | None = None
+
+
+class InvestigationDemoRunView(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    demo_id: str
+    session_id: str
+    mode: str
+    status: str
+    created_at_utc: datetime
+    updated_at_utc: datetime
+    completed_at_utc: datetime | None = None
+    progress_events: list[InvestigationOrchestrationProgressEvent] = Field(default_factory=list)
+    response: InvestigationAnalysisResponse | None = None
+    retained_result: InvestigationRetainedResult | None = None
+    error_category: str | None = None
+    error_message: str | None = None
+    analysis_attempt_id: str | None = None
+    result_id: str | None = None
+    provider_model: str | None = None
+    image_count: int = 0
+    image_order: list[str] = Field(default_factory=list)
+    used_user_explanation: str = ""
+    product_action: InvestigationDemoProductAction | None = None
+
+
+@dataclass
+class _DemoInvestigationRecord:
+    demo_id: str
+    session_id: str
+    mode: str
+    provider_model: str | None
+    image_count: int
+    image_order: list[str]
+    used_user_explanation: str
+    status: str = "queued"
+    created_at_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at_utc: datetime | None = None
+    progress_events: list[InvestigationOrchestrationProgressEvent] = field(default_factory=list)
+    response: InvestigationAnalysisResponse | None = None
+    retained_result: InvestigationRetainedResult | None = None
+    error_category: str | None = None
+    error_message: str | None = None
+    analysis_attempt_id: str | None = None
+    result_id: str | None = None
+
+    def snapshot(self) -> InvestigationDemoRunView:
+        product_action = _build_demo_product_action(self)
+        return InvestigationDemoRunView(
+            demo_id=self.demo_id,
+            session_id=self.session_id,
+            mode=self.mode,
+            status=self.status,
+            created_at_utc=self.created_at_utc,
+            updated_at_utc=self.updated_at_utc,
+            completed_at_utc=self.completed_at_utc,
+            progress_events=list(self.progress_events),
+            response=self.response,
+            retained_result=self.retained_result,
+            error_category=self.error_category,
+            error_message=self.error_message,
+            analysis_attempt_id=self.analysis_attempt_id,
+            result_id=self.result_id,
+            provider_model=self.provider_model,
+            image_count=self.image_count,
+            image_order=list(self.image_order),
+            used_user_explanation=self.used_user_explanation,
+            product_action=product_action,
+        )
+
+
+class _DemoInvestigationRegistry:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._records: dict[str, _DemoInvestigationRecord] = {}
+
+    def register(self, record: _DemoInvestigationRecord) -> None:
+        with self._lock:
+            self._records[record.demo_id] = record
+
+    def get(self, demo_id: str) -> _DemoInvestigationRecord | None:
+        with self._lock:
+            return self._records.get(demo_id)
+
+    def snapshot(self, demo_id: str) -> InvestigationDemoRunView | None:
+        record = self.get(demo_id)
+        return record.snapshot() if record is not None else None
+
+    def update(self, demo_id: str, mutator) -> None:
+        with self._lock:
+            record = self._records.get(demo_id)
+            if record is None:
+                return
+            mutator(record)
+            record.updated_at_utc = datetime.now(timezone.utc)
+
+
+class _DemoResultPersistence:
+    def __init__(self) -> None:
+        self.latest_result_id: str | None = None
+        self.latest_retained_result: InvestigationRetainedResult | None = None
+
+    def load_completed_result(self, *, session_id: str):
+        return None
+
+    def persist_result(
+        self,
+        *,
+        session: InvestigationSession,
+        request_package: InvestigationAnalysisRequestPackage,
+        response: InvestigationAnalysisResponse,
+    ) -> str:
+        result_id = str(uuid4())
+        self.latest_result_id = result_id
+
+        # Keep one-image demo runs valid without widening production retained-result constraints.
+        if len(request_package.ordered_evidence_inputs) >= 2:
+            retained_result = _build_retained_result(session=session, request_package=request_package, response=response)
+            save_latest_investigation_result(INVESTIGATION_LATEST_JSON, retained_result)
+            self.latest_retained_result = retained_result
+        else:
+            self.latest_retained_result = None
+
+        return result_id
+
+
+class _DemoDryRunProvider:
+    def __init__(self, model: str):
+        self.model = model
+
+    def analyze(self, request_package) -> InvestigationAnalysisResponse:
+        return InvestigationAnalysisResponse(
+            schema_version=INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+            concise_diagnosis="The endpoint appears implemented, but the route registration step is likely missing in api.py, so requests may not reach the handler.",
+            immediate_recommended_action="Ask Copilot to verify router registration in api.py and add only the missing include_router wiring without changing unrelated endpoints.",
+            supporting_observations=[
+                f"Received {len(request_package.ordered_evidence_inputs)} image(s) in preserved order.",
+                "The captured workflow indicates implementation progress but unresolved runtime behavior.",
+                "Dry-run mode used deterministic analysis with no OpenAI network call.",
+            ],
+            confidence_or_uncertainty="Moderate confidence from deterministic dry-run evidence; verify with focused tests.",
+            warning_or_blocker=None,
+            follow_up_capture_request="After applying the Copilot change and running tests, capture another screenshot so verification can confirm the fix.",
+        )
+
+
+DEMO_INVESTIGATION_REGISTRY = _DemoInvestigationRegistry()
 
 
 def _normalized_path(path: Path) -> str:
@@ -1159,6 +1355,409 @@ def _build_glasses_payload(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _normalize_demo_text(value: str | None) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _split_instruction_items(text: str | None) -> list[str]:
+    raw = str(text or "")
+    if not raw.strip():
+        return []
+
+    items: list[str] = []
+    for line in raw.splitlines():
+        candidate = line.strip()
+        if not candidate:
+            continue
+        candidate = re.sub(r"^[-*\u2022\s]+", "", candidate)
+        candidate = re.sub(r"^\d+[\).]\s*", "", candidate)
+        if candidate:
+            items.append(candidate)
+
+    if not items:
+        pieces = [piece.strip() for piece in re.split(r"[;\n]+", raw) if piece.strip()]
+        items.extend(pieces)
+
+    return items
+
+
+def _dedupe_text_items(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = " ".join(str(item).split()).strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(normalized)
+    return deduped
+
+
+def _derive_commit_subject(record: _DemoInvestigationRecord, response: InvestigationAnalysisResponse | None) -> str:
+    source = ""
+    if response is not None:
+        source = str(response.immediate_recommended_action or response.concise_diagnosis)
+    if not source:
+        source = "apply investigation-driven fix"
+
+    compact = re.sub(r"\s+", " ", source).strip()
+    compact = re.sub(r"[^A-Za-z0-9 _\-]", "", compact)
+    compact = compact[:72].strip()
+    if not compact:
+        compact = "apply investigation-driven fix"
+    return compact[0].lower() + compact[1:] if len(compact) > 1 else compact.lower()
+
+
+def _build_default_copilot_prompt(
+    record: _DemoInvestigationRecord,
+    response: InvestigationAnalysisResponse,
+    retained_result: InvestigationRetainedResult | None,
+) -> str:
+    if retained_result is not None and retained_result.copilot_prompt.strip():
+        return retained_result.copilot_prompt.strip()
+
+    image_order = ", ".join(record.image_order) if record.image_order else "not available"
+    explanation = record.used_user_explanation.strip() or "No explicit explanation provided."
+    follow_up = response.follow_up_capture_request.strip() if response.follow_up_capture_request else ""
+
+    lines = [
+        "You are helping with the Custom Meta AI Glasses project in VS Code.",
+        "",
+        "Task:",
+        f"Investigate this issue and implement the smallest safe fix: {response.concise_diagnosis}",
+        "",
+        "Evidence Context:",
+        f"- Investigation mode: {record.mode}",
+        f"- Image order: {image_order}",
+        f"- User explanation: {explanation}",
+        f"- Required next action from investigation: {response.immediate_recommended_action}",
+        "",
+        "Required output from Copilot:",
+        "1. Explain the root cause using only observable evidence.",
+        "2. Propose and apply a minimal code change without unrelated refactoring.",
+        "3. Provide exact validation commands and expected outcomes.",
+        "4. If evidence is still insufficient, request one specific additional screenshot.",
+        "5. Do not commit or push unless explicitly requested.",
+    ]
+    if follow_up:
+        lines.extend([
+            "",
+            f"Follow-up capture guidance: {follow_up}",
+        ])
+
+    return "\n".join(lines).strip()
+
+
+def _build_why_this_should_work(response: InvestigationAnalysisResponse | None) -> str | None:
+    if response is None:
+        return None
+
+    diagnosis = _normalize_demo_text(response.concise_diagnosis)
+    action = _normalize_demo_text(response.immediate_recommended_action)
+    first_observation = ""
+    if response.supporting_observations:
+        first_observation = _normalize_demo_text(response.supporting_observations[0])
+
+    pieces = [piece for piece in [first_observation, diagnosis] if piece]
+    if not pieces or not action:
+        return None
+
+    base = f"{pieces[0]} This action focuses Copilot on: {action}."
+    return base[:420].strip()
+
+
+def _build_verification_items(response: InvestigationAnalysisResponse | None) -> list[str]:
+    if response is None:
+        return []
+
+    items: list[str] = []
+    items.extend(_split_instruction_items(response.immediate_recommended_action))
+
+    for observation in response.supporting_observations:
+        if re.search(r"\b(test|verify|confirm|run|check)\b", observation, flags=re.IGNORECASE):
+            items.append(observation)
+
+    items.extend(
+        [
+            "Run the relevant tests for the files you changed.",
+            "Confirm the original issue no longer appears.",
+        ]
+    )
+
+    if response.follow_up_capture_request:
+        items.append(response.follow_up_capture_request)
+        items.append("Take another picture after testing so the AI can verify the result.")
+
+    deduped = _dedupe_text_items(items)
+    return deduped[:4]
+
+
+def _build_primary_next_step(record: _DemoInvestigationRecord, response: InvestigationAnalysisResponse | None) -> str | None:
+    if record.status in {"queued", "running"}:
+        return "Wait for the investigation to finish generating a Copilot prompt."
+    if record.status == "failed":
+        return "Capture clearer evidence and run the investigation again."
+    if response is None:
+        return "Run an investigation to generate a Copilot prompt."
+    if response.follow_up_capture_request:
+        return "Test the Copilot change, then take another picture for verification."
+    return "Paste the prompt into Copilot and apply the change."
+
+
+def _build_action_status(record: _DemoInvestigationRecord, response: InvestigationAnalysisResponse | None, copilot_prompt: str | None) -> str:
+    if record.status in {"queued", "running"}:
+        return "Investigation running"
+    if record.status == "failed":
+        return "Investigation failed"
+    if not copilot_prompt:
+        return "More evidence needed"
+    if response is not None and response.follow_up_capture_request:
+        return "Verification required"
+    return "Prompt ready"
+
+
+def _build_glasses_guidance(record: _DemoInvestigationRecord, response: InvestigationAnalysisResponse | None, action_status: str) -> str:
+    if action_status == "Investigation running":
+        return "Investigation running. Check desktop when the Copilot prompt is ready."
+    if action_status == "Investigation failed":
+        return "Investigation failed. Capture clearer evidence and rerun."
+    if response is not None and response.follow_up_capture_request:
+        return "Verification required. Test the change, then capture another image."
+    if action_status == "Prompt ready":
+        return "Issue identified. Copilot prompt ready. Check the desktop."
+    return "More evidence needed. Capture the error and related code."
+
+
+def _build_git_recommendation(record: _DemoInvestigationRecord, response: InvestigationAnalysisResponse | None) -> InvestigationDemoGitRecommendation | None:
+    if response is None or record.status != "completed":
+        return None
+    if response.follow_up_capture_request:
+        return None
+
+    haystack = " ".join(
+        [
+            response.concise_diagnosis,
+            response.immediate_recommended_action,
+            " ".join(response.supporting_observations),
+        ]
+    ).lower()
+
+    completion_markers = [
+        "verified",
+        "tests passed",
+        "milestone complete",
+        "ready to commit",
+        "ready for commit",
+        "ready to push",
+    ]
+    if not any(marker in haystack for marker in completion_markers):
+        return None
+
+    include_push = "ready to push" in haystack or "push" in haystack
+    commit_subject = _derive_commit_subject(record, response)
+    commands = [
+        "git --no-pager status",
+        "git add .",
+        "git --no-pager status",
+        f'git commit -m "{commit_subject}"',
+    ]
+    if include_push:
+        commands.append("git push")
+
+    return InvestigationDemoGitRecommendation(
+        reason="Investigation indicates the current implementation step is complete enough for a commit.",
+        commands=commands,
+    )
+
+
+def _build_demo_product_action(record: _DemoInvestigationRecord) -> InvestigationDemoProductAction:
+    response = record.response
+    retained_result = record.retained_result
+
+    copilot_prompt: str | None = None
+    if response is not None:
+        copilot_prompt = _build_default_copilot_prompt(record, response, retained_result)
+
+    why_this_should_work = _build_why_this_should_work(response)
+    verification_items = _build_verification_items(response)
+    primary_next_step = _build_primary_next_step(record, response)
+    action_status = _build_action_status(record, response, copilot_prompt)
+    glasses_guidance = _build_glasses_guidance(record, response, action_status)
+    follow_up_capture_message = response.follow_up_capture_request if response is not None else None
+    git_recommendation = _build_git_recommendation(record, response)
+
+    return InvestigationDemoProductAction(
+        action_status=action_status,
+        copilot_prompt=copilot_prompt,
+        why_this_should_work=why_this_should_work,
+        verification_items=verification_items,
+        primary_next_step=primary_next_step,
+        glasses_guidance=glasses_guidance,
+        follow_up_capture_required=bool(follow_up_capture_message),
+        follow_up_capture_message=follow_up_capture_message,
+        git_recommendation=git_recommendation,
+    )
+
+
+def _normalize_demo_mode(value: str) -> InvestigationDemoMode:
+    normalized = str(value or "").strip().lower()
+    if normalized in {InvestigationDemoMode.LIVE.value, "production"}:
+        return InvestigationDemoMode.LIVE
+    if normalized in {InvestigationDemoMode.DRY_RUN.value, "dryrun", "dry-run", "dry"}:
+        return InvestigationDemoMode.DRY_RUN
+    raise HTTPException(status_code=422, detail={"category": "validation_error", "message": "mode must be dry_run or live."})
+
+
+def _resolve_demo_provider_model() -> str:
+    return str(
+        os.environ.get("INVESTIGATION_OPENAI_MODEL")
+        or os.environ.get("OPENAI_VISION_MODEL")
+        or DEFAULT_DEMO_MODEL
+    ).strip() or DEFAULT_DEMO_MODEL
+
+
+def _resolve_demo_provider_timeout() -> float:
+    raw = str(os.environ.get("INVESTIGATION_OPENAI_TIMEOUT_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_DEMO_TIMEOUT_SECONDS
+    try:
+        timeout_seconds = float(raw)
+    except ValueError:
+        return DEFAULT_DEMO_TIMEOUT_SECONDS
+    return timeout_seconds if timeout_seconds > 0 else DEFAULT_DEMO_TIMEOUT_SECONDS
+
+
+def _build_retained_result(
+    *,
+    session: InvestigationSession,
+    request_package: InvestigationAnalysisRequestPackage,
+    response: InvestigationAnalysisResponse,
+) -> InvestigationRetainedResult:
+    image_order: list[str] = []
+    for index, attachment in enumerate(request_package.ordered_evidence_inputs, start=1):
+        metadata = attachment.evidence_metadata or {}
+        image_order.append(f"{index}:{metadata.get('filename', attachment.evidence_id)}")
+
+    retained = InvestigationRetainedResult(
+        schema_version=response.schema_version,
+        projection_version="1.0",
+        investigation_id=f"inv_{uuid4().hex[:16]}",
+        session_id=session.session_id,
+        status="analyzed",
+        diagnosis=response.concise_diagnosis,
+        required_next_action=response.immediate_recommended_action,
+        image_count=len(request_package.ordered_evidence_inputs),
+        image_order=image_order,
+        used_user_explanation=request_package.normalized_explanation_text or "",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="pending",
+    )
+    retained.copilot_prompt = build_copilot_prompt(retained)
+    return retained
+
+
+def _demo_progress_sink(demo_id: str):
+    def _sink(event: InvestigationOrchestrationProgressEvent) -> None:
+        def _apply(record: _DemoInvestigationRecord) -> None:
+            record.progress_events.append(event)
+            record.analysis_attempt_id = event.analysis_attempt_id or record.analysis_attempt_id
+            if event.stage == InvestigationOrchestrationStage.COMPLETED:
+                record.status = "completed"
+                record.completed_at_utc = datetime.now(timezone.utc)
+            elif event.stage == InvestigationOrchestrationStage.FAILED:
+                record.status = "failed"
+                record.completed_at_utc = datetime.now(timezone.utc)
+
+        DEMO_INVESTIGATION_REGISTRY.update(demo_id, _apply)
+
+    return _sink
+
+
+def _create_demo_provider(mode: InvestigationDemoMode):
+    if mode == InvestigationDemoMode.DRY_RUN:
+        return _DemoDryRunProvider(model=_resolve_demo_provider_model())
+
+    api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise InvestigationAnalysisProviderMissingApiKeyError("OPENAI_API_KEY is required for live demo runs.")
+
+    return OpenAIInvestigationAnalysisProvider(
+        config=InvestigationOpenAIProviderConfig(
+            api_key=api_key,
+            model=_resolve_demo_provider_model(),
+            timeout_seconds=_resolve_demo_provider_timeout(),
+            sessions_root=RESULTS_DIR,
+        )
+    )
+
+
+def _run_demo_investigation(
+    *,
+    demo_id: str,
+    session_id: str,
+    expected_revision: int,
+    interaction_context: InvestigationInteractionContext,
+    provider,
+) -> None:
+    result_persistence = _DemoResultPersistence()
+    attempt_store = InvestigationAnalysisAttemptStore(SESSION_STORE)
+    orchestrator = InvestigationOrchestrator(
+        session_store=SESSION_STORE,
+        evidence_store=EVIDENCE_STORE,
+        attempt_store=attempt_store,
+        analysis_provider=provider,
+        result_persistence=result_persistence,
+        progress_sink=_demo_progress_sink(demo_id),
+    )
+
+    DEMO_INVESTIGATION_REGISTRY.update(demo_id, lambda record: setattr(record, "status", "running"))
+
+    try:
+        outcome = orchestrator.run_confirmed_investigation(
+            session_id=session_id,
+            expected_revision=expected_revision,
+            interaction_context=interaction_context,
+        )
+        retained_result = result_persistence.latest_retained_result
+        if outcome.response is None:
+            raise InvestigationOrchestrationError("Missing structured response after orchestration.")
+
+        def _complete(record: _DemoInvestigationRecord) -> None:
+            record.status = "completed"
+            record.completed_at_utc = datetime.now(timezone.utc)
+            record.analysis_attempt_id = outcome.analysis_attempt_id
+            record.result_id = result_persistence.latest_result_id
+            record.response = outcome.response
+            record.retained_result = retained_result
+
+        DEMO_INVESTIGATION_REGISTRY.update(demo_id, _complete)
+    except InvestigationOrchestrationError as exc:
+        category = getattr(exc, "category", "orchestration_failure")
+        message = str(exc).strip() or "Investigation orchestration failed."
+
+        def _fail(record: _DemoInvestigationRecord) -> None:
+            record.status = "failed"
+            record.completed_at_utc = datetime.now(timezone.utc)
+            record.error_category = category
+            record.error_message = message
+
+        DEMO_INVESTIGATION_REGISTRY.update(demo_id, _fail)
+    except Exception as exc:
+        def _unexpected_fail(record: _DemoInvestigationRecord) -> None:
+            record.status = "failed"
+            record.completed_at_utc = datetime.now(timezone.utc)
+            record.error_category = "unexpected_error"
+            record.error_message = str(exc).strip() or exc.__class__.__name__
+
+        DEMO_INVESTIGATION_REGISTRY.update(demo_id, _unexpected_fail)
+
+
 def _load_investigation_context_snapshot_from_context_fusion() -> dict[str, object] | None:
     # Phase 1B integration debt: context_fusion._build_payload is the currently
     # canonical available context snapshot producer, but it is private.
@@ -1180,6 +1779,14 @@ def _load_investigation_context_snapshot_from_context_fusion() -> dict[str, obje
     return payload if isinstance(payload, dict) else None
 
 
+@app.get("/dashboard", response_class=FileResponse)
+async def dashboard_page():
+    dashboard_html = BASE_DIR / "dashboard.html"
+    if not dashboard_html.exists():
+        raise HTTPException(status_code=404, detail="Dashboard not found.")
+    return FileResponse(str(dashboard_html), media_type="text/html")
+
+
 @app.get("/glasses_display_mock.html", response_class=FileResponse)
 async def display_mock():
     if not DISPLAY_HTML.exists():
@@ -1199,6 +1806,116 @@ async def investigations_page_alias():
     if not DISPLAY_HTML.exists():
         raise HTTPException(status_code=404, detail="Display mock not found.")
     return FileResponse(str(DISPLAY_HTML), media_type="text/html")
+
+
+@app.post("/demo/investigations", response_model=InvestigationDemoRunView, status_code=202)
+async def start_demo_investigation(
+    request: Request,
+    mode: str = Form(default="dry_run"),
+    user_explanation: str = Form(default=""),
+    images: list[UploadFile] = File(default=[]),
+) -> InvestigationDemoRunView:
+    demo_mode = _normalize_demo_mode(mode)
+    explanation = _normalize_demo_text(user_explanation)
+
+    if not explanation:
+        raise HTTPException(status_code=422, detail="user_explanation is required.")
+
+    if len(images) < 1:
+        raise HTTPException(status_code=400, detail="At least 1 image is required.")
+    if len(images) > 3:
+        raise HTTPException(status_code=400, detail="At most 3 images are allowed.")
+
+    prepared_images: list[tuple[bytes, str, str, InvestigationEvidenceCreateRequest]] = []
+    for upload in images:
+        raw_bytes, content_type, filename = await _read_bounded_upload(upload, max_bytes=MAX_IMAGE_UPLOAD_BYTES)
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded image file is empty.")
+        _validate_evidence_media_type(evidence_type=InvestigationEvidenceType.IMAGE, content_type=content_type, filename=filename)
+        create_request = _parse_evidence_create_request(
+            source="dashboard_demo",
+            client_timestamp_utc=None,
+            normalized_text=None,
+            metadata=None,
+            filename=filename,
+            mime_type=content_type,
+            width=None,
+            height=None,
+            duration_seconds=None,
+        )
+        prepared_images.append((raw_bytes, content_type, filename, create_request))
+
+    session = SESSION_STORE.create_session(client_metadata={"source": "dashboard_demo", "mode": demo_mode.value})
+    session = SESSION_STORE.mutate_session(session.session_id, lambda current: apply_start_transition(current, expected_revision=0))
+
+    evidence_ids: list[str] = []
+    image_order: list[str] = []
+    for index, (raw_bytes, content_type, filename, create_request) in enumerate(prepared_images, start=1):
+        evidence, created = EVIDENCE_STORE.upload_evidence(
+            session_id=session.session_id,
+            evidence_type=InvestigationEvidenceType.IMAGE,
+            raw_bytes=raw_bytes,
+            mime_type=content_type,
+            original_filename=filename,
+            request=create_request,
+        )
+        if not created:
+            raise HTTPException(status_code=500, detail="Failed to upload evidence for demo run.")
+        evidence_ids.append(evidence.evidence_id)
+        image_order.append(f"{index}:{filename}")
+
+    interaction_context = InvestigationInteractionContext(
+        schema_version="1.0",
+        session_id=session.session_id,
+        interaction_state=InvestigationInteractionState.READY_FOR_CONFIRMATION,
+        selected_capture_evidence_ids=list(evidence_ids),
+        normalized_explanation_text=explanation or None,
+        analysis_confirmed=True,
+    )
+
+    demo_id = str(uuid4())
+    record = _DemoInvestigationRecord(
+        demo_id=demo_id,
+        session_id=session.session_id,
+        mode=demo_mode.value,
+        provider_model=_resolve_demo_provider_model(),
+        image_count=len(prepared_images),
+        image_order=image_order,
+        used_user_explanation=explanation,
+    )
+    DEMO_INVESTIGATION_REGISTRY.register(record)
+
+    try:
+        provider = _create_demo_provider(demo_mode)
+    except InvestigationAnalysisProviderMissingApiKeyError as exc:
+        DEMO_INVESTIGATION_REGISTRY.update(demo_id, lambda current: setattr(current, "status", "failed"))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    worker = threading.Thread(
+        target=_run_demo_investigation,
+        kwargs={
+            "demo_id": demo_id,
+            "session_id": session.session_id,
+            "expected_revision": session.revision,
+            "interaction_context": interaction_context,
+            "provider": provider,
+        },
+        daemon=True,
+    )
+    worker.start()
+
+    snapshot = DEMO_INVESTIGATION_REGISTRY.snapshot(demo_id)
+    if snapshot is None:
+        raise HTTPException(status_code=500, detail="Failed to register demo investigation.")
+    return snapshot
+
+
+@app.get("/demo/investigations/{demo_id}", response_model=InvestigationDemoRunView)
+async def get_demo_investigation(demo_id: str) -> InvestigationDemoRunView:
+    snapshot = DEMO_INVESTIGATION_REGISTRY.snapshot(str(demo_id).strip())
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="Demo investigation not found.")
+    return snapshot
 
 
 @app.get("/latest")

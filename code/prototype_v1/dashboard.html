@@ -45,6 +45,371 @@
       margin-bottom: 16px;
     }
 
+    .investigation-demo {
+      background: linear-gradient(145deg, #0b1220 0%, #111b2f 100%);
+      color: #e8edf7;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 14px 16px 16px;
+      margin-bottom: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+    }
+
+    .investigation-demo h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+    }
+
+    .investigation-demo .subtle {
+      margin: 6px 0 0;
+      color: rgba(232, 237, 247, 0.78);
+      font-size: 0.9rem;
+    }
+
+    .demo-topline {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+
+    .demo-state-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.2);
+      font-size: 0.85rem;
+      font-weight: 700;
+      white-space: nowrap;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+    }
+
+    .demo-state-pill.idle {
+      background: rgba(148, 163, 184, 0.2);
+      border-color: rgba(148, 163, 184, 0.35);
+      color: #d7dee8;
+    }
+
+    .demo-state-pill.running {
+      background: rgba(59, 130, 246, 0.2);
+      border-color: rgba(59, 130, 246, 0.38);
+      color: #cfe2ff;
+    }
+
+    .demo-state-pill.completed {
+      background: rgba(22, 163, 74, 0.2);
+      border-color: rgba(22, 163, 74, 0.38);
+      color: #ccf7da;
+    }
+
+    .demo-state-pill.failed {
+      background: rgba(220, 38, 38, 0.18);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #ffd1d1;
+    }
+
+    .demo-shell {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    @media (min-width: 900px) {
+      .demo-shell {
+        grid-template-columns: 1.1fr 0.9fr;
+      }
+    }
+
+    .demo-pane {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 14px;
+      padding: 10px;
+      min-height: 100%;
+    }
+
+    .demo-form {
+      display: grid;
+      gap: 9px;
+    }
+
+    .demo-label {
+      display: block;
+      margin: 0 0 6px;
+      font-size: 0.82rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: rgba(232, 237, 247, 0.72);
+      font-weight: 700;
+    }
+
+    .demo-input,
+    .demo-textarea,
+    .demo-select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(255, 255, 255, 0.93);
+      color: #102030;
+      padding: 10px 12px;
+      font: inherit;
+    }
+
+    .demo-input:focus-visible,
+    .demo-textarea:focus-visible,
+    .demo-select:focus-visible,
+    .demo-btn:focus-visible,
+    .demo-remove-btn:focus-visible,
+    .analyze-btn:focus-visible {
+      outline: 2px solid #7cb7ff;
+      outline-offset: 2px;
+    }
+
+    .demo-textarea {
+      min-height: 72px;
+      resize: vertical;
+    }
+
+    .demo-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .demo-btn {
+      border: 0;
+      border-radius: 10px;
+      padding: 9px 13px;
+      font-size: 0.92rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+
+    .demo-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .demo-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+      transform: none;
+    }
+
+    .demo-btn.primary {
+      color: #061120;
+      background: linear-gradient(120deg, #8fd3ff 0%, #ffffff 100%);
+    }
+
+    .demo-btn.secondary {
+      color: #e8edf7;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+    }
+
+    .demo-btn.is-running {
+      color: #0f223f;
+      background: linear-gradient(120deg, #d5e8ff 0%, #b7d7ff 100%);
+    }
+
+    .demo-status {
+      font-size: 0.88rem;
+      min-height: 1.2em;
+      color: rgba(232, 237, 247, 0.85);
+    }
+
+    .demo-status.ok { color: #a9f0c0; }
+    .demo-status.warn { color: #ffd39a; }
+    .demo-status.err { color: #ffb8b8; }
+
+    .demo-selected {
+      margin-top: 4px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .demo-selected-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(232, 237, 247, 0.74);
+      font-weight: 700;
+    }
+
+    .demo-selected-empty {
+      font-size: 0.88rem;
+      color: rgba(232, 237, 247, 0.68);
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px dashed rgba(148, 163, 184, 0.25);
+    }
+
+    .demo-selected-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 6px;
+    }
+
+    .demo-selected-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 9px;
+      border-radius: 9px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .demo-selected-order {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.55rem;
+      min-width: 1.55rem;
+      font-size: 0.85rem;
+      color: rgba(206, 227, 255, 0.95);
+      font-weight: 700;
+    }
+
+    .demo-selected-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .demo-selected-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.9rem;
+      color: #f5f9ff;
+      min-width: 0;
+    }
+
+    .demo-remove-btn {
+      border: 1px solid rgba(248, 113, 113, 0.55);
+      color: #ffd5d5;
+      background: rgba(127, 29, 29, 0.34);
+      border-radius: 7px;
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .demo-progress {
+      display: grid;
+      gap: 6px;
+    }
+
+    .demo-progress-item {
+      border-radius: 9px;
+      padding: 7px 9px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      display: grid;
+      grid-template-columns: 22px 1fr;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .demo-progress-item.done {
+      border-color: rgba(52, 211, 153, 0.34);
+      background: rgba(16, 185, 129, 0.09);
+    }
+
+    .demo-progress-item.current {
+      border-color: rgba(96, 165, 250, 0.45);
+      background: rgba(59, 130, 246, 0.12);
+    }
+
+    .demo-progress-item.pending {
+      border-color: rgba(148, 163, 184, 0.2);
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    .demo-progress-icon {
+      font-size: 0.95rem;
+      line-height: 1.2;
+      padding-top: 1px;
+      color: rgba(232, 237, 247, 0.9);
+    }
+
+    .demo-progress-title {
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: #f8fbff;
+      margin-bottom: 2px;
+    }
+
+    .demo-progress-message {
+      white-space: pre-wrap;
+      color: rgba(231, 240, 255, 0.82);
+      font-size: 0.79rem;
+    }
+
+    .demo-result-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    @media (min-width: 900px) {
+      .demo-result-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .demo-result-card {
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #1f2933;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      min-height: auto;
+    }
+
+    .demo-result-card .label {
+      color: var(--muted);
+    }
+
+    .demo-result-card .value {
+      white-space: pre-wrap;
+    }
+
+    .demo-result-card[data-empty="true"] {
+      display: none;
+    }
+
+    .demo-section-heading {
+      margin: 0 0 4px;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .demo-observation-list {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 2px;
+    }
+
     .glasses-view {
       background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
       border: 1px solid #cdd9ee;
@@ -55,50 +420,125 @@
       margin-bottom: 16px;
     }
 
-    .demo-mode {
-      background: linear-gradient(145deg, #fffdf6 0%, #fff8e8 100%);
-      border: 1px solid #ecd9aa;
-      border-left: 6px solid #d9822b;
+    .latest-result {
+      background: linear-gradient(145deg, #ffffff 0%, #f5f9ff 100%);
+      border: 1px solid #d8e4f3;
+      border-left: 6px solid #0f6fff;
       border-radius: 16px;
       box-shadow: var(--shadow);
-      padding: 16px 18px;
+      padding: 14px 16px 16px;
       margin-bottom: 16px;
     }
 
-    .demo-mode h2 {
-      margin: 0 0 10px;
-      font-size: 1rem;
-      color: var(--text);
+    .latest-result h2 {
+      margin: 0;
+      font-size: 1.05rem;
       letter-spacing: 0.02em;
+      color: var(--text);
     }
 
-    .demo-grid {
+    .latest-result .subtle {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .latest-meta-row {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 10px;
+      gap: 8px;
+      margin-top: 10px;
     }
 
     @media (min-width: 900px) {
-      .demo-grid {
+      .latest-meta-row {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
 
-    .demo-item {
-      background: #fff;
-      border: 1px solid #eddcb2;
-      border-radius: 10px;
-      padding: 10px 12px;
+    .demo-result-card.compact {
+      padding: 8px 10px;
     }
 
-    .demo-item .label {
-      margin-bottom: 4px;
-      font-size: 0.72rem;
+    .advanced-debug {
+      margin-bottom: 16px;
     }
 
-    .demo-item .value {
-      font-size: 0.96rem;
-      white-space: pre-wrap;
+    .advanced-debug details {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .advanced-debug summary {
+      cursor: pointer;
+      list-style: none;
+      font-weight: 700;
+      font-size: 0.94rem;
+      padding: 11px 14px;
+      color: var(--text);
+      background: linear-gradient(120deg, #f8fbff 0%, #f2f7ff 100%);
+      border-bottom: 1px solid #dce7f5;
+    }
+
+    .advanced-debug summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .advanced-debug summary::before {
+      content: "\25B8";
+      display: inline-block;
+      margin-right: 8px;
+      color: var(--accent);
+      transition: transform 120ms ease;
+    }
+
+    .advanced-debug details[open] summary::before {
+      transform: rotate(90deg);
+    }
+
+    .advanced-debug summary:focus-visible {
+      outline: 2px solid #7cb7ff;
+      outline-offset: -2px;
+    }
+
+    .advanced-body {
+      display: grid;
+      gap: 12px;
+      padding: 12px;
+      background: #f7fbff;
+    }
+
+    .advanced-group h3 {
+      margin: 0 0 7px;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .advanced-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    @media (min-width: 900px) {
+      .advanced-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .advanced-grid .card {
+      min-height: 0;
+      padding: 10px 11px;
+      box-shadow: none;
+    }
+
+    .advanced-grid .value {
+      font-size: 0.93rem;
     }
 
     .glasses-view h2 {
@@ -135,6 +575,14 @@
     .glasses-item .value {
       font-size: 0.96rem;
       white-space: pre-wrap;
+    }
+
+    .glasses-item[data-empty="true"] {
+      display: none;
+    }
+
+    .glasses-item--wide {
+      grid-column: 1 / -1;
     }
 
     h1 {
@@ -293,39 +741,129 @@
 </head>
 <body>
   <main class="wrap">
-    <section class="glasses-view">
-      <h2>Glasses View</h2>
-      <div class="glasses-grid">
-        <article class="glasses-item">
-          <div class="label">Glasses Guidance</div>
-          <div id="glasses_guidance" class="value muted">No data yet</div>
-        </article>
-        <article class="glasses-item">
-          <div class="label">Current Task</div>
-          <div id="glasses_current_task" class="value muted">No data yet</div>
-        </article>
-        <article class="glasses-item">
-          <div class="label">Task Continuity</div>
-          <div id="glasses_task_continuity" class="value muted">No data yet</div>
-        </article>
-        <article class="glasses-item">
-          <div class="label">Next Action</div>
-          <div id="glasses_next_action" class="value muted">No data yet</div>
-        </article>
-        <article class="glasses-item">
-          <div class="label">Risk</div>
-          <div id="glasses_risk" class="value muted">No data yet</div>
-        </article>
-        <article class="glasses-item">
-          <div class="label">Confidence</div>
-          <div id="glasses_confidence" class="value muted">No data yet</div>
-        </article>
+    <section class="investigation-demo">
+      <div class="demo-topline">
+        <div>
+          <h2>Investigation Session</h2>
+          <p class="subtle">Upload images, describe the issue, run investigation, copy the Copilot prompt, test, then verify with another capture.</p>
+        </div>
+        <div id="demoStatePill" class="demo-state-pill">Idle</div>
+      </div>
+
+      <div class="demo-shell">
+        <div class="demo-pane">
+          <div class="demo-form">
+            <div>
+              <label class="demo-label" for="demoImages">Images</label>
+              <input id="demoImages" class="demo-input" type="file" multiple accept=".png,.jpg,.jpeg,image/png,image/jpeg">
+              <div id="demoSelectedImages" class="demo-selected" aria-live="polite">
+                <div class="demo-selected-title">Selected Images</div>
+                <div class="demo-selected-empty">No images selected.</div>
+              </div>
+            </div>
+            <div>
+              <label class="demo-label" for="demoExplanation">User Explanation</label>
+              <textarea id="demoExplanation" class="demo-textarea" placeholder="Describe what you're trying to figure out or what seems wrong..."></textarea>
+            </div>
+            <div>
+              <label class="demo-label" for="demoMode">Mode</label>
+              <select id="demoMode" class="demo-select">
+                <option value="dry_run" selected>Dry run</option>
+                <option value="live">Live OpenAI run</option>
+              </select>
+            </div>
+            <div class="demo-actions">
+              <button id="demoStartBtn" class="demo-btn primary" type="button">Start Investigation</button>
+              <button id="demoResetBtn" class="demo-btn secondary" type="button">Reset</button>
+            </div>
+            <div id="demoStatus" class="demo-status" aria-live="polite">Select one to three images and describe the issue.</div>
+          </div>
+        </div>
+
+        <div class="demo-pane">
+          <div class="label" style="color: rgba(232, 237, 247, 0.78);">Progress Timeline</div>
+          <div id="demoProgress" class="demo-progress">
+            <div class="demo-progress-item pending">
+              <div class="demo-progress-icon">○</div>
+              <div>
+                <div class="demo-progress-title">Preparing Investigation</div>
+                <div class="demo-progress-message">Investigation has not started.</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="hero">
-      <h1>Recruiter Demo Dashboard</h1>
-      <p class="sub">Live view of the latest AI glasses analysis response (auto-refresh every 3 seconds).</p>
+    <section class="latest-result" id="recommendedActionSection">
+      <h2>Recommended AI Action</h2>
+      <p class="subtle">Copy this prompt into GitHub Copilot, apply the minimal change, then validate.</p>
+
+      <div class="latest-meta-row">
+        <article class="demo-result-card compact">
+          <div class="label">Action Status</div>
+          <div id="recommendedActionStatus" class="value muted">Run an investigation to generate a Copilot prompt.</div>
+        </article>
+      </div>
+
+      <div class="demo-pane" style="margin-top: 10px; background: #fff; border-color: #d8e4f3; color: var(--text);">
+        <div class="demo-actions" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div class="label" style="margin-bottom: 0;">Copilot Prompt</div>
+          <button id="copyCopilotPromptBtn" class="demo-btn primary" type="button" aria-label="Copy Copilot Prompt" disabled>Copy Copilot Prompt</button>
+        </div>
+        <div id="copilotPromptEmpty" class="value muted">Run an investigation to generate a Copilot prompt.</div>
+        <textarea id="copilotPromptText" class="demo-textarea" readonly style="display: none; min-height: 220px; font-family: Consolas, 'Courier New', monospace; background: #f8fbff;"></textarea>
+        <div id="copilotPromptCopyStatus" class="meta" aria-live="polite" style="margin-top: 6px;"></div>
+      </div>
+
+      <article id="whyThisShouldWorkCard" class="demo-result-card" data-empty="true" style="margin-top: 10px;">
+        <h3 class="demo-section-heading">Why This Should Work</h3>
+        <div id="whyThisShouldWork" class="value"></div>
+      </article>
+    </section>
+
+    <section class="latest-result" id="verifyFixSection">
+      <h2>Verify the Fix</h2>
+      <ul id="verifyFixList" class="demo-observation-list"></ul>
+      <article id="followUpCaptureCard" class="demo-result-card compact" data-empty="true" style="margin-top: 8px;">
+        <div id="followUpCaptureText" class="value"></div>
+      </article>
+    </section>
+
+    <section class="latest-result" id="nextStepSection">
+      <h2>Next Step</h2>
+      <article class="demo-result-card compact">
+        <div id="primaryNextStep" class="value muted">Run an investigation to generate the next action.</div>
+      </article>
+
+      <article id="gitRecommendationCard" class="demo-result-card" data-empty="true" style="margin-top: 10px;">
+        <h3 class="demo-section-heading">Git Recommendation</h3>
+        <div id="gitRecommendationReason" class="value"></div>
+        <textarea id="gitCommandsText" class="demo-textarea" readonly style="min-height: 120px; margin-top: 8px; font-family: Consolas, 'Courier New', monospace; background: #f8fbff;"></textarea>
+        <div class="demo-actions" style="margin-top: 8px;">
+          <button id="copyGitCommandsBtn" class="demo-btn secondary" type="button" aria-label="Copy Git Commands">Copy Git Commands</button>
+          <div id="gitCopyStatus" class="meta" aria-live="polite"></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="glasses-view">
+      <h2>Compact Glasses View</h2>
+      <div class="glasses-grid">
+        <article class="glasses-item">
+          <div class="label">Status</div>
+          <div id="glasses_status" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item">
+          <div class="label">Primary Action</div>
+          <div id="glasses_primary_action" class="value muted">No data yet</div>
+        </article>
+        <article class="glasses-item glasses-item--wide">
+          <div class="label">Guidance</div>
+          <div id="glasses_guidance" class="value muted">No data yet</div>
+        </article>
+      </div>
+
       <div class="status-row">
         <div id="statusPill" class="status-pill waiting">
           <span class="status-dot" aria-hidden="true"></span>
@@ -340,106 +878,175 @@
       </div>
     </section>
 
-    <section class="demo-mode">
-      <h2>Demo Mode</h2>
-      <div class="demo-grid">
-        <article class="demo-item">
-          <div class="label">Current Task</div>
-          <div id="demo_current_task" class="value muted">No data yet</div>
-        </article>
-        <article class="demo-item">
-          <div class="label">Task Continuity</div>
-          <div id="demo_task_continuity" class="value muted">No data yet</div>
-        </article>
-        <article class="demo-item">
-          <div class="label">Task Progress / Step Count</div>
-          <div id="demo_task_progress" class="value muted">No data yet</div>
-        </article>
-        <article class="demo-item">
-          <div class="label">Stuck Status</div>
-          <div id="demo_stuck_status" class="value muted">No data yet</div>
-        </article>
-        <article class="demo-item">
-          <div class="label">Intervention Message</div>
-          <div id="demo_intervention_message" class="value muted">No data yet</div>
-        </article>
-        <article class="demo-item">
-          <div class="label">Glasses Guidance</div>
-          <div id="demo_glasses_guidance" class="value muted">No data yet</div>
-        </article>
-      </div>
-    </section>
+    <section class="advanced-debug">
+      <details id="advancedDebugDetails">
+        <summary>Advanced Technical Details</summary>
+        <div class="advanced-body">
+          <div class="advanced-group">
+            <h3>Investigation Result</h3>
+            <div class="advanced-grid">
+              <article class="card">
+                <div class="label">Diagnosis</div>
+                <div id="demoDiagnosis" class="value muted">Investigation has not started.</div>
+              </article>
+              <article class="card">
+                <div class="label">Immediate Action</div>
+                <div id="demoNextAction" class="value muted">Investigation has not started.</div>
+              </article>
+              <article class="card">
+                <div class="label">Supporting Observations</div>
+                <div id="demoObservations" class="value muted">Investigation has not started.</div>
+              </article>
+              <article class="card">
+                <div class="label">Confidence / Uncertainty</div>
+                <div id="demoConfidenceValue" class="value muted">Investigation has not started.</div>
+              </article>
+              <article class="card">
+                <div class="label">Follow-up Capture Request</div>
+                <div id="demoFollowUp" class="value muted">No follow-up capture requested.</div>
+              </article>
+              <article class="card">
+                <div class="label">Warning / Blocker</div>
+                <div id="demoError" class="value muted">No warning or blocker.</div>
+              </article>
+              <article class="card">
+                <div class="label">Session Metadata</div>
+                <div id="demoSessionId" class="value muted">Investigation has not started.</div>
+              </article>
+              <article class="card">
+                <div class="label">Provider Model</div>
+                <div id="demoProviderModel" class="value muted">No data yet</div>
+              </article>
+            </div>
+          </div>
 
-    <section class="grid two">
-      <article class="card">
-        <div class="label">Timestamp</div>
-        <div id="timestamp" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Image Analyzed</div>
-        <div id="image_analyzed" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Observed Issue</div>
-        <div id="observed_issue" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Likely Cause</div>
-        <div id="likely_cause" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Recommended Fix</div>
-        <div id="recommended_fix" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Validation Step</div>
-        <div id="validation_step" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Next Action</div>
-        <div id="next_action" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Completed Steps</div>
-        <div id="completed_steps" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Task Progress</div>
-        <div id="task_progress" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Stuck Status</div>
-        <div id="stuck_status" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Resume Previous Task</div>
-        <div id="resume_previous_task" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Intervention</div>
-        <div id="intervention" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Metrics Snapshot</div>
-        <div id="metrics_snapshot" class="value muted">No data yet</div>
-      </article>
-      <article class="card">
-        <div class="label">Glasses Display</div>
-        <div id="glasses_display" class="value muted">No data yet</div>
-      </article>
-    </section>
+          <div class="advanced-group">
+            <h3>Task Continuity</h3>
+            <div class="advanced-grid">
+              <article class="card">
+                <div class="label">Current Task (Debug)</div>
+                <div id="demo_current_task" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Task Continuity</div>
+                <div id="glasses_task_continuity" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Task Continuity (Demo)</div>
+                <div id="demo_task_continuity" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Task Progress / Step Count</div>
+                <div id="demo_task_progress" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Stuck Status</div>
+                <div id="demo_stuck_status" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Intervention Message</div>
+                <div id="demo_intervention_message" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Resume Previous Task</div>
+                <div id="resume_previous_task" class="value muted">No data yet</div>
+              </article>
+            </div>
+          </div>
 
-    <section class="grid" style="margin-top: 12px;">
-      <article class="card">
-        <div class="label">Full Analysis</div>
-        <div id="full_analysis" class="value mono muted">No data yet</div>
-      </article>
+          <div class="advanced-group">
+            <h3>Metrics And State</h3>
+            <div class="advanced-grid">
+              <article class="card">
+                <div class="label">Task Progress</div>
+                <div id="task_progress" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Stuck Status (Raw)</div>
+                <div id="stuck_status" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Intervention</div>
+                <div id="intervention" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Metrics Snapshot</div>
+                <div id="metrics_snapshot" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Next Action (Raw)</div>
+                <div id="next_action" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Completed Steps</div>
+                <div id="completed_steps" class="value muted">No data yet</div>
+              </article>
+            </div>
+          </div>
+
+          <div class="advanced-group">
+            <h3>Analysis Snapshot</h3>
+            <div class="advanced-grid">
+              <article class="card">
+                <div class="label">Timestamp</div>
+                <div id="timestamp" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Image Analyzed</div>
+                <div id="image_analyzed" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Observed Issue</div>
+                <div id="observed_issue" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Likely Cause</div>
+                <div id="likely_cause" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Recommended Fix</div>
+                <div id="recommended_fix" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Validation Step</div>
+                <div id="validation_step" class="value muted">No data yet</div>
+              </article>
+            </div>
+          </div>
+
+          <div class="advanced-group">
+            <h3>Verbose Output</h3>
+            <div class="advanced-grid">
+              <article class="card">
+                <div class="label">Raw Glasses Guidance</div>
+                <div id="demo_glasses_guidance" class="value muted">No data yet</div>
+              </article>
+              <article class="card">
+                <div class="label">Glasses Display</div>
+                <div id="glasses_display" class="value muted">No data yet</div>
+              </article>
+            </div>
+            <div class="advanced-grid" style="margin-top: 8px;">
+              <article class="card" style="grid-column: 1 / -1;">
+                <div class="label">Full Analysis</div>
+                <div id="full_analysis" class="value mono muted">No data yet</div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </details>
     </section>
   </main>
 
   <script>
-    const API_LATEST_URL = "http://127.0.0.1:8001/latest";
-    const API_ANALYZE_URL = "http://127.0.0.1:8001/analyze";
+    const API_ORIGIN = (window.location.origin && window.location.origin !== "null")
+      ? window.location.origin
+      : "http://127.0.0.1:8001";
+    const API_LATEST_URL = `${API_ORIGIN}/latest`;
+    const API_ANALYZE_URL = `${API_ORIGIN}/analyze`;
+    const API_DEMO_START_URL = `${API_ORIGIN}/demo/investigations`;
+    const DEMO_MIN_IMAGES = 1;
+    const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
 
     const fields = [
@@ -466,18 +1073,121 @@
     const uploadInput = document.getElementById("uploadInput");
     const analyzeBtn = document.getElementById("analyzeBtn");
     const uploadStatus = document.getElementById("uploadStatus");
+
+    const glassesStatus = document.getElementById("glasses_status");
+    const glassesPrimaryAction = document.getElementById("glasses_primary_action");
     const glassesGuidance = document.getElementById("glasses_guidance");
-    const glassesCurrentTask = document.getElementById("glasses_current_task");
-    const glassesTaskContinuity = document.getElementById("glasses_task_continuity");
-    const glassesNextAction = document.getElementById("glasses_next_action");
-    const glassesRisk = document.getElementById("glasses_risk");
-    const glassesConfidence = document.getElementById("glasses_confidence");
+
     const demoCurrentTask = document.getElementById("demo_current_task");
+    const glassesTaskContinuity = document.getElementById("glasses_task_continuity");
     const demoTaskContinuity = document.getElementById("demo_task_continuity");
     const demoTaskProgress = document.getElementById("demo_task_progress");
     const demoStuckStatus = document.getElementById("demo_stuck_status");
     const demoInterventionMessage = document.getElementById("demo_intervention_message");
     const demoGlassesGuidance = document.getElementById("demo_glasses_guidance");
+
+    const demoImages = document.getElementById("demoImages");
+    const demoExplanation = document.getElementById("demoExplanation");
+    const demoMode = document.getElementById("demoMode");
+    const demoSelectedImagesContainer = document.getElementById("demoSelectedImages");
+    const demoStartBtn = document.getElementById("demoStartBtn");
+    const demoResetBtn = document.getElementById("demoResetBtn");
+    const demoStatePill = document.getElementById("demoStatePill");
+    const demoStatus = document.getElementById("demoStatus");
+    const demoProgress = document.getElementById("demoProgress");
+
+    const recommendedActionStatus = document.getElementById("recommendedActionStatus");
+    const copilotPromptEmpty = document.getElementById("copilotPromptEmpty");
+    const copilotPromptText = document.getElementById("copilotPromptText");
+    const copyCopilotPromptBtn = document.getElementById("copyCopilotPromptBtn");
+    const copilotPromptCopyStatus = document.getElementById("copilotPromptCopyStatus");
+    const whyThisShouldWorkCard = document.getElementById("whyThisShouldWorkCard");
+    const whyThisShouldWork = document.getElementById("whyThisShouldWork");
+
+    const verifyFixList = document.getElementById("verifyFixList");
+    const followUpCaptureCard = document.getElementById("followUpCaptureCard");
+    const followUpCaptureText = document.getElementById("followUpCaptureText");
+
+    const primaryNextStep = document.getElementById("primaryNextStep");
+    const gitRecommendationCard = document.getElementById("gitRecommendationCard");
+    const gitRecommendationReason = document.getElementById("gitRecommendationReason");
+    const gitCommandsText = document.getElementById("gitCommandsText");
+    const copyGitCommandsBtn = document.getElementById("copyGitCommandsBtn");
+    const gitCopyStatus = document.getElementById("gitCopyStatus");
+
+    const demoSessionId = document.getElementById("demoSessionId");
+    const demoProviderModel = document.getElementById("demoProviderModel");
+    const demoDiagnosis = document.getElementById("demoDiagnosis");
+    const demoNextAction = document.getElementById("demoNextAction");
+    const demoObservations = document.getElementById("demoObservations");
+    const demoConfidenceValue = document.getElementById("demoConfidenceValue");
+    const demoFollowUp = document.getElementById("demoFollowUp");
+    const demoError = document.getElementById("demoError");
+
+    let activeDemoId = null;
+    let demoPollTimer = null;
+    let demoStartInFlight = false;
+    let demoRunInProgress = false;
+    let demoSelectedImages = [];
+    let latestCopilotPromptText = "";
+    let latestGitCommandsText = "";
+
+    const PROGRESS_STAGES = [
+      ["validating", "Preparing Investigation"],
+      ["freezing_evidence", "Freezing Evidence"],
+      ["establishing_attempt", "Establishing Attempt"],
+      ["building_request", "Building AI Request"],
+      ["analyzing", "AI Is Analyzing"],
+      ["validating_response", "Validating Response"],
+      ["persisting_result", "Persisting Result"],
+      ["completing", "Completing Investigation"],
+      ["completed", "Investigation Complete"],
+      ["failed", "Investigation Failed"],
+    ];
+
+    function normalize(value) {
+      if (value === null || value === undefined || value === "") {
+        return "";
+      }
+      return String(value).trim();
+    }
+
+    function normalizeOrFallback(value, fallback = "No data") {
+      const text = normalize(value);
+      return text || fallback;
+    }
+
+    function compactText(value, maxLength = 180) {
+      const text = normalize(value).replace(/\s+/g, " ").trim();
+      if (!text) {
+        return "";
+      }
+      if (text.length <= maxLength) {
+        return text;
+      }
+      return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}...`;
+    }
+
+    function dedupeTextItems(items) {
+      const seen = new Set();
+      const deduped = [];
+      for (const item of items || []) {
+        const text = compactText(item, 220);
+        if (!text) continue;
+        const key = text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        deduped.push(text);
+      }
+      return deduped;
+    }
+
+    function splitInstructionItems(text) {
+      const raw = normalize(text);
+      if (!raw) return [];
+      const lines = raw.split(/\n|;/).map((line) => line.trim()).filter(Boolean);
+      return lines.map((line) => line.replace(/^[-*\u2022\s]+/, "").replace(/^\d+[\).]\s*/, "").trim()).filter(Boolean);
+    }
 
     function setStatus(connected) {
       statusPill.classList.remove("connected", "waiting");
@@ -493,9 +1203,149 @@
     function setUploadStatus(message, state) {
       uploadStatus.textContent = message;
       uploadStatus.classList.remove("uploading", "success", "error");
-      if (state) {
-        uploadStatus.classList.add(state);
+      if (state) uploadStatus.classList.add(state);
+    }
+
+    function setDemoStatus(message, state) {
+      demoStatus.textContent = message;
+      demoStatus.classList.remove("ok", "warn", "err");
+      if (state) demoStatus.classList.add(state);
+    }
+
+    function _pillModeForStatus(status) {
+      const normalized = String(status || "").toLowerCase();
+      if (["running", "starting", "queued"].includes(normalized)) return "running";
+      if (normalized === "completed") return "completed";
+      if (normalized === "failed") return "failed";
+      return "idle";
+    }
+
+    function setDemoStatePill(message) {
+      const normalized = String(message || "idle").toLowerCase();
+      demoStatePill.classList.remove("idle", "running", "completed", "failed");
+      demoStatePill.classList.add(_pillModeForStatus(normalized));
+      demoStatePill.textContent = normalized ? normalized[0].toUpperCase() + normalized.slice(1) : "Idle";
+    }
+
+    function demoFileKey(file) {
+      return [file.name, file.size, file.lastModified, file.type].join("::");
+    }
+
+    function isDemoExplanationValid() {
+      return Boolean(String(demoExplanation.value || "").trim());
+    }
+
+    function updateDemoStartButtonState() {
+      const count = demoSelectedImages.length;
+      const hasValidCount = count >= DEMO_MIN_IMAGES && count <= DEMO_MAX_IMAGES;
+      const startDisabled = demoStartInFlight || demoRunInProgress || !hasValidCount || !isDemoExplanationValid();
+      demoStartBtn.disabled = startDisabled;
+      demoStartBtn.classList.toggle("is-running", demoStartInFlight || demoRunInProgress);
+      demoStartBtn.textContent = (demoStartInFlight || demoRunInProgress) ? "Running..." : "Start Investigation";
+      demoResetBtn.disabled = demoStartInFlight || demoRunInProgress;
+    }
+
+    function renderSelectedDemoImages() {
+      const selectedTitle = '<div class="demo-selected-title">Selected Images</div>';
+      if (demoSelectedImages.length === 0) {
+        demoSelectedImagesContainer.innerHTML = `${selectedTitle}<div class="demo-selected-empty">No images selected.</div>`;
+        return;
       }
+      const orderGlyph = ["①", "②", "③"];
+      const items = demoSelectedImages.map((entry, index) => `
+        <li class="demo-selected-item">
+          <span class="demo-selected-left">
+            <span class="demo-selected-order">${orderGlyph[index] || `${index + 1}.`}</span>
+            <span class="demo-selected-name">${entry.file.name}</span>
+          </span>
+          <button type="button" class="demo-remove-btn" data-demo-remove-index="${index}">Remove</button>
+        </li>
+      `).join("");
+      demoSelectedImagesContainer.innerHTML = `${selectedTitle}<ol class="demo-selected-list">${items}</ol>`;
+    }
+
+    function removeDemoImageAt(index) {
+      if (!Number.isInteger(index) || index < 0 || index >= demoSelectedImages.length) return;
+      demoSelectedImages.splice(index, 1);
+      renderSelectedDemoImages();
+      updateDemoStartButtonState();
+      setDemoStatus("Image removed from the investigation set.");
+    }
+
+    function handleDemoImageBrowseChange() {
+      const incomingFiles = Array.from(demoImages.files || []);
+      let duplicateCount = 0;
+      let addedCount = 0;
+      let overflowed = false;
+
+      for (const file of incomingFiles) {
+        const key = demoFileKey(file);
+        if (demoSelectedImages.some((entry) => entry.key === key)) {
+          duplicateCount += 1;
+          continue;
+        }
+        if (demoSelectedImages.length >= DEMO_MAX_IMAGES) {
+          overflowed = true;
+          continue;
+        }
+        demoSelectedImages.push({ key, file });
+        addedCount += 1;
+      }
+
+      demoImages.value = "";
+      renderSelectedDemoImages();
+      updateDemoStartButtonState();
+
+      if (overflowed) {
+        setDemoStatus("You can select up to 3 images.", "err");
+        return;
+      }
+      if (addedCount > 0) {
+        setDemoStatus(`${demoSelectedImages.length} image(s) ready for investigation.`, "ok");
+        return;
+      }
+      if (duplicateCount > 0) {
+        setDemoStatus("That image is already selected.", "warn");
+      }
+    }
+
+    function stopDemoPolling() {
+      if (demoPollTimer) {
+        clearInterval(demoPollTimer);
+        demoPollTimer = null;
+      }
+    }
+
+    function renderDemoProgress(events) {
+      const list = Array.isArray(events) ? events : [];
+      const latest = list.length ? list[list.length - 1] : null;
+      const latestStage = latest?.stage || "";
+      const completedSet = new Set();
+      for (const event of list) {
+        if (event?.stage) completedSet.add(event.stage);
+      }
+
+      demoProgress.innerHTML = PROGRESS_STAGES
+        .filter(([stage]) => stage !== "failed" || latestStage === "failed")
+        .map(([stage, label]) => {
+          const matchingEvent = [...list].reverse().find((event) => event?.stage === stage);
+          const isCurrent = latestStage === stage && latestStage !== "completed" && latestStage !== "failed";
+          const isDone = completedSet.has(stage) && !isCurrent;
+          const stateClass = isCurrent ? "current" : (isDone ? "done" : "pending");
+          const icon = isCurrent ? "▶" : (isDone ? "✓" : "○");
+          const status = matchingEvent?.status || (isCurrent ? "In progress." : "Waiting.");
+          const analysisAttemptId = matchingEvent?.analysis_attempt_id ? `\nAttempt: ${matchingEvent.analysis_attempt_id}` : "";
+          const failure = matchingEvent?.safe_failure_category ? `\nFailure: ${matchingEvent.safe_failure_category}` : "";
+          return `
+            <div class="demo-progress-item ${stateClass}">
+              <div class="demo-progress-icon">${icon}</div>
+              <div>
+                <div class="demo-progress-title">${label}</div>
+                <div class="demo-progress-message">${status}${analysisAttemptId}${failure}</div>
+              </div>
+            </div>
+          `;
+        }).join("");
     }
 
     function setLastChecked() {
@@ -503,141 +1353,416 @@
       lastChecked.textContent = `Last checked: ${now.toLocaleTimeString()}`;
     }
 
-    function normalize(value) {
-      if (value === null || value === undefined || value === "") {
-        return "No data";
+    function renderCompactGlasses(statusValue, primaryActionValue, guidanceValue) {
+      glassesStatus.textContent = normalizeOrFallback(statusValue);
+      glassesPrimaryAction.textContent = normalizeOrFallback(compactText(primaryActionValue, 160));
+      glassesGuidance.textContent = normalizeOrFallback(compactText(guidanceValue, 160));
+      [glassesStatus, glassesPrimaryAction, glassesGuidance].forEach((el) => el.classList.remove("muted"));
+    }
+
+    function toProductActionStatus(snapshotStatus) {
+      const status = String(snapshotStatus || "").toLowerCase();
+      if (status === "failed") return "Investigation failed";
+      if (status === "running" || status === "queued") return "Investigation running";
+      return "Prompt ready";
+    }
+
+    function normalizeDemoProductView(snapshot) {
+      const pa = (snapshot && snapshot.product_action && typeof snapshot.product_action === "object") ? snapshot.product_action : {};
+      const response = (snapshot && snapshot.response && typeof snapshot.response === "object") ? snapshot.response : {};
+      const retained = (snapshot && snapshot.retained_result && typeof snapshot.retained_result === "object") ? snapshot.retained_result : {};
+
+      const prompt = normalize(pa.copilot_prompt) || normalize(retained.copilot_prompt);
+      const why = normalize(pa.why_this_should_work);
+      const followUpMessage = normalize(pa.follow_up_capture_message) || normalize(response.follow_up_capture_request);
+      const followUpRequired = Boolean(pa.follow_up_capture_required || followUpMessage);
+
+      let verificationItems = Array.isArray(pa.verification_items) ? pa.verification_items.map((item) => normalize(item)).filter(Boolean) : [];
+      if (!verificationItems.length) {
+        verificationItems = splitInstructionItems(response.immediate_recommended_action);
+        verificationItems.push("Run the relevant tests for the changed files.");
+        verificationItems.push("Confirm the original issue no longer appears.");
       }
-      return String(value);
+      if (followUpRequired) {
+        verificationItems.push("Take another picture after testing so the AI can verify the result.");
+      }
+      verificationItems = dedupeTextItems(verificationItems).slice(0, 4);
+
+      let primaryNextStepValue = normalize(pa.primary_next_step);
+      if (!primaryNextStepValue) {
+        if ((snapshot.status || "") === "failed") {
+          primaryNextStepValue = "Capture clearer evidence and run the investigation again.";
+        } else if ((snapshot.status || "") === "running" || (snapshot.status || "") === "queued") {
+          primaryNextStepValue = "Wait for the investigation to finish generating a Copilot prompt.";
+        } else if (followUpRequired) {
+          primaryNextStepValue = "Test the resulting change, then capture another picture for verification.";
+        } else {
+          primaryNextStepValue = "Paste the prompt into Copilot and apply the change.";
+        }
+      }
+
+      const gitRecommendation = (pa.git_recommendation && typeof pa.git_recommendation === "object") ? pa.git_recommendation : null;
+      const gitCommands = gitRecommendation && Array.isArray(gitRecommendation.commands)
+        ? gitRecommendation.commands.map((line) => normalize(line)).filter(Boolean)
+        : [];
+
+      return {
+        actionStatus: normalize(pa.action_status) || toProductActionStatus(snapshot.status),
+        copilotPrompt: prompt,
+        whyThisShouldWork: why,
+        verificationItems,
+        primaryNextStep: primaryNextStepValue,
+        glassesGuidance: normalize(pa.glasses_guidance) || "Issue identified. Check desktop for next action.",
+        followUpCaptureRequired: followUpRequired,
+        followUpCaptureMessage: followUpMessage,
+        gitRecommendation: gitRecommendation && gitCommands.length
+          ? {
+            reason: normalize(gitRecommendation.reason) || "Investigation indicates the change is ready for commit.",
+            commands: gitCommands,
+          }
+          : null,
+      };
+    }
+
+    function renderProductAction(view) {
+      recommendedActionStatus.textContent = normalizeOrFallback(view.actionStatus);
+
+      if (view.copilotPrompt) {
+        latestCopilotPromptText = view.copilotPrompt;
+        copilotPromptText.value = view.copilotPrompt;
+        copilotPromptText.style.display = "block";
+        copilotPromptEmpty.style.display = "none";
+        copyCopilotPromptBtn.disabled = false;
+      } else {
+        latestCopilotPromptText = "";
+        copilotPromptText.value = "";
+        copilotPromptText.style.display = "none";
+        copilotPromptEmpty.style.display = "block";
+        copilotPromptEmpty.textContent = "Run an investigation to generate a Copilot prompt.";
+        copyCopilotPromptBtn.disabled = true;
+      }
+
+      if (view.whyThisShouldWork) {
+        whyThisShouldWork.textContent = view.whyThisShouldWork;
+        whyThisShouldWorkCard.dataset.empty = "false";
+      } else {
+        whyThisShouldWork.textContent = "";
+        whyThisShouldWorkCard.dataset.empty = "true";
+      }
+
+      verifyFixList.innerHTML = "";
+      for (const item of view.verificationItems) {
+        const li = document.createElement("li");
+        li.textContent = item;
+        verifyFixList.appendChild(li);
+      }
+
+      if (view.followUpCaptureRequired) {
+        const followUpText = view.followUpCaptureMessage || "Take another picture after testing so the AI can verify the result.";
+        followUpCaptureText.textContent = `Take another picture after testing so the AI can verify the result. ${followUpText}`;
+        followUpCaptureCard.dataset.empty = "false";
+      } else {
+        followUpCaptureText.textContent = "";
+        followUpCaptureCard.dataset.empty = "true";
+      }
+
+      primaryNextStep.textContent = normalizeOrFallback(view.primaryNextStep);
+      primaryNextStep.classList.remove("muted");
+
+      if (view.gitRecommendation && view.gitRecommendation.commands.length) {
+        latestGitCommandsText = view.gitRecommendation.commands.join("\n");
+        gitRecommendationReason.textContent = view.gitRecommendation.reason;
+        gitCommandsText.value = latestGitCommandsText;
+        gitRecommendationCard.dataset.empty = "false";
+        copyGitCommandsBtn.disabled = false;
+      } else {
+        latestGitCommandsText = "";
+        gitRecommendationReason.textContent = "";
+        gitCommandsText.value = "";
+        gitRecommendationCard.dataset.empty = "true";
+        copyGitCommandsBtn.disabled = true;
+      }
+
+      renderCompactGlasses(view.actionStatus, view.primaryNextStep, view.glassesGuidance);
+    }
+
+    function renderDemoTechnicalDetails(snapshot) {
+      const diagnosis = normalize(snapshot?.retained_result?.diagnosis) || normalize(snapshot?.response?.concise_diagnosis);
+      const action = normalize(snapshot?.retained_result?.required_next_action) || normalize(snapshot?.response?.immediate_recommended_action);
+      const observations = Array.isArray(snapshot?.response?.supporting_observations)
+        ? snapshot.response.supporting_observations.map((item) => normalize(item)).filter(Boolean)
+        : [];
+      const confidence = normalize(snapshot?.response?.confidence_or_uncertainty);
+      const followUp = normalize(snapshot?.response?.follow_up_capture_request);
+      const errorMessage = normalize(snapshot?.error_message);
+      const errorCategory = normalize(snapshot?.error_category);
+
+      demoDiagnosis.textContent = normalizeOrFallback(diagnosis, "No diagnosis yet.");
+      demoNextAction.textContent = normalizeOrFallback(action, "No action yet.");
+      demoObservations.innerHTML = observations.length
+        ? `<ol class="demo-observation-list">${observations.map((item) => `<li>${item}</li>`).join("")}</ol>`
+        : "No observations yet.";
+      demoConfidenceValue.textContent = normalizeOrFallback(confidence, "No confidence statement.");
+      demoFollowUp.textContent = normalizeOrFallback(followUp, "No follow-up capture requested.");
+      demoError.textContent = errorMessage ? `${normalizeOrFallback(errorCategory, "error")}: ${errorMessage}` : "No warning or blocker.";
+      demoSessionId.textContent = normalizeOrFallback(snapshot?.session_id, "No session yet.");
+      demoProviderModel.textContent = normalizeOrFallback(snapshot?.provider_model, "No provider model yet.");
+
+      [
+        demoDiagnosis,
+        demoNextAction,
+        demoObservations,
+        demoConfidenceValue,
+        demoFollowUp,
+        demoError,
+        demoSessionId,
+        demoProviderModel,
+      ].forEach((el) => el.classList.remove("muted"));
+    }
+
+    function renderDemoSnapshot(snapshot) {
+      if (!snapshot) return;
+
+      activeDemoId = snapshot.demo_id || activeDemoId;
+      setDemoStatePill(snapshot.status || "running");
+      renderDemoProgress(snapshot.progress_events || []);
+
+      renderProductAction(normalizeDemoProductView(snapshot));
+      renderDemoTechnicalDetails(snapshot);
+
+      if (snapshot.status === "completed") {
+        demoRunInProgress = false;
+        setDemoStatus("Investigation complete.", "ok");
+        stopDemoPolling();
+      } else if (snapshot.status === "failed") {
+        demoRunInProgress = false;
+        setDemoStatus("Investigation failed.", "err");
+        stopDemoPolling();
+      } else {
+        demoRunInProgress = true;
+        setDemoStatus("Investigation running.", "warn");
+      }
+
+      updateDemoStartButtonState();
+    }
+
+    function resetDemoView() {
+      stopDemoPolling();
+      activeDemoId = null;
+      demoSelectedImages = [];
+      demoStartInFlight = false;
+      demoRunInProgress = false;
+      demoImages.value = "";
+      demoExplanation.value = "";
+      demoMode.value = "dry_run";
+      latestCopilotPromptText = "";
+      latestGitCommandsText = "";
+      copilotPromptCopyStatus.textContent = "";
+      gitCopyStatus.textContent = "";
+      copyCopilotPromptBtn.textContent = "Copy Copilot Prompt";
+      copyGitCommandsBtn.textContent = "Copy Git Commands";
+
+      setDemoStatus("Select one to three images and describe the issue.");
+      setDemoStatePill("Idle");
+      renderProductAction({
+        actionStatus: "Run an investigation to generate a Copilot prompt.",
+        copilotPrompt: "",
+        whyThisShouldWork: "",
+        verificationItems: [],
+        primaryNextStep: "Run an investigation to generate the next action.",
+        glassesGuidance: "Capture one to three images and run investigation.",
+        followUpCaptureRequired: false,
+        followUpCaptureMessage: "",
+        gitRecommendation: null,
+      });
+
+      demoDiagnosis.textContent = "Investigation has not started.";
+      demoNextAction.textContent = "Investigation has not started.";
+      demoObservations.textContent = "Investigation has not started.";
+      demoConfidenceValue.textContent = "Investigation has not started.";
+      demoFollowUp.textContent = "No follow-up capture requested.";
+      demoError.textContent = "No warning or blocker.";
+      demoSessionId.textContent = "Investigation has not started.";
+      demoProviderModel.textContent = "No provider model yet.";
+
+      renderSelectedDemoImages();
+      updateDemoStartButtonState();
+      renderDemoProgress([]);
+    }
+
+    async function pollDemoSnapshot() {
+      if (!activeDemoId) return;
+      try {
+        const response = await fetch(`${API_DEMO_START_URL}/${activeDemoId}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const snapshot = await response.json();
+        renderDemoSnapshot(snapshot);
+      } catch (_err) {
+        setDemoStatus("Unable to refresh demo status.", "err");
+      }
+    }
+
+    async function startDemoInvestigation() {
+      const files = demoSelectedImages.map((entry) => entry.file);
+      if (files.length < DEMO_MIN_IMAGES) {
+        setDemoStatus("Select at least 1 image.", "err");
+        return;
+      }
+      if (files.length > DEMO_MAX_IMAGES) {
+        setDemoStatus("You can select up to 3 images.", "err");
+        updateDemoStartButtonState();
+        return;
+      }
+      if (!isDemoExplanationValid()) {
+        setDemoStatus("Explanation is invalid.", "err");
+        updateDemoStartButtonState();
+        return;
+      }
+
+      stopDemoPolling();
+      demoStartInFlight = true;
+      demoRunInProgress = true;
+      updateDemoStartButtonState();
+      setDemoStatus("Starting investigation...", "warn");
+      setDemoStatePill("running");
+
+      try {
+        const formData = new FormData();
+        formData.append("mode", demoMode.value);
+        formData.append("user_explanation", demoExplanation.value);
+        demoSelectedImages.forEach((entry) => formData.append("images", entry.file));
+
+        const response = await fetch(API_DEMO_START_URL, {
+          method: "POST",
+          body: formData,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
+        }
+
+        const snapshot = await response.json();
+        renderDemoSnapshot(snapshot);
+        setDemoStatus("Investigation started.", "ok");
+        if (snapshot.status !== "completed" && snapshot.status !== "failed") {
+          activeDemoId = snapshot.demo_id;
+          demoPollTimer = setInterval(pollDemoSnapshot, 1200);
+        }
+      } catch (err) {
+        demoRunInProgress = false;
+        setDemoStatus(`Start failed: ${err?.message || err}`, "err");
+        setDemoStatePill("failed");
+      } finally {
+        demoStartInFlight = false;
+        updateDemoStartButtonState();
+      }
+    }
+
+    function extractSection(text, label) {
+      if (!text) return "";
+      const pattern = new RegExp(String.raw`(?:^|\n)${label}:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{2,}:\s*|$)`, "i");
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() : "";
+    }
+
+    function extractLine(text, label) {
+      if (!text) return "";
+      const pattern = new RegExp(String.raw`${label}:\s*([^\n]+)`, "i");
+      const match = text.match(pattern);
+      return match && match[1] ? match[1].trim() : "";
     }
 
     function applyData(data) {
       fields.forEach((field) => {
         const el = document.getElementById(field);
         if (!el) return;
+
         if (field === "completed_steps") {
           const steps = Array.isArray(data.completed_steps) ? data.completed_steps : [];
           el.textContent = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps yet";
         } else if (field === "task_progress") {
           const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
-          const nextStep = normalize(progress.next_step);
+          const nextStep = normalizeOrFallback(progress.next_step);
           const stepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
           el.textContent = `Next step: ${nextStep}\nStep count: ${stepCount}`;
         } else if (field === "stuck_status") {
           const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
           const isStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
-          const reason = normalize(status.reason);
+          const reason = normalizeOrFallback(status.reason);
           const count = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
           el.textContent = `Is stuck: ${isStuck ? "Yes" : "No"}\nReason: ${reason}\nRepeated next step count: ${count}`;
         } else if (field === "resume_previous_task") {
           const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
           const available = typeof resume.available === "boolean" ? resume.available : false;
-          const task = normalize(resume.task);
-          const nextStep = normalize(resume.next_step);
-          const reason = normalize(resume.reason);
+          const task = normalizeOrFallback(resume.task);
+          const nextStep = normalizeOrFallback(resume.next_step);
+          const reason = normalizeOrFallback(resume.reason);
           const steps = Array.isArray(resume.completed_steps) ? resume.completed_steps : [];
           const stepsText = steps.length ? steps.map((step) => `- ${step}`).join("\n") : "No completed steps";
           el.textContent = `Available: ${available ? "Yes" : "No"}\nTask: ${task}\nNext step: ${nextStep}\nCompleted:\n${stepsText}\nReason: ${reason}`;
         } else if (field === "intervention") {
           const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
           const recommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
-          const message = normalize(intervention.message);
-          const reason = normalize(intervention.reason);
+          const message = normalizeOrFallback(intervention.message);
+          const reason = normalizeOrFallback(intervention.reason);
           el.textContent = `Recommended: ${recommended ? "Yes" : "No"}\nMessage: ${message}\nReason: ${reason}`;
         } else if (field === "metrics_snapshot") {
           const metrics = (data.metrics_snapshot && typeof data.metrics_snapshot === "object") ? data.metrics_snapshot : {};
           const recentObservationCount = Number.isInteger(metrics.recent_observation_count) ? metrics.recent_observation_count : 0;
           const stuckCount = Number.isInteger(metrics.stuck_count) ? metrics.stuck_count : 0;
           const interventionCount = Number.isInteger(metrics.intervention_count) ? metrics.intervention_count : 0;
-          const latestTaskContinuity = normalize(metrics.latest_task_continuity);
+          const latestTaskContinuity = normalizeOrFallback(metrics.latest_task_continuity);
           const latestStepCount = Number.isInteger(metrics.latest_step_count) ? metrics.latest_step_count : 0;
           el.textContent = `Recent observation count: ${recentObservationCount}\nStuck count: ${stuckCount}\nIntervention count: ${interventionCount}\nLatest task continuity: ${latestTaskContinuity}\nLatest step count: ${latestStepCount}`;
         } else if (field === "glasses_display") {
           const display = (data.glasses_display && typeof data.glasses_display === "object") ? data.glasses_display : {};
-          const title = normalize(display.title);
-          const primaryAction = normalize(display.primary_action);
-          const confidence = normalize(display.confidence);
-          const status = normalize(display.status);
+          const title = normalizeOrFallback(display.title);
+          const primaryAction = normalizeOrFallback(display.primary_action);
+          const confidence = normalizeOrFallback(display.confidence);
+          const status = normalizeOrFallback(display.status);
           el.textContent = `Title: ${title}\nPrimary action: ${primaryAction}\nConfidence: ${confidence}\nStatus: ${status}`;
         } else {
-          el.textContent = normalize(data[field]);
+          el.textContent = normalizeOrFallback(data[field]);
         }
+
         el.classList.remove("muted");
       });
 
-      const fullAnalysis = data.full_analysis || "";
-      const currentTask = data.current_task || extractLine(fullAnalysis, "Current task");
-      const taskContinuity = data.task_continuity || extractLine(fullAnalysis, "Task continuity");
-      const nextAction = data.next_action || extractSection(fullAnalysis, "NEXT ACTION");
-      const risk = data.risk || extractLine(fullAnalysis, "RISK");
-      const confidence = data.confidence || extractLine(fullAnalysis, "Confidence");
-      const glassesGuidanceText = data.glasses_guidance
-        || `Task ${normalize(currentTask)}. Next ${normalize(nextAction)}. Risk ${normalize(risk)}. Confidence ${normalize(confidence)}.`;
+      const fullAnalysis = normalize(data.full_analysis);
+      const currentTask = normalize(data.current_task) || extractLine(fullAnalysis, "Current task");
+      const taskContinuity = normalize(data.task_continuity) || extractLine(fullAnalysis, "Task continuity");
+      const nextAction = normalize(data.next_action) || extractSection(fullAnalysis, "NEXT ACTION");
+      const guidance = normalize(data.glasses_guidance)
+        || `Issue identified. ${compactText(nextAction, 80) || "Review desktop guidance."}`;
+      const hudStatus = normalize(data.hud_status) || normalize(data.task_completion_status) || "waiting";
 
-      glassesGuidance.textContent = normalize(glassesGuidanceText);
-      glassesCurrentTask.textContent = normalize(currentTask);
-      glassesTaskContinuity.textContent = normalize(taskContinuity);
-      glassesNextAction.textContent = normalize(nextAction);
-      glassesRisk.textContent = normalize(risk);
-      glassesConfidence.textContent = normalize(confidence);
+      demoCurrentTask.textContent = normalizeOrFallback(currentTask);
+      glassesTaskContinuity.textContent = normalizeOrFallback(taskContinuity);
+      demoTaskContinuity.textContent = normalizeOrFallback(taskContinuity);
 
-      const resume = (data.resume_previous_task && typeof data.resume_previous_task === "object") ? data.resume_previous_task : {};
       const progress = (data.task_progress && typeof data.task_progress === "object") ? data.task_progress : {};
-      const status = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+      const stepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
+      const progressNextStep = normalizeOrFallback(progress.next_step);
+      demoTaskProgress.textContent = `Step count: ${stepCount}\nNext step: ${progressNextStep}`;
+
+      const stuckStatus = (data.stuck_status && typeof data.stuck_status === "object") ? data.stuck_status : {};
+      const isStuck = typeof stuckStatus.is_stuck === "boolean" ? stuckStatus.is_stuck : false;
+      const repeatedCount = Number.isInteger(stuckStatus.repeated_next_step_count) ? stuckStatus.repeated_next_step_count : 0;
+      demoStuckStatus.textContent = `${isStuck ? "Stuck" : "Not stuck"}\nRepeated next-step count: ${repeatedCount}`;
+
       const intervention = (data.intervention && typeof data.intervention === "object") ? data.intervention : {};
+      const interventionRecommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
+      demoInterventionMessage.textContent = `${interventionRecommended ? "Intervention recommended" : "No intervention needed"}\n${normalizeOrFallback(intervention.message)}`;
+      demoGlassesGuidance.textContent = normalizeOrFallback(data.glasses_guidance);
 
-      const demoTaskName = normalize(resume.task);
-      const demoStepCount = Number.isInteger(progress.step_count) ? progress.step_count : 0;
-      const demoNextStep = normalize(progress.next_step);
-      const demoIsStuck = typeof status.is_stuck === "boolean" ? status.is_stuck : false;
-      const demoRepeatedCount = Number.isInteger(status.repeated_next_step_count) ? status.repeated_next_step_count : 0;
-      const demoInterventionRecommended = typeof intervention.recommended === "boolean" ? intervention.recommended : false;
-
-      demoCurrentTask.textContent = demoTaskName;
-      demoTaskContinuity.textContent = normalize(data.task_continuity);
-      demoTaskProgress.textContent = `Step count: ${demoStepCount}\nNext step: ${demoNextStep}`;
-      demoStuckStatus.textContent = `${demoIsStuck ? "Stuck" : "Not stuck"}\nRepeated next-step count: ${demoRepeatedCount}`;
-      demoInterventionMessage.textContent = `${demoInterventionRecommended ? "Intervention recommended" : "No intervention needed"}\n${normalize(intervention.message)}`;
-      demoGlassesGuidance.textContent = normalize(data.glasses_guidance);
-
-      [glassesGuidance, glassesCurrentTask, glassesTaskContinuity, glassesNextAction, glassesRisk, glassesConfidence].forEach((el) => {
-        el.classList.remove("muted");
-      });
-
-      [demoCurrentTask, demoTaskContinuity, demoTaskProgress, demoStuckStatus, demoInterventionMessage, demoGlassesGuidance].forEach((el) => {
-        el.classList.remove("muted");
-      });
-    }
-
-    function extractSection(text, label) {
-      if (!text) {
-        return "No data";
-      }
-
-      const pattern = new RegExp(
-        String.raw`(?:^|\n)${label}:\s*([\s\S]*?)(?=\n[A-Z][A-Z ]{2,}:\s*|$)`,
-        "i"
-      );
-      const match = text.match(pattern);
-      return match && match[1] ? match[1].trim() || "No data" : "No data";
-    }
-
-    function extractLine(text, label) {
-      if (!text) {
-        return "No data";
-      }
-
-      const pattern = new RegExp(String.raw`${label}:\s*([^\n]+)`, "i");
-      const match = text.match(pattern);
-      return match && match[1] ? match[1].trim() || "No data" : "No data";
+      renderCompactGlasses(hudStatus, nextAction || currentTask, guidance);
     }
 
     async function fetchLatest() {
       setLastChecked();
       try {
         const response = await fetch(API_LATEST_URL, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         applyData(data);
         setStatus(true);
@@ -655,20 +1780,11 @@
 
       analyzeBtn.disabled = true;
       setUploadStatus("Uploading...", "uploading");
-
       try {
         const formData = new FormData();
         formData.append("file", file);
-
-        const response = await fetch(API_ANALYZE_URL, {
-          method: "POST",
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
+        const response = await fetch(API_ANALYZE_URL, { method: "POST", body: formData });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         setUploadStatus("Analysis complete", "success");
         await fetchLatest();
       } catch (_err) {
@@ -678,8 +1794,74 @@
       }
     }
 
-    analyzeBtn.addEventListener("click", uploadAndAnalyze);
+    async function copyTextToClipboard(text) {
+      const payload = normalize(text);
+      if (!payload) return false;
 
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(payload);
+        return true;
+      }
+
+      const temp = document.createElement("textarea");
+      temp.value = payload;
+      temp.setAttribute("readonly", "");
+      temp.style.position = "absolute";
+      temp.style.left = "-9999px";
+      document.body.appendChild(temp);
+      temp.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } finally {
+        document.body.removeChild(temp);
+      }
+      return copied;
+    }
+
+    async function handleCopyAction(text, button, defaultLabel, statusEl) {
+      if (!normalize(text)) {
+        statusEl.textContent = "Nothing to copy yet.";
+        return;
+      }
+
+      try {
+        const copied = await copyTextToClipboard(text);
+        if (!copied) {
+          statusEl.textContent = "Copy failed. Select and copy manually.";
+          return;
+        }
+        button.textContent = "Copied";
+        statusEl.textContent = "Copied to clipboard.";
+        setTimeout(() => {
+          button.textContent = defaultLabel;
+        }, 1400);
+      } catch (_error) {
+        statusEl.textContent = "Copy failed. Select and copy manually.";
+      }
+    }
+
+    analyzeBtn.addEventListener("click", uploadAndAnalyze);
+    demoImages.addEventListener("change", handleDemoImageBrowseChange);
+    demoExplanation.addEventListener("input", updateDemoStartButtonState);
+    demoSelectedImagesContainer.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const indexText = target.getAttribute("data-demo-remove-index");
+      if (indexText === null) return;
+      const index = Number.parseInt(indexText, 10);
+      if (!Number.isNaN(index)) removeDemoImageAt(index);
+    });
+    demoStartBtn.addEventListener("click", startDemoInvestigation);
+    demoResetBtn.addEventListener("click", resetDemoView);
+    copyCopilotPromptBtn.addEventListener("click", async () => {
+      await handleCopyAction(latestCopilotPromptText, copyCopilotPromptBtn, "Copy Copilot Prompt", copilotPromptCopyStatus);
+    });
+    copyGitCommandsBtn.addEventListener("click", async () => {
+      await handleCopyAction(latestGitCommandsText, copyGitCommandsBtn, "Copy Git Commands", gitCopyStatus);
+    });
+
+    resetDemoView();
     fetchLatest();
     setInterval(fetchLatest, POLL_MS);
   </script>

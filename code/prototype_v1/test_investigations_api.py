@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+import time
 
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -22,7 +23,11 @@ client = TestClient(api.app)
 
 @pytest.fixture(autouse=True)
 def _isolate_investigation_latest_json(monkeypatch, tmp_path: Path):
+    session_root = tmp_path / "demo_sessions"
     monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", tmp_path / "investigation_latest.json")
+    monkeypatch.setattr(api, "SESSION_STORE", api.InvestigationSessionStore(session_root))
+    monkeypatch.setattr(api, "EVIDENCE_STORE", api.InvestigationEvidenceStore(api.SESSION_STORE))
+    monkeypatch.setattr(api, "DEMO_INVESTIGATION_REGISTRY", api._DemoInvestigationRegistry())
 
 
 def _image_part(name: str, content: bytes, content_type: str = "image/png") -> tuple[str, io.BytesIO, str]:
@@ -39,6 +44,16 @@ def _post_investigation(files: list[tuple[str, io.BytesIO, str]], **overrides: s
     data.update(overrides)
     multipart = [("images", file_part) for file_part in files]
     return client.post("/investigations/analyze", data=data, files=multipart)
+
+
+def _post_demo_investigation(files: list[tuple[str, io.BytesIO, str]], **overrides: str):
+    data = {
+        "mode": "dry_run",
+        "user_explanation": "  dashboard demo explanation  ",
+    }
+    data.update(overrides)
+    multipart = [("images", file_part) for file_part in files]
+    return client.post("/demo/investigations", data=data, files=multipart)
 
 
 def _setup_fake_openai(monkeypatch, *, response_content: str | None = None, raised: Exception | None = None):
@@ -612,6 +627,139 @@ def test_context_engine_exception_does_not_block_analysis(monkeypatch):
 
     assert response.status_code == 200
     assert len(state["calls"]) == 1
+
+
+def _wait_for_demo_terminal_snapshot(demo_id: str) -> dict[str, Any]:
+    snapshot = client.get(f"/demo/investigations/{demo_id}").json()
+    for _ in range(40):
+        if snapshot["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+        snapshot = client.get(f"/demo/investigations/{demo_id}").json()
+    return snapshot
+
+
+def test_demo_investigation_accepts_one_image_dry_run():
+    response = _post_demo_investigation([_image_part("first.png", b"1")])
+
+    assert response.status_code == 202
+    initial = response.json()
+    snapshot = _wait_for_demo_terminal_snapshot(initial["demo_id"])
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["session_id"]
+    assert snapshot["image_count"] == 1
+    assert snapshot["image_order"] == ["1:first.png"]
+    assert "route registration" in snapshot["response"]["concise_diagnosis"].lower()
+    assert snapshot["retained_result"] is None
+    assert snapshot["product_action"]["copilot_prompt"]
+    assert snapshot["product_action"]["why_this_should_work"]
+    assert snapshot["product_action"]["verification_items"]
+    assert snapshot["product_action"]["primary_next_step"]
+
+
+def test_demo_investigation_rejects_blank_explanation():
+    response = _post_demo_investigation(
+        [_image_part("first.png", b"1")],
+        user_explanation="   ",
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "user_explanation is required."
+
+
+def test_demo_investigation_accepts_two_images_dry_run():
+    response = _post_demo_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ]
+    )
+
+    assert response.status_code == 202
+    initial = response.json()
+    snapshot = _wait_for_demo_terminal_snapshot(initial["demo_id"])
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["session_id"]
+    assert snapshot["image_count"] == 2
+    assert snapshot["image_order"] == ["1:first.png", "2:second.png"]
+    assert "route registration" in snapshot["response"]["concise_diagnosis"].lower()
+    assert snapshot["retained_result"]["image_count"] == 2
+    assert snapshot["retained_result"]["image_order"] == ["1:first.png", "2:second.png"]
+    assert snapshot["product_action"]["action_status"] in {"Prompt ready", "Verification required"}
+    assert "Copilot" in snapshot["product_action"]["copilot_prompt"]
+    assert len(snapshot["progress_events"]) >= 1
+
+
+def test_demo_investigation_accepts_three_images_dry_run():
+    response = _post_demo_investigation(
+        [
+            _image_part("one.png", b"1"),
+            _image_part("two.png", b"2"),
+            _image_part("three.png", b"3"),
+        ]
+    )
+
+    assert response.status_code == 202
+    initial = response.json()
+    snapshot = _wait_for_demo_terminal_snapshot(initial["demo_id"])
+
+    assert snapshot["status"] == "completed"
+    assert snapshot["image_count"] == 3
+    assert snapshot["image_order"] == ["1:one.png", "2:two.png", "3:three.png"]
+
+
+def test_demo_investigation_rejects_zero_images():
+    response = _post_demo_investigation([])
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "At least 1 image is required."
+
+
+def test_demo_investigation_rejects_four_images():
+    response = _post_demo_investigation(
+        [
+            _image_part("one.png", b"1"),
+            _image_part("two.png", b"2"),
+            _image_part("three.png", b"3"),
+            _image_part("four.png", b"4"),
+        ]
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "At most 3 images are allowed."
+
+
+def test_demo_investigation_preserves_image_order():
+    response = _post_demo_investigation(
+        [
+            _image_part("b.png", b"b"),
+            _image_part("a.png", b"a"),
+            _image_part("c.png", b"c"),
+        ]
+    )
+
+    assert response.status_code == 202
+    initial = response.json()
+    snapshot = _wait_for_demo_terminal_snapshot(initial["demo_id"])
+    assert snapshot["status"] == "completed"
+    assert snapshot["image_order"] == ["1:b.png", "2:a.png", "3:c.png"]
+
+
+def test_demo_live_mode_guard_without_api_key_returns_503(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    response = _post_demo_investigation(
+        [
+            _image_part("first.png", b"1"),
+            _image_part("second.png", b"2"),
+        ],
+        mode="live",
+    )
+
+    assert response.status_code == 503
+    assert "OPENAI_API_KEY" in response.json()["detail"]
 
 
 def test_required_next_action_accepts_multi_verb_single_workflow():

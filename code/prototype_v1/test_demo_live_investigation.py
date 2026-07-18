@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import io
+import os
 import tempfile
 from pathlib import Path
 
@@ -38,6 +39,111 @@ def _run(argv: list[str], *, provider_factory=None, monkeypatch=None):
     stderr = io.StringIO()
     outcome = demo.run_manual_investigation(argv, stdout=stdout, stderr=stderr, provider_factory=provider_factory)
     return outcome, stdout.getvalue(), stderr.getvalue()
+
+
+def test_existing_process_openai_api_key_is_preserved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "process-key")
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("OPENAI_API_KEY=dotenv-key\n", encoding="utf-8")
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: dotenv_path)
+
+    captured = {}
+
+    def provider_factory(_args, _session_root):
+        captured["env"] = os.environ.get("OPENAI_API_KEY")
+        return RecordingProvider(
+            response=demo.InvestigationAnalysisResponse(
+                schema_version=demo.INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+                concise_diagnosis="Accepted.",
+                immediate_recommended_action="Continue.",
+                supporting_observations=["Process env won."],
+                confidence_or_uncertainty="High confidence.",
+                warning_or_blocker=None,
+                follow_up_capture_request=None,
+            )
+        )
+
+    outcome, _, _ = _run(
+        _success_argv(images=[_image("test_image.png")], extra=["--session-root", str(tmp_path / "workspace")]),
+        provider_factory=provider_factory,
+    )
+    assert outcome.exit_code == 0
+    assert captured["env"] == "process-key"
+
+
+def test_repo_root_dotenv_is_loaded_when_process_variable_is_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("OPENAI_API_KEY=dotenv-key\n", encoding="utf-8")
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: dotenv_path)
+
+    captured = {}
+
+    def provider_factory(_args, _session_root):
+        captured["env"] = os.environ.get("OPENAI_API_KEY")
+        return RecordingProvider(
+            response=demo.InvestigationAnalysisResponse(
+                schema_version=demo.INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+                concise_diagnosis="Accepted.",
+                immediate_recommended_action="Continue.",
+                supporting_observations=["Dotenv loaded."],
+                confidence_or_uncertainty="High confidence.",
+                warning_or_blocker=None,
+                follow_up_capture_request=None,
+            )
+        )
+
+    outcome, _, _ = _run(
+        _success_argv(images=[_image("test_image.png")], extra=["--session-root", str(tmp_path / "workspace")]),
+        provider_factory=provider_factory,
+    )
+    assert outcome.exit_code == 0
+    assert captured["env"] == "dotenv-key"
+
+
+def test_dotenv_does_not_override_existing_process_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "process-key")
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("OPENAI_API_KEY=dotenv-key\n", encoding="utf-8")
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: dotenv_path)
+
+    captured = {}
+
+    def provider_factory(_args, _session_root):
+        captured["env"] = os.environ.get("OPENAI_API_KEY")
+        return RecordingProvider(
+            response=demo.InvestigationAnalysisResponse(
+                schema_version=demo.INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+                concise_diagnosis="Accepted.",
+                immediate_recommended_action="Continue.",
+                supporting_observations=["Override blocked."],
+                confidence_or_uncertainty="High confidence.",
+                warning_or_blocker=None,
+                follow_up_capture_request=None,
+            )
+        )
+
+    outcome, _, _ = _run(
+        _success_argv(images=[_image("test_image.png")], extra=["--session-root", str(tmp_path / "workspace")]),
+        provider_factory=provider_factory,
+    )
+    assert outcome.exit_code == 0
+    assert captured["env"] == "process-key"
+
+
+def test_missing_dotenv_and_missing_process_variable_fail_cleanly(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: tmp_path / ".env.missing")
+
+    outcome, stdout, stderr = _run(
+        _success_argv(images=[_image("test_image.png")], extra=["--session-root", str(tmp_path / "workspace")]),
+        provider_factory=lambda *_: RecordingProvider(response=None),
+    )
+    assert outcome.exit_code != 0
+    assert "FAILURE: missing_configuration" in stderr
+    assert "OPENAI_API_KEY is required for live runs." in stderr
+    assert "test-key" not in stdout
+    assert "test-key" not in stderr
 
 
 def _success_argv(*, images: list[Path], explanation: str = "I am trying to understand why this Python environment is not activating.", extra: list[str] | None = None) -> list[str]:
@@ -219,6 +325,7 @@ def test_dry_run_prints_canonical_result_fields(tmp_path: Path):
 
 def test_missing_api_key_fails_before_provider_call_in_live_mode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: tmp_path / ".env.missing")
     called = False
 
     def provider_factory(*_args):
@@ -233,6 +340,29 @@ def test_missing_api_key_fails_before_provider_call_in_live_mode(monkeypatch: py
     assert outcome.exit_code != 0
     assert called is False
     assert "OPENAI_API_KEY is required for live runs." in stderr
+
+
+def test_key_value_never_appears_in_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "super-secret-test-key")
+    monkeypatch.setattr(demo, "_repo_dotenv_path", lambda: tmp_path / ".env.missing")
+
+    def provider_factory(*_args):
+        return RecordingProvider(
+            response=demo.InvestigationAnalysisResponse(
+                schema_version=demo.INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+                concise_diagnosis="Accepted.",
+                immediate_recommended_action="Continue.",
+                supporting_observations=["Output checked."],
+                confidence_or_uncertainty="High confidence.",
+                warning_or_blocker=None,
+                follow_up_capture_request=None,
+            )
+        )
+
+    outcome, stdout, stderr = _run(_success_argv(images=[_image("test_image.png")], extra=["--session-root", str(tmp_path / "workspace")]), provider_factory=provider_factory)
+    assert outcome.exit_code == 0
+    assert "super-secret-test-key" not in stdout
+    assert "super-secret-test-key" not in stderr
 
 
 def test_model_override_reaches_provider_configuration(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

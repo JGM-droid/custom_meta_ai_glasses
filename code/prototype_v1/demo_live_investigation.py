@@ -16,6 +16,8 @@ from time import perf_counter
 from typing import Callable, Sequence
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from dotenv import load_dotenv
+
 from investigations import (
     INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
     InvestigationAnalysisAttemptStore,
@@ -49,6 +51,14 @@ DEFAULT_MODEL = "gpt-4.1-mini"
 DEFAULT_TIMEOUT_SECONDS = 45.0
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
+
+
+def _repo_dotenv_path() -> Path:
+    return Path(__file__).resolve().parents[2] / ".env"
+
+
+def _load_repo_environment() -> None:
+    load_dotenv(dotenv_path=_repo_dotenv_path(), override=False)
 
 
 class DemoInvestigationError(RuntimeError):
@@ -476,6 +486,7 @@ def run_manual_investigation(argv: Sequence[str] | None = None, *, stdout=None, 
     args = _parse_args(argv)
     stdout_stream = stdout or sys.stdout
     stderr_stream = stderr or sys.stderr
+    _load_repo_environment()
     start_time = perf_counter()
     session_root = Path(tempfile.gettempdir()) / "manual-investigation-demo-uninitialized"
     owned_root = False
