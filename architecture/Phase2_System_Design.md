@@ -1807,6 +1807,277 @@ Benchmark reporting requirement:
 - report median, p90, and p95 for `picture_to_prompt_ms`
 - do not claim target achievement until measured on the real glasses-to-phone-to-backend path
 
+### 20.22 Phase 2C.2 Foundation Contracts
+
+Purpose:
+
+- define the smallest analysis-execution foundation that supports a future synchronous finalize/result implementation without violating the approved milestone boundary
+- preserve existing Phase 1, Phase 2A, Phase 2B, and Phase 2C.1 contracts
+- keep Phase 2C.2 limited to orchestration/persistence foundation, evidence freezing, analysis-attempt persistence, concurrency/idempotency control, bounded context assembly contract, provider adapter interface, deterministic prompt-renderer contract, and latency instrumentation foundation
+
+Phase boundary split:
+
+- Phase 2C.2:
+    - orchestration and persistence foundation
+    - evidence freezing
+    - analysis-attempt persistence
+    - concurrency/idempotency control
+    - bounded context assembly contract
+    - provider adapter interface
+    - deterministic prompt-renderer contract
+    - latency instrumentation foundation
+    - no real OpenAI invocation
+    - no public finalize/result endpoints
+- Phase 2C.3:
+    - concrete OpenAI provider integration
+    - finalize/start-analysis API endpoint
+    - status/result API endpoints
+    - synchronous execution path
+    - structured provider response validation
+    - deterministic Copilot prompt generation
+    - canonical result persistence through the Phase 2C.2 foundation
+
+Proposed Phase 2C.2 runtime contract (foundation-only):
+
+1. receive a future finalize request through a deferred Phase 2C.3 endpoint contract
+2. validate request UUID, session existence, and state/revision eligibility in the orchestration boundary
+3. validate accepted evidence set and readiness constraints
+4. persist immutable frozen manifest with deterministic hash
+5. create or resume one durable analysis attempt in prepared state
+6. assemble bounded context inputs using a contract that can degrade safely when optional context is unavailable
+7. establish active-attempt ownership durably before any provider call is permitted
+8. render a deterministic Copilot prompt locally from validated structured analysis fields in the future execution layer
+9. persist canonical result and result link through the existing result-store foundation
+10. return status/result through future Phase 2C.3 endpoints without changing earlier-phase compatibility
+
+Evidence-count policy:
+
+- minimum accepted image count for analysis: 1
+- preferred investigation range: 2 to 3 images
+- maximum images sent to the provider: configurable bounded maximum, initially 3
+- a session may contain more accepted evidence than the provider maximum
+- when more images exist than the provider maximum, select a deterministic subset for one analysis attempt
+- deterministic selection rule:
+    1. preserve accepted evidence order
+    2. include the earliest accepted image
+    3. include the latest accepted image
+    4. fill remaining slots with evenly distributed intermediate images
+    5. never select more than the configured provider maximum
+    6. record selected evidence IDs in the frozen manifest
+- no accepted evidence is deleted merely because it was not selected for one analysis attempt
+
+Ownership boundaries:
+
+- finalization orchestration owner: investigations service orchestration layer
+- evidence freezing owner: investigation evidence store plus frozen-manifest persistence owned by the attempt/result workflow
+- analysis-attempt persistence owner: investigations result/attempt store, using session-scoped relative paths consistent with existing results storage conventions
+- context assembly owner: context adapter boundary that emits bounded safe inputs and a context snapshot contract
+- provider adapter owner: deferred interface boundary only in 2C.2, concrete invocation in 2C.3
+- deterministic prompt renderer owner: application layer local renderer that transforms validated structured analysis fields into the canonical Copilot prompt
+- canonical result persistence owner: result store abstraction and compatibility latest-result update path
+- state transition owner: pure lifecycle transition helpers and session store atomic save/load boundaries
+
+Concurrency serialization and idempotency:
+
+- the optimistic revision model is the primary control
+- orchestration loads the session with its current revision
+- transition into finalizing is persisted using expected_revision
+- only one request can successfully persist that revision transition
+- competing requests receive a deterministic revision-conflict result
+- after successful transition, active_analysis_attempt_id is persisted on the session
+- duplicate requests must read the current session state before any provider call can be considered
+- no provider call occurs until ownership of the active attempt has been durably established
+- if atomic revision checking is insufficient in the file-backed store, a per-session lock-file boundary may wrap only the revision-checked transition
+- lock behavior:
+    - bounded acquisition timeout
+    - cleanup in finally
+    - stale-lock recovery rule
+    - no sensitive data in the lock
+    - lock scope limited to the state-changing critical section
+    - provider execution does not hold the lock
+- no queues, workers, or distributed locking are introduced
+
+Evidence-freezing design:
+
+- freeze by immutable manifest of canonical relative payload references plus immutable metadata and content hashes
+- no second copy of raw payload files in Phase 2C.2
+- required freeze artifacts:
+    - `finalization/frozen_manifest.json`
+    - `frozen_manifest_hash`
+- integrity checks:
+    - validate payload existence and hash match at freeze time
+    - revalidate hash match before any future provider invocation in Phase 2C.3
+- changed/missing payload detection:
+    - classify as controlled integrity failure
+    - mark attempt failed with safe metadata
+    - do not proceed with mutated or missing evidence
+
+Analysis-attempt design:
+
+- identifier: server-generated UUID `analysis_attempt_id`
+- relation: one session has one current attempt pointer and immutable prior attempts
+- persistence owner/location:
+    - investigations result/attempt store owns attempt persistence
+    - one durable attempt record per `analysis_attempt_id`
+    - records live under relative paths consistent with the repository result storage conventions, using the existing session-finalization hierarchy under `code/prototype_v1/results/investigation_sessions/<session_id>/finalization/analysis_attempts/<analysis_attempt_id>.json`
+    - session record stores `active_analysis_attempt_id` and `latest_analysis_attempt_id`
+    - completed attempt links to `canonical_result_id`
+    - frozen manifest is persisted with or referenced by the attempt record
+    - timing metadata is owned by the attempt record and copied into canonical result metadata when completed
+    - safe failure metadata is persisted on terminal failed attempts
+    - interrupted active attempts remain discoverable for reconciliation
+- required attempt fields:
+    - `analysis_attempt_id`
+    - `session_id`
+    - `attempt_number`
+    - `status`
+    - `created_at_utc`
+    - `started_at_utc`
+    - `completed_at_utc`
+    - `provider_request_id` (optional safe diagnostic)
+    - `failure_metadata` (safe category/message/retryable)
+    - `frozen_manifest_hash`
+    - `context_snapshot_hash`
+    - `request_fingerprint`
+    - latency timing metadata object (safe, bounded)
+    - `canonical_result_id` when completed
+- outcome statuses:
+    - `prepared`
+    - `provider_call_started`
+    - `completed`
+    - `failed_pre_call`
+    - `failed_provider_confirmed`
+    - `failed_result_persistence`
+    - `ambiguous_completion`
+
+Context assembly limits and safety:
+
+- maximum image count for provider-bound analysis: bounded maximum, initially 3
+- maximum image payload size: bounded by existing Phase 2B accepted upload limits (currently 2 MB per image)
+- supported image MIME types: `image/jpeg`, `image/png`
+- spoken explanation handling:
+    - optional `normalized_explanation_text` string input
+    - trimmed and bounded size
+    - empty value treated as absent
+- optional VS Code context:
+    - architecture and active coding context are optional supporting signals
+    - collect within bounded timeout budget
+    - fail open to analysis without optional context when budget exceeded
+- safety rules:
+    - never include secrets
+    - never include raw source-file contents beyond bounded safe excerpts already approved by context policy
+    - never include absolute filesystem paths
+    - include only safe relative filenames when needed and available
+
+Prompt ownership:
+
+- provider returns structured analysis fields
+- application validates the structured response
+- application uses a deterministic local renderer to produce the Copilot-ready prompt
+- raw provider prose is not treated as the canonical prompt
+- prompt formatting is versioned and regression-testable
+- the canonical result stores both structured analysis fields and the locally rendered prompt
+- prompt rendering must not require an additional provider call
+
+Minimum structured provider fields:
+
+- `observed_evidence`
+- `likely_issue`
+- `confidence_or_uncertainty`
+- `recommended_checks`
+- `recommended_changes`
+- `relevant_safe_filenames`
+- `limitations`
+
+Latency instrumentation foundation:
+
+- required stage markers:
+    - `capture_acknowledged`
+    - `evidence_ready`
+    - `context_collection_started`
+    - `context_collection_completed`
+    - `provider_request_started`
+    - `provider_response_completed`
+    - `result_persisted`
+    - `prompt_available`
+- required derived durations:
+    - `evidence_preparation_ms`
+    - `context_collection_ms`
+    - `provider_round_trip_ms`
+    - `result_processing_ms`
+    - `picture_to_prompt_ms`
+- telemetry constraints:
+    - telemetry never mutates prompt content
+    - telemetry never adds model calls
+    - telemetry fails open when unavailable
+    - telemetry excludes prompts, source code, image contents, secrets, absolute paths, and raw provider responses
+- device versus backend ownership:
+    - `device_picture_to_prompt_ms` is measured by the phone/glasses client and is authoritative for real-device product benchmarking
+    - `backend_picture_to_prompt_ms` is measured by the backend for diagnostics only
+    - `capture_acknowledged` is client-originated audit metadata and not a backend-observable physical acknowledgment event
+    - client timestamps such as `client_capture_acknowledged_utc` and `client_request_started_utc` are untrusted audit metadata only
+    - client wall-clock timestamps must not be used to compute backend monotonic durations
+    - product KPI remains `picture_to_prompt_ms`, with real product claims using the device-measured value
+
+Persistence and reconciliation clarification:
+
+- write/transition order (foundation view):
+    1. frozen manifest durable
+    2. attempt durable as `prepared`
+    3. session `finalizing` with `active_analysis_attempt_id`
+    4. provider boundary eligibility established
+    5. future provider response validated in Phase 2C.3
+    6. canonical result durable by `result_id`
+    7. session result link durable
+    8. attempt `completed`
+    9. session `completed`
+    10. compatibility latest pointer write last
+- atomicity expectation:
+    - per-file atomic replace semantics
+    - multi-file completion determined by canonical result + result link durability
+- failure behavior:
+    - provider succeeds but canonical result write fails: the attempt becomes a terminal failure requiring reconciliation, and no completed session is reported
+    - canonical result writes but session linkage fails: the canonical result remains discoverable through attempt/session reconciliation
+    - session completes but compatibility latest write fails: keep the canonical result, preserve completed state, and allow latest reconciliation later
+    - process stops after attempt creation: the durable attempt remains discoverable for reconciliation and no second provider call is silently created
+    - duplicate request arrives after partial persistence: read the current session/attempt state first and return the durable in-progress/completed result or a deterministic conflict
+- invariants:
+    - a session must never report completed without a durable canonical result
+    - a durable canonical result must remain discoverable through attempt/session reconciliation
+    - compatibility latest-result failure does not delete the canonical result
+    - ambiguous provider completion is not automatically retried
+    - recovery never silently creates a second provider call
+
+Deferred Phase 2C.3 scope:
+
+- real OpenAI API invocation
+- provider SDK wiring
+- public finalize endpoint
+- public result/status endpoints
+- actual synchronous request execution
+- structured provider response validation in the execution path
+- deterministic Copilot prompt generation in the execution path
+- canonical result persistence execution path through the Phase 2C.2 foundation
+- production timeout values
+- device integration changes
+
+Explicitly deferred beyond 2C.3:
+
+- background workers
+- queues
+- streaming
+- distributed tracing
+- caching redesign
+- production authentication redesign
+- multi-provider routing
+- Phase 2D+ work
+
+Open design risks and decisions requiring architecture review:
+
+- the section now defines the foundation contracts and the future execution slice separately; confirm the Phase 2C.2/2C.3 split is acceptable for milestone planning
+- confirm whether the canonical attempt path naming should be normalized further before implementation
+- confirm whether the client-propagated acknowledgment metadata should be stored on the session record, the attempt record, or both
+
 ## 21. Testing Strategy
 
 ### Unit tests
