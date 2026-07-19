@@ -1,3 +1,10 @@
+"""start_assistant.py — CANONICAL RUNTIME SUPERVISOR
+
+Support tier: CANONICAL
+
+Official backend/runtime supervisor for this repository.
+"""
+
 from __future__ import annotations
 
 import atexit

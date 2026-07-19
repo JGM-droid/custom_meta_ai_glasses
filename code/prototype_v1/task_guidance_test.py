@@ -1,3 +1,10 @@
+"""task_guidance_test.py — OPENAI TASK-GUIDANCE CHECK
+
+Support tier: SUPPORTED DIAGNOSTIC
+
+Manual diagnostic script for prompt-style guidance output verification.
+"""
+
 from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path

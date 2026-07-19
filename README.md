@@ -106,6 +106,48 @@ These remain for backward compatibility and historical verification. They are no
 - Deprecated behavior means the script is retained only for compatibility verification and is blocked/warned by default where implemented.
 - Current deprecated operational paths are the same files listed in Compatibility-Only Scripts.
 
+### Script Governance Tiers (Phase 2)
+
+Each executable script in `code/prototype_v1` is assigned exactly one support tier.
+
+| Script | Support tier | Responsibility | Classification reason |
+|---|---|---|---|
+| `code/prototype_v1/api.py` | CANONICAL | FastAPI application surface and canonical backend route contract. | Official backend service owned by canonical runtime contract. |
+| `code/prototype_v1/start_assistant.py` | CANONICAL | Canonical backend/runtime supervisor and process guard. | Official startup entry point. |
+| `code/prototype_v1/launch_demo.py` | CANONICAL | Canonical demo launcher and tunnel-aware operator workflow. | Official launcher entry point. |
+| `code/prototype_v1/refresh_guidance.py` | CANONICAL | Canonical refresh/watch coordination. | Owned by canonical runtime supervision flow. |
+| `code/prototype_v1/context_fusion.py` | CANONICAL | Canonical context-fusion writer. | Official writer for `results/context_fusion.json`. |
+| `code/prototype_v1/glasses_demo.py` | CANONICAL | Canonical guidance/HUD payload generation. | Official writer for `results/resume_now.json`. |
+| `code/prototype_v1/active_editor_context.py` | SUPPORTED DIAGNOSTIC | Active editor context normalization utility. | Safe helper utility, not runtime owner. |
+| `code/prototype_v1/coding_context_pack.py` | SUPPORTED DIAGNOSTIC | Aggregates coding context signals for guidance. | Support utility for diagnostics and pipeline context. |
+| `code/prototype_v1/coding_session_snapshot.py` | SUPPORTED DIAGNOSTIC | Produces coding session snapshot artifact. | Support utility, non-canonical launcher. |
+| `code/prototype_v1/context_pack_prompt_preview.py` | SUPPORTED DIAGNOSTIC | Prompt preview helper from context artifacts. | Inspection utility; does not own runtime. |
+| `code/prototype_v1/demo_live_investigation.py` | SUPPORTED DIAGNOSTIC | Manual investigation live/dry-run smoke runner. | Safe manual validation utility. |
+| `code/prototype_v1/demo_scenario.py` | SUPPORTED DIAGNOSTIC | Repeatable recruiter/demo scenario runner. | Demonstration and validation script. |
+| `code/prototype_v1/dev_demo_scenarios.py` | SUPPORTED DIAGNOSTIC | Development scenario fixture writer. | Developer support utility. |
+| `code/prototype_v1/glasses_test_checklist.py` | SUPPORTED DIAGNOSTIC | Checklist generation for validation flows. | Documentation/validation helper. |
+| `code/prototype_v1/https_tunnel_readiness.py` | SUPPORTED DIAGNOSTIC | HTTPS tunnel readiness guidance payload. | Diagnostic/readiness utility only. |
+| `code/prototype_v1/https_tunnel_test_runner.py` | SUPPORTED DIAGNOSTIC | HTTPS tunnel test workflow helper. | Diagnostic/test utility only. |
+| `code/prototype_v1/network_display_test.py` | SUPPORTED DIAGNOSTIC | LAN display/test payload utility. | Troubleshooting utility; non-canonical runtime owner. |
+| `code/prototype_v1/repo_context.py` | SUPPORTED DIAGNOSTIC | Repository context extraction helper. | Safe support utility. |
+| `code/prototype_v1/screenshot_watcher.py` | SUPPORTED DIAGNOSTIC | Optional screenshot-to-vision endpoint watcher. | Optional workflow utility; not canonical startup owner. |
+| `code/prototype_v1/session_recovery.py` | SUPPORTED DIAGNOSTIC | Session recovery context utility. | Support utility for developer guidance context. |
+| `code/prototype_v1/terminal_error_context.py` | SUPPORTED DIAGNOSTIC | Terminal error context extraction utility. | Support utility; no runtime ownership. |
+| `code/prototype_v1/voice_readout.py` | SUPPORTED DIAGNOSTIC | Local TTS readout utility for latest guidance payload. | Optional local UX diagnostic utility. |
+| `code/prototype_v1/test_api.py` | SUPPORTED DIAGNOSTIC | Manual API smoke invocation script. | Diagnostic helper, not production runtime owner. |
+| `code/prototype_v1/test_completed_steps.py` | SUPPORTED DIAGNOSTIC | Scripted completed-step extraction validation. | Manual validation script. |
+| `code/prototype_v1/test_continuity_flow.py` | SUPPORTED DIAGNOSTIC | Scripted continuity behavior validation. | Manual validation script. |
+| `code/prototype_v1/test_glasses_guidance.py` | SUPPORTED DIAGNOSTIC | Scripted glasses guidance payload validation. | Manual validation script. |
+| `code/prototype_v1/image_test.py` | SUPPORTED DIAGNOSTIC | Simple single-image OpenAI diagnostic script. | Developer diagnostic; not canonical workflow owner. |
+| `code/prototype_v1/task_guidance_test.py` | SUPPORTED DIAGNOSTIC | Prompted task-guidance OpenAI diagnostic script. | Developer diagnostic; not canonical workflow owner. |
+| `code/prototype_v1/vision_test.py` | SUPPORTED DIAGNOSTIC | Basic OpenAI vision connectivity diagnostic script. | Developer diagnostic; not canonical workflow owner. |
+| `code/prototype_v1/folder_watcher.py` | COMPATIBILITY | Legacy/prototype folder watcher calling `watch_latest_image.py`. | Retained older workflow; not approved normal path. |
+| `code/prototype_v1/watch_latest_image.py` | COMPATIBILITY | Legacy direct single-image analysis script. | Retained for historical verification and compatibility flows. |
+| `code/prototype_v1/local_demo_launcher.py` | DEPRECATED | Legacy pre-V16 local launcher. | Blocked-by-default legacy path; duplicate runtime risk. |
+| `code/prototype_v1/ngrok_demo_launcher.py` | DEPRECATED | Legacy pre-V16 ngrok launcher. | Blocked-by-default legacy path; tunnel/runtime conflict risk. |
+| `code/prototype_v1/demo_server_manager.py` | DEPRECATED | Legacy V5.2 server manager with optional process spawning. | Blocked-by-default legacy path; non-canonical process ownership. |
+| `code/prototype_v1/resume_now.py` | DEPRECATED | Legacy standalone resume payload writer. | Blocked-by-default legacy path; canonical artifact writer conflict. |
+
 Canonical backend interpreter:
 
 ```

@@ -1,3 +1,10 @@
+"""launch_demo.py — CANONICAL DEMO/TUNNEL LAUNCHER
+
+Support tier: CANONICAL
+
+Official operator launcher for demo startup and public tunnel workflow.
+"""
+
 from __future__ import annotations
 
 import argparse

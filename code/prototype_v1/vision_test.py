@@ -1,3 +1,10 @@
+"""vision_test.py — OPENAI VISION SMOKE CHECK
+
+Support tier: SUPPORTED DIAGNOSTIC
+
+Minimal manual diagnostic script for OpenAI API vision path validation.
+"""
+
 from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path

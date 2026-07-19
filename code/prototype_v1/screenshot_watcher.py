@@ -1,3 +1,10 @@
+"""screenshot_watcher.py — OPTIONAL SCREENSHOT WATCHER
+
+Support tier: SUPPORTED DIAGNOSTIC
+
+Optional diagnostic watcher that posts captures to vision analyze endpoints.
+"""
+
 from __future__ import annotations
 
 import hashlib

@@ -323,6 +323,7 @@ if __name__ == "__main__":
             "\n"
             "LEGACY FILE — BLOCKED\n"
             "=====================\n"
+            "Support tier: DEPRECATED\n"
             "demo_server_manager.py is not part of the V16+ canonical runtime.\n"
             "\n"
             "Running it would:\n"
@@ -331,7 +332,7 @@ if __name__ == "__main__":
             "  - Write demo_server_status.json to the results/ artifact store\n"
             "\n"
             "Canonical startup command:\n"
-            "  venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
+            "  .\\\\venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
             "\n"
             "To override (not recommended):\n"
             "  python demo_server_manager.py --allow-legacy-run\n",

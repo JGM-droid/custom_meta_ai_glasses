@@ -1,3 +1,10 @@
+"""voice_readout.py — LOCAL VOICE READOUT UTILITY
+
+Support tier: SUPPORTED DIAGNOSTIC
+
+Reads the latest guidance artifact and performs optional local TTS playback.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

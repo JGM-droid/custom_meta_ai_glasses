@@ -1,3 +1,10 @@
+"""image_test.py — OPENAI IMAGE CONNECTIVITY CHECK
+
+Support tier: SUPPORTED DIAGNOSTIC
+
+Simple manual diagnostic script for direct image analysis connectivity testing.
+"""
+
 from openai import OpenAI
 from dotenv import load_dotenv
 from pathlib import Path

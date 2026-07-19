@@ -1,3 +1,10 @@
+"""refresh_guidance.py — CANONICAL REFRESH COORDINATOR
+
+Support tier: CANONICAL
+
+Coordinates canonical refresh and watch cycles for guidance artifact updates.
+"""
+
 from __future__ import annotations
 
 import atexit

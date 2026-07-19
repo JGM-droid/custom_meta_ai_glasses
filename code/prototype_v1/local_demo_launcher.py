@@ -132,6 +132,7 @@ if __name__ == "__main__":
             "\n"
             "LEGACY FILE — BLOCKED\n"
             "=====================\n"
+            "Support tier: DEPRECATED\n"
             "local_demo_launcher.py is not part of the V16+ canonical runtime.\n"
             "\n"
             "Running it would:\n"
@@ -141,7 +142,7 @@ if __name__ == "__main__":
             "  - Bypass all V16 single-instance guards\n"
             "\n"
             "Canonical startup command:\n"
-            "  venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
+            "  .\\\\venv\\\\Scripts\\\\python.exe code\\\\prototype_v1\\\\start_assistant.py\n"
             "\n"
             "To override (not recommended):\n"
             "  python local_demo_launcher.py --allow-legacy-run\n",
