@@ -1,155 +1,251 @@
 # Investigation Session API V1
 
-Phase 1B performs one combined multimodal analysis for Investigation Sessions.
+This document is the Android-facing Investigation Session contract for the backend in this repository.
 
-## Endpoint
+## Contract Scope
 
-- `POST /investigations/analyze`
+Current canonical mobile polling contract:
 
-## Multipart Fields
+- GET /investigation-sessions/{session_id}/poll
 
-- `schema_version`: string
-- `session_id`: string
-- `idempotency_key`: string
-- `user_explanation`: string
-- `images`: repeated uploaded files in client order
+Supporting session contract endpoints (same namespace):
 
-## Validation Rules
+- POST /investigation-sessions
+- GET /investigation-sessions/{session_id}
+- POST /investigation-sessions/{session_id}/pause
+- POST /investigation-sessions/{session_id}/resume
+- POST /investigation-sessions/{session_id}/cancel
+- POST /investigation-sessions/{session_id}/evidence/image
+- POST /investigation-sessions/{session_id}/evidence/audio
+- GET /investigation-sessions/{session_id}/evidence
+- DELETE /investigation-sessions/{session_id}/evidence/{evidence_id}
+- POST /investigation-sessions/{session_id}/analyze
 
-- Supported `schema_version`: `1.0`
-- `session_id` must be present and non-empty after trimming
-- `idempotency_key` must be present and non-empty after trimming
-- `user_explanation` may be empty and is normalized by collapsing internal whitespace
-- `images` must contain exactly 2 or 3 files
-- upload order is preserved exactly as received
-- only `image/jpeg` and `image/png` are accepted
-- empty uploaded files are rejected
+There is one canonical session-specific polling contract. Global latest endpoints are convenience read models and are not session polling contracts.
 
-Phase 1B uses one combined model request with all uploaded images (2 or 3) in capture order and the normalized spoken explanation.
-Optional Context Engine enrichment may be included when available.
+## Current Implementation
 
-## Response Model
+### Session Status Enum
 
-- `schema_version`
-- `investigation_id`
-- `session_id`
-- `status`
-- `diagnosis`
-- `required_next_action`
-- `image_count`
-- `image_order`
-- `used_user_explanation`
+Session status values are:
 
-`image_order` contains one entry per uploaded image using this format:
+- created
+- collecting
+- paused
+- finalizing
+- analyzing
+- failed
+- completed
+- cancelled
 
-- `<1-based position>:<original filename>`
+### Polling Endpoint
 
-Examples:
+Method and path:
 
-- `1:first.png`
-- `2:second.png`
-- `1:capture.png`
-- `2:capture.png`
+- GET /investigation-sessions/{session_id}/poll
 
-Phase 1A baseline placeholder values were:
+Request requirements:
 
-- `status`: `validated`
-- `diagnosis`: `Investigation session received and validated.`
-- `required_next_action`: `Proceed to combined multimodal analysis integration.`
+- session_id path parameter must be a valid UUID.
+- Optional auth token follows existing glasses/session rule:
+  - query token, or
+  - Authorization: Bearer <token>
+  - only enforced when GLASSES_API_TOKEN is configured.
 
-These values are deterministic placeholder outputs and are not an AI diagnosis.
+Polling response model:
 
-## Phase 1B Success Behavior
+- session_id: string UUID
+- investigation_id: string or null
+- status: session status enum value
+- created_at: UTC timestamp
+- updated_at: UTC timestamp
+- image_count: integer >= 0
+- explanation_present: boolean
+- retryable: boolean
+- error: object or null
+- compact_result: object or null
+- result_available: boolean
+- poll_after_ms: integer hint in milliseconds
 
-- `status` is `analyzed`
-- `diagnosis` is produced by one combined multimodal model result
-- `required_next_action` is produced by the same model result
-- the model analyzes all images together as one investigation sequence
-- image upload order is used as capture sequence context
-- no per-image model calls are made
+Polling error object shape (when error is present):
 
-The successful response model remains unchanged:
+- category: string
+- message: string
+- occurred_at_utc: UTC timestamp or null
 
-- `schema_version`
-- `investigation_id`
-- `session_id`
-- `status`
-- `diagnosis`
-- `required_next_action`
-- `image_count`
-- `image_order`
-- `used_user_explanation`
+Compact result shape (when present) is the compact glasses projection:
 
-Future delivery work:
+- schema_version
+- projection_version
+- investigation_id
+- status
+- diagnosis_short
+- required_next_action_short
+- uncertainty_flag
+- freshness_state
+- completed_at_utc
+- age_seconds
 
-- concise glasses output publishing
-- detailed desktop web result presentation
+Polling semantics:
 
-## Phase 1C: Retention And Delivery
+- Read-only and idempotent.
+- Repeated polling does not mutate session state.
+- Polling does not invoke OpenAI.
+- Polling does not invoke Context Engine loading.
+- Polling does not create investigations, retained results, or evidence.
 
-Phase 1C adds retained latest-result delivery without changing the `POST /investigations/analyze` response schema.
+### Analyze Trigger Endpoint
 
-### Retention Behavior
+Method and path:
 
-- On successful `POST /investigations/analyze`, the backend writes one retained result file:
-  - `code/prototype_v1/results/investigation_latest.json`
-- Writes are atomic and replace the previous retained result only after a successful analysis.
-- On analysis failure, the previous retained result remains unchanged.
-- Retained data excludes raw image bytes.
+- POST /investigation-sessions/{session_id}/analyze
 
-### New Retrieval Endpoints
+Execution model:
 
-- `GET /investigations/latest`
-  - Returns desktop projection with:
-    - diagnosis
-    - required_next_action
-    - copilot_prompt
-    - freshness metadata
-  - `404` when no retained result exists
-  - `500` when retained result is unreadable or schema-invalid
+- Current implementation is synchronous request/response orchestration.
+- The route invokes the canonical InvestigationOrchestrator in-process.
+- No background queue is used in this milestone.
 
-- `GET /investigations/latest/glasses`
-  - Returns compact glasses projection with:
-    - diagnosis_short
-    - required_next_action_short
-    - uncertainty_flag
-    - freshness metadata
-  - Follows the same `GLASSES_API_TOKEN` auth convention as other glasses endpoints
-  - `404` when no retained result exists
+Request requirements:
 
-- `GET /investigations`
-  - Optional desktop alias route to the existing mock display page.
+- session_id path parameter must be a valid UUID.
+- Optional JSON body:
+  - expected_revision: integer >= 0 (optional optimistic revision guard)
+- Optional auth token follows existing glasses/session rule:
+  - query token, or
+  - Authorization: Bearer <token>
+  - only enforced when GLASSES_API_TOKEN is configured.
 
-### Freshness
+Preconditions enforced before orchestration:
 
-- Projection freshness is derived from retained `completed_at_utc`.
-- `INVESTIGATION_RESULT_STALE_SECONDS` controls stale threshold.
-  - default: `900` seconds
-- `freshness_state` values:
-  - `fresh`
-  - `stale`
-  - `unknown`
+- Session must exist.
+- Session must be collecting.
+- Session must not be cancelled.
+- Session must not already be finalizing or analyzing.
+- Completed sessions are treated as idempotent success (no new provider call).
+- Session must contain 1 to 3 accepted image evidence records.
+- Image payload files must be present and readable.
+- Explanation must be derivable from stored normalized_text evidence fields.
 
-### Copilot Prompt Generation
+Stored evidence and explanation mapping:
 
-- One deterministic prompt is generated from retained fields.
-- Prompt includes diagnosis, required next action, context usage/freshness summary, and guarded implementation instructions.
-- No additional OpenAI calls are used for retrieval projections or prompt generation.
+- Image set comes from stored session evidence ordered by sequence_number (then evidence_id for stable ties).
+- selected_capture_evidence_ids for orchestrator input follow that deterministic image order.
+- normalized_explanation_text is sourced from stored normalized_text values across session evidence, including audio evidence transcripts when present.
+- Android does not resend image bytes for this route.
 
-## Versioning Rule
+Analyze trigger response model:
 
-The backend rejects unsupported schema versions. Phase 1A supports only `1.0`.
+- session_id
+- investigation_id (nullable)
+- status
+- accepted
+- result_available
+- compact_result (nullable)
+- retryable
+- error (nullable)
+- poll_url
 
-Phase 1B combined multimodal analysis is implemented under the same endpoint contract.
+Lifecycle behavior:
 
-## Example PowerShell Request
+- Successful path: collecting -> finalizing -> analyzing -> completed
+- Failure path (caught orchestration failure after analysis start): finalizing/analyzing -> failed
+- Polling remains read-only and does not mutate timestamps.
 
-```powershell
-curl.exe -X POST "http://127.0.0.1:8001/investigations/analyze" ^
-  -F "schema_version=1.0" ^
-  -F "session_id=session-123" ^
-  -F "idempotency_key=idem-123" ^
-  -F "user_explanation=The display is blank after reboot." ^
-  -F "images=@C:\path\to\capture1.png;type=image/png" ^
-  -F "images=@C:\path\to\capture2.jpg;type=image/jpeg"
-```
+Duplicate and concurrency behavior:
+
+- Completed session analyze calls are idempotent and do not invoke provider again.
+- Calls while finalizing/analyzing return stable 409 conflict.
+- Attempt ownership and session revision guards prevent duplicate simultaneous ownership under current local locking design.
+
+### Polling Field Behavior
+
+session_id vs investigation_id:
+
+- session_id is always the stable session UUID.
+- investigation_id is null until a canonical retained result linked to this session can be loaded.
+
+compact_result behavior:
+
+- null while no canonical retained result is linked/available.
+- present only when session.completed_result_id resolves to a canonical retained result.
+
+result_available behavior:
+
+- true when compact_result is present.
+- false when compact_result is null.
+
+retryable behavior:
+
+- false for completed or cancelled sessions.
+- otherwise true when no last_error exists.
+- when last_error exists, mirrors last_error.retryable.
+
+poll_after_ms meaning:
+
+- server hint for recommended next poll interval.
+- current values:
+  - 30000 when result_available is true
+  - 1500 during finalizing or analyzing
+  - 5000 otherwise
+
+### Error Contract For Session Endpoints
+
+Session endpoints return structured errors as:
+
+- detail.category
+- detail.message
+
+Common status codes:
+
+- 404: resource not found (for example session_not_found, evidence_not_found)
+- 409: state/revision conflict (for example invalid_state_transition, revision_conflict)
+- 422: validation/ID/upload issues (for example invalid_session_id, invalid_evidence_id, validation_error, invalid_upload)
+- 500: storage/backend availability failures (for example session_storage_error, evidence_storage_error)
+
+Analyze trigger status code expectations:
+
+- 404: unknown session_id
+- 409: invalid lifecycle transition, revision conflict, or analysis attempt conflict
+- 422: invalid or incomplete evidence, missing explanation, invalid request fields
+- 500: safe orchestration/storage failures
+
+Additional evidence upload statuses:
+
+- 413: upload_too_large
+- 415: unsupported_media_type
+
+400 status note:
+
+- Session endpoints in this contract namespace do not currently use 400 for validation.
+- Legacy investigation analyze routes outside this namespace may return 400 with route-specific validation messages.
+
+## Compatibility Notes
+
+Backward compatibility preserved:
+
+- Existing legacy routes are unchanged.
+- Existing demo routes are unchanged.
+- Existing dashboard-related routes are unchanged.
+- Global latest routes remain available and unchanged.
+- Session polling was added additively via /investigation-sessions/{session_id}/poll.
+- Session analysis trigger is additive at /investigation-sessions/{session_id}/analyze.
+
+Timestamp naming note:
+
+- Session lifecycle models use created_at_utc and updated_at_utc.
+- Polling response intentionally exposes created_at and updated_at mapped from the same UTC session timestamps.
+
+## Planned Future Work (Not Yet Implemented)
+
+- Background queue/worker execution model for session analysis.
+- Additional explicit server-driven polling/backoff policy controls beyond static hints.
+- Expanded auth hardening policy for production deployment.
+- Formal deprecation plan (if ever required) for non-session global latest convenience routes.
+
+Cancellation limitation (current implementation):
+
+- Mid-request cancellation during synchronous orchestrator execution is not currently supported.
+- Cancellation is enforced before analysis begins, and terminal cancellation is reflected by polling.
+
+Do not treat planned items as currently implemented behavior.

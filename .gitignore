@@ -3,6 +3,12 @@ venv/
 .env
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+testing_logs/
 code/prototype_v1/test_images/*.png
 code/prototype_v1/results/
 code/prototype_v1/test_images/*.jpg

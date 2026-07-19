@@ -198,8 +198,10 @@ def test_evidence_state_gating_and_listing_rules(evidence_test_context):
         f"/investigation-sessions/{created_id}/evidence/image",
         files={"file": _image_part("blocked.png", b"bytes")},
     )
-    assert created_upload.status_code == 409
-    assert created_upload.json()["detail"]["category"] == "invalid_state_transition"
+    assert created_upload.status_code == 201
+    created_session = store.load_session(created_id)
+    assert created_session.status == InvestigationSessionStatus.COLLECTING
+    assert created_session.revision == 1
 
     paused_id = _create_session(client)
     paused = client.post(f"/investigation-sessions/{paused_id}/pause", json={"expected_revision": 0})
@@ -233,8 +235,8 @@ def test_evidence_state_gating_and_listing_rules(evidence_test_context):
     assert cancelled_upload.status_code == 409
 
     delete_created = client.delete(f"/investigation-sessions/{created_id}/evidence/00000000-0000-0000-0000-000000000000")
-    assert delete_created.status_code == 409
-    assert delete_created.json()["detail"]["category"] == "invalid_state_transition"
+    assert delete_created.status_code == 404
+    assert delete_created.json()["detail"]["category"] == "evidence_not_found"
 
     collecting_session_id = _create_collecting_session(client)
     upload = client.post(

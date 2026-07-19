@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Form
@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from investigations import (
     INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
+    InvestigationAnalysisStatus,
     InvestigationAnalysisAttemptStore,
     InvestigationAnalysisProviderMissingApiKeyError,
     InvestigationAnalysisRequestPackage,
@@ -43,6 +44,11 @@ from investigations import (
     InvestigationEvidenceType,
     InvestigationGlassesProjection,
     InvestigationSession,
+    InvestigationSessionStatus,
+    InvestigationSessionPollingError,
+    InvestigationSessionPollingResponse,
+    InvestigationSessionAnalyzeRequest,
+    InvestigationSessionAnalyzeResponse,
     InvestigationSessionCreateRequest,
     InvestigationSessionInvalidId,
     InvestigationSessionLifecycleError,
@@ -57,14 +63,27 @@ from investigations import (
     InvestigationOrchestrationError,
     InvestigationOrchestrationOutcome,
     InvestigationOrchestrationProgressEvent,
+    InvestigationOrchestrationStoredResult,
     InvestigationOrchestrationStage,
+    InvestigationOrchestrationAttemptConflictError,
+    InvestigationOrchestrationInvalidInteractionError,
+    InvestigationOrchestrationLifecycleError,
+    InvestigationOrchestrationManifestError,
+    InvestigationOrchestrationProviderError,
+    InvestigationOrchestrationRequestBuildError,
+    InvestigationOrchestrationResponseValidationError,
+    InvestigationOrchestrationResultPersistenceError,
+    InvestigationOrchestrationRevisionConflictError,
+    InvestigationOrchestrationUnexpectedError,
     InvestigationStoreError,
     InvestigationStoreNotFound,
     InvestigationRetainedResult,
+    InvestigationEvidenceValidationStatus,
     MAX_AUDIO_UPLOAD_BYTES,
     MAX_IMAGE_UPLOAD_BYTES,
     UPLOAD_CHUNK_SIZE,
     analyze_investigation_request_with_retained,
+    apply_fail_transition,
     apply_cancel_transition,
     apply_start_transition,
     apply_pause_transition,
@@ -74,6 +93,7 @@ from investigations import (
     build_glasses_projection,
     investigation_stale_seconds,
     load_latest_investigation_result,
+    load_canonical_investigation_result,
     save_latest_investigation_result,
     OpenAIInvestigationAnalysisProvider,
 )
@@ -119,6 +139,9 @@ REPO_DOTENV_PATH = REPO_ROOT / ".env"
 LOCAL_DOTENV_PATH = BASE_DIR / ".env"
 DEFAULT_DEMO_MODEL = "gpt-4.1-mini"
 DEFAULT_DEMO_TIMEOUT_SECONDS = 45.0
+POLL_HINT_MS_PROCESSING = 1500
+POLL_HINT_MS_IDLE = 5000
+POLL_HINT_MS_COMPLETED = 30000
 
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory=str(RESULTS_DIR)), name="results")
@@ -288,6 +311,76 @@ class _DemoResultPersistence:
         else:
             self.latest_retained_result = None
 
+        return result_id
+
+
+def _canonical_result_id_for_retained(retained_result: InvestigationRetainedResult) -> str:
+    seed = f"{retained_result.investigation_id}|{retained_result.completed_at_utc.astimezone(timezone.utc).isoformat()}"
+    return str(uuid5(NAMESPACE_URL, seed))
+
+
+def _analysis_response_from_retained(retained_result: InvestigationRetainedResult) -> InvestigationAnalysisResponse:
+    return InvestigationAnalysisResponse(
+        schema_version=INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+        concise_diagnosis=_truncate_projection_text(retained_result.diagnosis, 500),
+        immediate_recommended_action=_truncate_projection_text(retained_result.required_next_action, 280),
+        supporting_observations=[
+            f"Session {retained_result.session_id} completed with {retained_result.image_count} image(s).",
+        ],
+        confidence_or_uncertainty="Loaded from persisted session investigation result.",
+        warning_or_blocker=None,
+        follow_up_capture_request=None,
+    )
+
+
+class _SessionRouteResultPersistence:
+    def __init__(self) -> None:
+        self.latest_result_id: str | None = None
+        self.latest_retained_result: InvestigationRetainedResult | None = None
+
+    def load_completed_result(self, *, session_id: str) -> InvestigationOrchestrationStoredResult | None:
+        try:
+            session = SESSION_STORE.load_session(session_id)
+        except InvestigationSessionStoreError:
+            return None
+
+        if not session.completed_result_id:
+            return None
+
+        try:
+            envelope = load_canonical_investigation_result(
+                _canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+                session.completed_result_id,
+            )
+        except InvestigationStoreError:
+            return None
+
+        retained = envelope.retained_result
+        if retained.session_id != session_id:
+            return None
+
+        return InvestigationOrchestrationStoredResult(
+            result_id=envelope.result_id,
+            response=_analysis_response_from_retained(retained),
+        )
+
+    def persist_result(
+        self,
+        *,
+        session: InvestigationSession,
+        request_package: InvestigationAnalysisRequestPackage,
+        response: InvestigationAnalysisResponse,
+    ) -> str:
+        retained_result = _build_retained_result(
+            session=session,
+            request_package=request_package,
+            response=response,
+        )
+        save_latest_investigation_result(INVESTIGATION_LATEST_JSON, retained_result)
+        result_id = _canonical_result_id_for_retained(retained_result)
+
+        self.latest_result_id = result_id
+        self.latest_retained_result = retained_result
         return result_id
 
 
@@ -1121,6 +1214,248 @@ def _raise_session_http_error(status_code: int, category: str, message: str) -> 
     raise HTTPException(status_code=status_code, detail={"category": category, "message": message})
 
 
+def _canonical_investigation_store_root(latest_path: Path) -> Path:
+    normalized = Path(latest_path)
+    if normalized.name == "latest.json":
+        return normalized.parent
+    return normalized.parent / "investigations"
+
+
+def _poll_retryable(session: InvestigationSession) -> bool:
+    if session.status in {InvestigationSessionStatus.COMPLETED, InvestigationSessionStatus.CANCELLED}:
+        return False
+    if session.last_error is not None:
+        return bool(session.last_error.retryable)
+    return True
+
+
+def _poll_error(session: InvestigationSession) -> InvestigationSessionPollingError | None:
+    if session.last_error is None:
+        return None
+    return InvestigationSessionPollingError(
+        category=session.last_error.error_category,
+        message=session.last_error.safe_message,
+        occurred_at_utc=session.last_error.occurred_at_utc,
+    )
+
+
+def _poll_after_ms(session: InvestigationSession, *, result_available: bool) -> int:
+    if result_available:
+        return POLL_HINT_MS_COMPLETED
+    if session.status in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
+        return POLL_HINT_MS_PROCESSING
+    return POLL_HINT_MS_IDLE
+
+
+def _build_session_polling_response(session: InvestigationSession) -> InvestigationSessionPollingResponse:
+    evidence = EVIDENCE_STORE.list_evidence_for_analysis(session.session_id)
+    image_count = len([item for item in evidence if item.evidence_type == InvestigationEvidenceType.IMAGE])
+    explanation_present = any(bool((item.normalized_text or "").strip()) for item in evidence)
+
+    compact_result: InvestigationGlassesProjection | None = None
+    investigation_id: str | None = None
+
+    if session.completed_result_id:
+        try:
+            canonical = load_canonical_investigation_result(
+                _canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+                session.completed_result_id,
+            )
+            stale_seconds = investigation_stale_seconds()
+            compact_result = build_glasses_projection(
+                canonical.retained_result,
+                stale_seconds=stale_seconds,
+                now_utc=canonical.retained_result.completed_at_utc,
+            )
+            investigation_id = canonical.retained_result.investigation_id
+        except (InvestigationStoreNotFound, InvestigationStoreError):
+            compact_result = None
+            investigation_id = None
+
+    result_available = compact_result is not None
+
+    return InvestigationSessionPollingResponse(
+        session_id=session.session_id,
+        investigation_id=investigation_id,
+        status=session.status,
+        created_at=session.created_at_utc,
+        updated_at=session.updated_at_utc,
+        image_count=image_count,
+        explanation_present=explanation_present,
+        retryable=_poll_retryable(session),
+        error=_poll_error(session),
+        compact_result=compact_result,
+        result_available=result_available,
+        poll_after_ms=_poll_after_ms(session, result_available=result_available),
+    )
+
+
+def _poll_url_for_session(session_id: str) -> str:
+    return f"/investigation-sessions/{session_id}/poll"
+
+
+def _build_session_analyze_response(session: InvestigationSession, *, accepted: bool) -> InvestigationSessionAnalyzeResponse:
+    polling = _build_session_polling_response(session)
+    return InvestigationSessionAnalyzeResponse(
+        session_id=polling.session_id,
+        investigation_id=polling.investigation_id,
+        status=polling.status,
+        accepted=accepted,
+        result_available=polling.result_available,
+        compact_result=polling.compact_result,
+        retryable=polling.retryable,
+        error=polling.error,
+        poll_url=_poll_url_for_session(polling.session_id),
+    )
+
+
+def _parse_session_analyze_payload(payload: dict[str, object] | None) -> InvestigationSessionAnalyzeRequest:
+    raw = payload or {}
+    try:
+        return InvestigationSessionAnalyzeRequest.model_validate(raw)
+    except ValidationError as exc:
+        _raise_session_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+
+def _safe_session_payload_path(session_id: str, storage_ref: str) -> Path:
+    workspace = SESSION_STORE.session_workspace_dir(session_id)
+    normalized = str(storage_ref or "").strip().replace("\\", "/")
+    if not normalized or normalized.startswith("/"):
+        raise ValueError("unsafe storage_ref")
+
+    candidate = (workspace / normalized).resolve(strict=False)
+    resolved_workspace = workspace.resolve(strict=False)
+    if resolved_workspace not in candidate.parents and candidate != resolved_workspace:
+        raise ValueError("unsafe storage_ref")
+    return candidate
+
+
+def _normalize_session_explanation(evidence_records: list[InvestigationEvidence]) -> str | None:
+    tokens: list[str] = []
+    for item in evidence_records:
+        text = str(item.normalized_text or "").strip()
+        if text:
+            tokens.append(text)
+
+    if not tokens:
+        return None
+
+    normalized = " ".join(" ".join(tokens).split()).strip()
+    if not normalized:
+        return None
+    if len(normalized) > 1000:
+        _raise_session_http_error(status_code=422, category="validation_error", message="normalized explanation exceeds the maximum length.")
+    return normalized
+
+
+def _ordered_images_for_session_analysis(session: InvestigationSession) -> list[InvestigationEvidence]:
+    records = EVIDENCE_STORE.list_evidence_for_analysis(session.session_id)
+    images = [item for item in records if item.evidence_type == InvestigationEvidenceType.IMAGE]
+
+    if len(images) < 1:
+        _raise_session_http_error(status_code=422, category="insufficient_evidence", message="At least one image evidence item is required.")
+    if len(images) > 3:
+        _raise_session_http_error(status_code=422, category="too_many_images", message="At most three image evidence items are allowed per session analysis.")
+
+    allowed_states = {
+        InvestigationEvidenceValidationStatus.ACCEPTED,
+        InvestigationEvidenceValidationStatus.DUPLICATE_ACCEPTED,
+    }
+    ordered = sorted(images, key=lambda item: (item.sequence_number, item.evidence_id))
+    for item in ordered:
+        if item.validation_status not in allowed_states:
+            _raise_session_http_error(status_code=422, category="invalid_evidence", message="Only accepted image evidence can be analyzed.")
+        try:
+            payload_path = _safe_session_payload_path(session.session_id, item.storage_ref)
+        except ValueError:
+            _raise_session_http_error(status_code=422, category="invalid_evidence", message="Image evidence storage reference is invalid.")
+        if not payload_path.exists() or not payload_path.is_file():
+            _raise_session_http_error(status_code=422, category="invalid_evidence", message="Image evidence payload is missing.")
+
+    return ordered
+
+
+def _build_session_interaction_context(
+    *,
+    session: InvestigationSession,
+    ordered_image_evidence: list[InvestigationEvidence],
+    explanation_text: str,
+) -> InvestigationInteractionContext:
+    return InvestigationInteractionContext(
+        schema_version="1.0",
+        session_id=session.session_id,
+        interaction_state=InvestigationInteractionState.READY_FOR_CONFIRMATION,
+        selected_capture_evidence_ids=[item.evidence_id for item in ordered_image_evidence],
+        normalized_explanation_text=explanation_text,
+        analysis_confirmed=True,
+    )
+
+
+def _create_session_orchestrator() -> InvestigationOrchestrator:
+    provider = OpenAIInvestigationAnalysisProvider(config=InvestigationOpenAIProviderConfig.from_env())
+    return InvestigationOrchestrator(
+        session_store=SESSION_STORE,
+        evidence_store=EVIDENCE_STORE,
+        attempt_store=InvestigationAnalysisAttemptStore(SESSION_STORE),
+        analysis_provider=provider,
+        result_persistence=_SessionRouteResultPersistence(),
+    )
+
+
+def _safe_mark_session_failed(
+    *,
+    session_id: str,
+    error_category: str,
+    safe_message: str,
+    retryable: bool,
+) -> None:
+    try:
+        current = SESSION_STORE.load_session(session_id)
+    except InvestigationSessionStoreError:
+        return
+
+    if current.status not in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
+        return
+
+    try:
+        SESSION_STORE.mutate_session(
+            session_id,
+            lambda session: apply_fail_transition(
+                session,
+                expected_revision=current.revision,
+                error_category=error_category,
+                safe_message=safe_message,
+                retryable=retryable,
+            ),
+        )
+    except (InvestigationSessionStoreError, InvestigationSessionLifecycleError):
+        return
+
+
+def _map_orchestration_error(exc: Exception) -> tuple[int, str, str, bool]:
+    if isinstance(exc, InvestigationOrchestrationRevisionConflictError):
+        return 409, "revision_conflict", "Session revision changed before analysis started.", True
+    if isinstance(exc, InvestigationOrchestrationAttemptConflictError):
+        return 409, "analysis_attempt_conflict", "An analysis attempt is already in progress for this session.", True
+    if isinstance(exc, InvestigationOrchestrationInvalidInteractionError):
+        return 409, "invalid_state_transition", "Session is not ready for analysis.", False
+    if isinstance(exc, InvestigationOrchestrationManifestError):
+        return 422, "invalid_evidence", "Session evidence is incomplete or invalid for analysis.", True
+    if isinstance(exc, InvestigationOrchestrationRequestBuildError):
+        return 500, "request_build_failure", "Failed to prepare analysis request.", True
+    if isinstance(exc, InvestigationOrchestrationProviderError):
+        return 500, "provider_failure", "Analysis provider is unavailable.", True
+    if isinstance(exc, InvestigationOrchestrationResponseValidationError):
+        return 500, "response_validation_failure", "Provider response validation failed.", True
+    if isinstance(exc, InvestigationOrchestrationResultPersistenceError):
+        return 500, "result_persistence_failure", "Failed to persist analysis result.", True
+    if isinstance(exc, InvestigationOrchestrationLifecycleError):
+        return 409, "invalid_state_transition", "Session lifecycle transition failed.", True
+    if isinstance(exc, InvestigationOrchestrationUnexpectedError):
+        return 500, "unexpected_orchestration_failure", "Unexpected orchestration failure.", True
+    return 500, "orchestration_failure", "Investigation orchestration failed.", True
+
+
 def _ensure_optional_glasses_token_auth(request: Request, token: str, *, unauthorized_message: str) -> None:
     if GLASSES_API_TOKEN:
         candidate = token.strip() or _extract_bearer_token(request)
@@ -1646,7 +1981,7 @@ def _build_retained_result(
         projection_version="1.0",
         investigation_id=f"inv_{uuid4().hex[:16]}",
         session_id=session.session_id,
-        status="analyzed",
+        status=InvestigationAnalysisStatus.ANALYZED,
         diagnosis=response.concise_diagnosis,
         required_next_action=response.immediate_recommended_action,
         image_count=len(request_package.ordered_evidence_inputs),
@@ -1787,6 +2122,7 @@ async def dashboard_page():
     return FileResponse(str(dashboard_html), media_type="text/html")
 
 
+# Legacy UI shell routes retained for existing local demo flows.
 @app.get("/glasses_display_mock.html", response_class=FileResponse)
 async def display_mock():
     if not DISPLAY_HTML.exists():
@@ -1808,6 +2144,7 @@ async def investigations_page_alias():
     return FileResponse(str(DISPLAY_HTML), media_type="text/html")
 
 
+# Demo-only investigation orchestration endpoints for dashboard validation flows.
 @app.post("/demo/investigations", response_model=InvestigationDemoRunView, status_code=202)
 async def start_demo_investigation(
     request: Request,
@@ -1918,6 +2255,7 @@ async def get_demo_investigation(demo_id: str) -> InvestigationDemoRunView:
     return snapshot
 
 
+# Legacy prototype HUD routes; not canonical session-scoped mobile contracts.
 @app.get("/latest")
 async def latest():
     source_path: Path | None = None
@@ -2111,6 +2449,7 @@ async def vision_analyze(request: Request, file: UploadFile = File(...)):
     return payload
 
 
+# Production investigation contract routes.
 @app.post("/investigations/analyze", response_model=InvestigationAnalyzeResponse)
 async def investigations_analyze(
     schema_version: str = Form(...),
@@ -2172,6 +2511,7 @@ async def investigations_latest_glasses(request: Request, token: str = Query(def
     return build_glasses_projection(retained_result, stale_seconds=stale_seconds)
 
 
+# Production session lifecycle routes (Android-facing contract foundation).
 @app.post("/investigation-sessions", response_model=InvestigationSession, status_code=201)
 async def create_investigation_session(
     request: Request,
@@ -2211,6 +2551,129 @@ async def get_investigation_session(
         _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+# Production Android/mobile-facing session-specific read-only polling route.
+@app.get("/investigation-sessions/{session_id}/poll", response_model=InvestigationSessionPollingResponse)
+async def poll_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+) -> InvestigationSessionPollingResponse:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        session = SESSION_STORE.load_session(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+    try:
+        return _build_session_polling_response(session)
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
+
+
+@app.post("/investigation-sessions/{session_id}/analyze", response_model=InvestigationSessionAnalyzeResponse)
+async def analyze_investigation_session(
+    session_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSessionAnalyzeResponse:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    analyze_request = _parse_session_analyze_payload(payload)
+
+    try:
+        session = SESSION_STORE.load_session(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+    if session.status == InvestigationSessionStatus.CANCELLED:
+        _raise_session_http_error(status_code=409, category="invalid_state_transition", message="Cancelled sessions cannot begin analysis.")
+    if session.status == InvestigationSessionStatus.COMPLETED:
+        return _build_session_analyze_response(session, accepted=True)
+    if session.status in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
+        _raise_session_http_error(status_code=409, category="analysis_attempt_conflict", message="Session analysis is already in progress.")
+    if session.status != InvestigationSessionStatus.COLLECTING:
+        _raise_session_http_error(status_code=409, category="invalid_state_transition", message="Session must be collecting before analysis can begin.")
+
+    expected_revision = analyze_request.expected_revision
+    if expected_revision is not None and expected_revision != session.revision:
+        _raise_session_http_error(status_code=409, category="revision_conflict", message="expected_revision does not match the current session revision.")
+
+    try:
+        records = EVIDENCE_STORE.list_evidence_for_analysis(session.session_id)
+        ordered_images = _ordered_images_for_session_analysis(session)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
+
+    explanation = _normalize_session_explanation(records)
+    if not explanation:
+        _raise_session_http_error(status_code=422, category="missing_explanation", message="A non-empty normalized explanation is required before analysis.")
+
+    interaction_context = _build_session_interaction_context(
+        session=session,
+        ordered_image_evidence=ordered_images,
+        explanation_text=explanation,
+    )
+
+    try:
+        orchestrator = _create_session_orchestrator()
+    except Exception:
+        _raise_session_http_error(status_code=500, category="orchestration_unavailable", message="Analysis orchestration is unavailable.")
+
+    try:
+        orchestrator.run_confirmed_investigation(
+            session_id=session.session_id,
+            expected_revision=expected_revision if expected_revision is not None else session.revision,
+            interaction_context=interaction_context,
+        )
+    except InvestigationOrchestrationError as exc:
+        status_code, category, safe_message, retryable = _map_orchestration_error(exc)
+        _safe_mark_session_failed(
+            session_id=session.session_id,
+            error_category=category,
+            safe_message=safe_message,
+            retryable=retryable,
+        )
+        _raise_session_http_error(status_code=status_code, category=category, message=safe_message)
+    except Exception:
+        _safe_mark_session_failed(
+            session_id=session.session_id,
+            error_category="unexpected_orchestration_failure",
+            safe_message="Unexpected orchestration failure.",
+            retryable=True,
+        )
+        _raise_session_http_error(status_code=500, category="unexpected_orchestration_failure", message="Unexpected orchestration failure.")
+
+    try:
+        updated = SESSION_STORE.load_session(session.session_id)
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+    return _build_session_analyze_response(updated, accepted=True)
 
 
 @app.post("/investigation-sessions/{session_id}/pause", response_model=InvestigationSession)
@@ -2353,6 +2816,26 @@ async def _upload_investigation_session_evidence(
         raise HTTPException(status_code=422, detail={"category": category, "message": str(exc)}) from exc
 
     try:
+        current_session = SESSION_STORE.load_session(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+    if current_session.status == InvestigationSessionStatus.CREATED:
+        try:
+            SESSION_STORE.mutate_session(
+                normalized_session_id,
+                lambda session: apply_start_transition(session, expected_revision=session.revision),
+            )
+        except InvestigationSessionLifecycleError as exc:
+            _raise_session_http_error(status_code=409, category="invalid_state_transition", message=str(exc))
+        except InvestigationSessionStoreError:
+            _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+    try:
         evidence, created = EVIDENCE_STORE.upload_evidence(
             session_id=normalized_session_id,
             evidence_type=evidence_type,
@@ -2374,6 +2857,7 @@ async def _upload_investigation_session_evidence(
     return evidence
 
 
+# Production session evidence routes.
 @app.post("/investigation-sessions/{session_id}/evidence/image", response_model=InvestigationEvidence, status_code=201)
 async def upload_investigation_session_image_evidence(
     session_id: str,

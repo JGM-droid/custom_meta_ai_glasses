@@ -71,6 +71,11 @@ class InvestigationSessionStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class InvestigationAnalysisStatus(str, Enum):
+    VALIDATED = "validated"
+    ANALYZED = "analyzed"
+
+
 class InvestigationSessionErrorMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -1133,7 +1138,7 @@ class InvestigationAnalyzeResponse(BaseModel):
     schema_version: str
     investigation_id: str
     session_id: str
-    status: str
+    status: InvestigationAnalysisStatus
     diagnosis: str
     required_next_action: str
     image_count: int
@@ -1205,11 +1210,11 @@ class InvestigationRetainedResult(BaseModel):
     projection_version: str = "1.0"
     investigation_id: str
     session_id: str
-    status: str
+    status: InvestigationAnalysisStatus
     diagnosis: str = Field(..., min_length=1)
     required_next_action: str = Field(..., min_length=1)
-    image_count: int = Field(..., ge=2, le=3)
-    image_order: list[str] = Field(..., min_length=2, max_length=3)
+    image_count: int = Field(..., ge=1, le=3)
+    image_order: list[str] = Field(..., min_length=1, max_length=3)
     used_user_explanation: str
     completed_at_utc: datetime
     context_used: bool
@@ -1240,7 +1245,7 @@ class InvestigationDesktopProjection(BaseModel):
     projection_version: str
     investigation_id: str
     session_id: str
-    status: str
+    status: InvestigationAnalysisStatus
     diagnosis: str
     required_next_action: str
     copilot_prompt: str
@@ -1261,10 +1266,123 @@ class InvestigationGlassesProjection(BaseModel):
     schema_version: str
     projection_version: str
     investigation_id: str
-    status: str
+    status: InvestigationAnalysisStatus
     diagnosis_short: str
     required_next_action_short: str
     uncertainty_flag: bool
     freshness_state: Literal["fresh", "stale", "unknown"]
     completed_at_utc: datetime
     age_seconds: int | None = Field(default=None, ge=0)
+
+
+class InvestigationSessionPollingError(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    category: str = Field(..., min_length=1, max_length=64)
+    message: str = Field(..., min_length=1, max_length=300)
+    occurred_at_utc: datetime | None = None
+
+    @field_validator("occurred_at_utc")
+    @classmethod
+    def _validate_occurred_at_utc(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("occurred_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+
+class InvestigationSessionPollingResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    investigation_id: str | None = None
+    status: InvestigationSessionStatus
+    created_at: datetime
+    updated_at: datetime
+    image_count: int = Field(..., ge=0)
+    explanation_present: bool
+    retryable: bool
+    error: InvestigationSessionPollingError | None = None
+    compact_result: InvestigationGlassesProjection | None = None
+    result_available: bool
+    poll_after_ms: int = Field(..., ge=250, le=60000)
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("session_id is required.")
+        try:
+            return str(UUID(text))
+        except ValueError as exc:
+            raise ValueError("session_id must be a valid UUID.") from exc
+
+    @field_validator("investigation_id")
+    @classmethod
+    def _validate_optional_investigation_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("investigation_id must be non-empty when provided.")
+        return text
+
+    @field_validator("created_at", "updated_at")
+    @classmethod
+    def _validate_utc_timestamps(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("Polling timestamps must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+
+class InvestigationSessionAnalyzeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class InvestigationSessionAnalyzeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+    investigation_id: str | None = None
+    status: InvestigationSessionStatus
+    accepted: bool
+    result_available: bool
+    compact_result: InvestigationGlassesProjection | None = None
+    retryable: bool
+    error: InvestigationSessionPollingError | None = None
+    poll_url: str
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("session_id is required.")
+        try:
+            return str(UUID(text))
+        except ValueError as exc:
+            raise ValueError("session_id must be a valid UUID.") from exc
+
+    @field_validator("investigation_id")
+    @classmethod
+    def _validate_optional_investigation_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("investigation_id must be non-empty when provided.")
+        return text
+
+    @field_validator("poll_url")
+    @classmethod
+    def _validate_poll_url(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("poll_url is required.")
+        if not text.startswith("/investigation-sessions/"):
+            raise ValueError("poll_url must be a session polling path.")
+        return text

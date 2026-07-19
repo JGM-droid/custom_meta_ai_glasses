@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from .models import (
     InvestigationDesktopProjection,
+    InvestigationAnalysisStatus,
     SUPPORTED_SCHEMA_VERSION,
     InvestigationAnalyzeResponse,
     InvestigationGlassesProjection,
@@ -230,7 +231,7 @@ def _build_public_response(
             normalized_request.idempotency_key,
         ),
         session_id=normalized_request.session_id,
-        status="analyzed",
+        status=InvestigationAnalysisStatus.ANALYZED,
         diagnosis=model_result.diagnosis,
         required_next_action=model_result.required_next_action,
         image_count=len(normalized_request.images),
@@ -584,7 +585,7 @@ async def validate_investigation_request(
             normalized_request.idempotency_key,
         ),
         session_id=normalized_request.session_id,
-        status="validated",
+        status=InvestigationAnalysisStatus.VALIDATED,
         diagnosis="Investigation session received and validated.",
         required_next_action="Proceed to combined multimodal analysis integration.",
         image_count=len(normalized_request.images),

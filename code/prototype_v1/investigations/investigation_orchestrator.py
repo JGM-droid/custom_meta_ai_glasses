@@ -27,6 +27,7 @@ from .frozen_manifest_service import (
 )
 from .interaction_state_machine import InvestigationInteractionContext, InvestigationInteractionState
 from .models import InvestigationAnalysisRequestPackage, InvestigationAnalysisResponse, InvestigationSession
+from .models import InvestigationSessionStatus
 from .openai_analysis_provider import InvestigationAnalysisProvider
 from .session_lifecycle import (
     InvestigationSessionLifecycleError,
@@ -207,7 +208,7 @@ class InvestigationOrchestrator:
             if session.session_id != session_id:
                 raise InvestigationOrchestrationInvalidInteractionError("Loaded session identity does not match request.")
 
-            if session.status.value == "completed":
+            if session.status == InvestigationSessionStatus.COMPLETED:
                 existing = self._load_existing_completed_result(session_id=session_id)
                 if existing is None:
                     raise InvestigationOrchestrationResultPersistenceError(

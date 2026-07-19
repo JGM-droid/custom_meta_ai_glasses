@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,11 +13,16 @@ import api
 import investigations.session_store as session_store_module
 from investigations.models import (
     INVESTIGATION_SESSION_SCHEMA_VERSION,
+    InvestigationEvidenceCreateRequest,
+    InvestigationEvidenceType,
+    InvestigationRetainedResult,
     InvestigationSessionErrorMetadata,
     InvestigationSession,
     InvestigationSessionStatus,
     create_new_investigation_session,
 )
+from investigations.result_store import save_canonical_investigation_result
+from investigations.result_store import load_canonical_investigation_result, load_latest_investigation_result
 from investigations.session_lifecycle import (
     InvestigationSessionLifecycleError,
     apply_cancel_transition,
@@ -29,6 +35,7 @@ from investigations.session_store import (
     InvestigationSessionStore,
     InvestigationSessionStoreError,
 )
+from investigations.evidence_store import InvestigationEvidenceStoreError
 
 
 @pytest.fixture
@@ -36,7 +43,9 @@ def session_test_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     root = tmp_path / "investigation_sessions"
     store = InvestigationSessionStore(root)
     monkeypatch.setattr(api, "INVESTIGATION_SESSIONS_ROOT", root)
+    monkeypatch.setattr(api, "INVESTIGATION_LATEST_JSON", tmp_path / "investigation_latest.json")
     monkeypatch.setattr(api, "SESSION_STORE", store)
+    monkeypatch.setattr(api, "EVIDENCE_STORE", api.InvestigationEvidenceStore(store))
     monkeypatch.setattr(api, "GLASSES_API_TOKEN", "")
     client = TestClient(api.app)
     return client, store, root
@@ -78,6 +87,79 @@ def _cancelled_copy(session: InvestigationSession) -> InvestigationSession:
             "updated_at_utc": now,
             "cancelled_at_utc": now,
         }
+    )
+
+
+def _create_collecting_session(client: TestClient) -> str:
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    session = api.SESSION_STORE.load_session(session_id)
+    collecting = session.model_copy(
+        update={
+            "status": InvestigationSessionStatus.COLLECTING,
+            "revision": session.revision + 1,
+            "updated_at_utc": datetime.now(timezone.utc),
+        }
+    )
+    api.SESSION_STORE.save_session(collecting)
+    return session_id
+
+
+def _upload_image(client: TestClient, session_id: str, *, name: str, content: bytes, normalized_text: str = "") -> str:
+    response = client.post(
+        f"/investigation-sessions/{session_id}/evidence/image",
+        data={"normalized_text": normalized_text},
+        files={"file": (name, content, "image/png")},
+    )
+    assert response.status_code == 201
+    return response.json()["evidence_id"]
+
+
+def _upload_audio(client: TestClient, session_id: str, *, name: str, content: bytes, normalized_text: str) -> str:
+    response = client.post(
+        f"/investigation-sessions/{session_id}/evidence/audio",
+        data={"normalized_text": normalized_text, "duration_seconds": 1.2},
+        files={"file": (name, content, "audio/wav")},
+    )
+    assert response.status_code == 201
+    return response.json()["evidence_id"]
+
+
+class _StaticProvider:
+    def analyze(self, _request_package):
+        return api.InvestigationAnalysisResponse(
+            schema_version=api.INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
+            concise_diagnosis="Session analysis completed.",
+            immediate_recommended_action="Capture one follow-up image if uncertainty remains.",
+            supporting_observations=["Evidence ordered and parsed."],
+            confidence_or_uncertainty="Moderate confidence.",
+            warning_or_blocker=None,
+            follow_up_capture_request=None,
+        )
+
+
+class _FailingProvider:
+    def analyze(self, _request_package):
+        raise api.InvestigationAnalysisProviderError("provider failure")
+
+
+class _RaisingPersistence:
+    def load_completed_result(self, *, session_id: str):
+        return None
+
+    def persist_result(self, *, session, request_package, response):
+        raise RuntimeError("simulated persistence failure")
+
+
+def _real_orchestrator_with_provider(provider):
+    return api.InvestigationOrchestrator(
+        session_store=api.SESSION_STORE,
+        evidence_store=api.EVIDENCE_STORE,
+        attempt_store=api.InvestigationAnalysisAttemptStore(api.SESSION_STORE),
+        analysis_provider=provider,
+        result_persistence=api._SessionRouteResultPersistence(),
     )
 
 
@@ -334,11 +416,548 @@ def test_api_get_missing_session_returns_404(session_test_context):
     assert response.json()["detail"]["category"] == "session_not_found"
 
 
+def test_api_poll_session_missing_returns_404(session_test_context):
+    client, _, _ = session_test_context
+    missing_id = create_new_investigation_session().session_id
+
+    response = client.get(f"/investigation-sessions/{missing_id}/poll")
+    assert response.status_code == 404
+    assert response.json()["detail"]["category"] == "session_not_found"
+
+
 def test_api_invalid_session_id_returns_422(session_test_context):
     client, _, _ = session_test_context
     response = client.get("/investigation-sessions/not-a-uuid")
     assert response.status_code == 422
     assert response.json()["detail"]["category"] == "invalid_session_id"
+
+
+def test_api_poll_invalid_session_id_returns_422(session_test_context):
+    client, _, _ = session_test_context
+    response = client.get("/investigation-sessions/not-a-uuid/poll")
+    assert response.status_code == 422
+    assert response.json()["detail"]["category"] == "invalid_session_id"
+
+
+def test_api_first_image_upload_from_created_auto_starts_collecting(session_test_context):
+    client, store, _ = session_test_context
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    response = client.post(
+        f"/investigation-sessions/{session_id}/evidence/image",
+        data={"normalized_text": "initial explanation"},
+        files={"file": ("first.png", b"image-bytes", "image/png")},
+    )
+    assert response.status_code == 201
+
+    updated = store.load_session(session_id)
+    assert updated.status == InvestigationSessionStatus.COLLECTING
+    assert updated.revision == 1
+
+
+def test_api_image_upload_rejects_cancelled_session_even_with_auto_start_logic(session_test_context):
+    client, store, _ = session_test_context
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    cancelled = client.post(f"/investigation-sessions/{session_id}/cancel", json={"expected_revision": 0})
+    assert cancelled.status_code == 200
+    cancelled_revision = cancelled.json()["revision"]
+
+    response = client.post(
+        f"/investigation-sessions/{session_id}/evidence/image",
+        data={"normalized_text": "should fail"},
+        files={"file": ("cancelled.png", b"image-bytes", "image/png")},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["category"] == "invalid_state_transition"
+
+    unchanged = store.load_session(session_id)
+    assert unchanged.status == InvestigationSessionStatus.CANCELLED
+    assert unchanged.revision == cancelled_revision
+
+
+def test_api_analyze_missing_session_returns_404(session_test_context):
+    client, _, _ = session_test_context
+    missing_id = create_new_investigation_session().session_id
+
+    response = client.post(f"/investigation-sessions/{missing_id}/analyze", json={})
+    assert response.status_code == 404
+    assert response.json()["detail"]["category"] == "session_not_found"
+
+
+def test_api_analyze_requires_at_least_one_image(session_test_context):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+    _upload_audio(client, session_id, name="voice.wav", content=b"voice", normalized_text="spoken explanation")
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"]["category"] == "insufficient_evidence"
+
+
+def test_api_analyze_rejects_more_than_three_images(session_test_context):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(client, session_id, name="a.png", content=b"a", normalized_text="explanation")
+    _upload_image(client, session_id, name="b.png", content=b"b")
+    _upload_image(client, session_id, name="c.png", content=b"c")
+    _upload_image(client, session_id, name="d.png", content=b"d")
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"]["category"] == "too_many_images"
+
+
+def test_api_analyze_rejects_cancelled_session(session_test_context):
+    client, _, _ = session_test_context
+    created = client.post("/investigation-sessions", json={})
+    session_id = created.json()["session_id"]
+    cancelled = client.post(f"/investigation-sessions/{session_id}/cancel", json={"expected_revision": 0})
+    assert cancelled.status_code == 200
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["category"] == "invalid_state_transition"
+
+
+def test_api_analyze_conflicts_while_already_analyzing(session_test_context):
+    client, store, _ = session_test_context
+    session_id = _create_collecting_session(client)
+    session = store.load_session(session_id)
+    store.save_session(
+        session.model_copy(
+            update={
+                "status": InvestigationSessionStatus.ANALYZING,
+                "revision": session.revision + 1,
+                "updated_at_utc": datetime.now(timezone.utc),
+            }
+        )
+    )
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]["category"] == "analysis_attempt_conflict"
+
+
+def test_api_analyze_completed_session_does_not_invoke_orchestrator_again(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, store, _ = session_test_context
+    session_id = _create_collecting_session(client)
+    result_id = str(uuid4())
+    session = store.load_session(session_id)
+    store.save_session(
+        session.model_copy(
+            update={
+                "status": InvestigationSessionStatus.COMPLETED,
+                "revision": session.revision + 1,
+                "updated_at_utc": datetime.now(timezone.utc),
+                "completed_result_id": result_id,
+            }
+        )
+    )
+
+    retained = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv-completed",
+        session_id=session_id,
+        status="analyzed",
+        diagnosis="Done",
+        required_next_action="No-op",
+        image_count=2,
+        image_order=["1:a.png", "2:b.png"],
+        used_user_explanation="explanation",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="Prompt",
+    )
+    save_canonical_investigation_result(api.INVESTIGATION_LATEST_JSON.parent / "investigations", result_id=result_id, retained_result=retained)
+
+    class _ForbiddenOrchestrator:
+        def run_confirmed_investigation(self, **_kwargs):
+            raise AssertionError("orchestrator should not run for completed sessions")
+
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _ForbiddenOrchestrator())
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+
+
+def test_api_analyze_order_and_explanation_reach_orchestrator_context(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    first_id = _upload_image(client, session_id, name="one.png", content=b"1")
+    second_id = _upload_image(client, session_id, name="two.png", content=b"2")
+    _upload_audio(client, session_id, name="voice.wav", content=b"v", normalized_text="spoken explanation")
+
+    captured: dict[str, object] = {"calls": 0, "context": None}
+
+    class _RecordingOrchestrator:
+        def run_confirmed_investigation(self, **kwargs):
+            captured["calls"] += 1
+            captured["context"] = kwargs["interaction_context"]
+            session = api.SESSION_STORE.load_session(session_id)
+            completed = session.model_copy(
+                update={
+                    "status": InvestigationSessionStatus.COMPLETED,
+                    "revision": session.revision + 1,
+                    "updated_at_utc": datetime.now(timezone.utc),
+                    "completed_result_id": str(uuid4()),
+                }
+            )
+            api.SESSION_STORE.save_session(completed)
+            return api.InvestigationOrchestrationOutcome(
+                session_id=session_id,
+                analysis_attempt_id=None,
+                result_id=completed.completed_result_id,
+                response=None,
+                persistence_deferred=False,
+                provider_invoked=False,
+                completed=True,
+                progress_events=[],
+            )
+
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _RecordingOrchestrator())
+
+    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert response.status_code == 200
+    assert captured["calls"] == 1
+    context = captured["context"]
+    assert context.selected_capture_evidence_ids == [first_id, second_id]
+    assert context.normalized_explanation_text == "spoken explanation"
+
+
+def test_api_analyze_success_persists_result_and_poll_returns_compact(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(client, session_id, name="a.png", content=b"a", normalized_text="typed explanation")
+    _upload_image(client, session_id, name="b.png", content=b"b")
+
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _real_orchestrator_with_provider(_StaticProvider()))
+
+    trigger = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert trigger.status_code == 200
+    assert trigger.json()["accepted"] is True
+    assert trigger.json()["status"] == "completed"
+    assert trigger.json()["result_available"] is True
+
+    poll = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert poll.status_code == 200
+    assert poll.json()["status"] == "completed"
+    assert poll.json()["result_available"] is True
+    assert poll.json()["compact_result"] is not None
+
+
+def test_api_analyze_single_image_success_persists_result_and_poll_returns_compact(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, store, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(
+        client,
+        session_id,
+        name="single.png",
+        content=b"single",
+        normalized_text="Analyze what is shown in this image and give me the single most useful next action.",
+    )
+
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _real_orchestrator_with_provider(_StaticProvider()))
+
+    trigger = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert trigger.status_code == 200
+    trigger_payload = trigger.json()
+    assert trigger_payload["accepted"] is True
+    assert trigger_payload["status"] == "completed"
+    assert trigger_payload["result_available"] is True
+
+    completed_session = store.load_session(session_id)
+    assert completed_session.status == InvestigationSessionStatus.COMPLETED
+    assert completed_session.completed_result_id is not None
+
+    canonical = load_canonical_investigation_result(
+        api.INVESTIGATION_LATEST_JSON.parent / "investigations",
+        completed_session.completed_result_id,
+    )
+    assert canonical.session_id == session_id
+    assert canonical.retained_result.image_count == 1
+    assert canonical.retained_result.image_order == ["1:single.png"]
+
+    latest = load_latest_investigation_result(api.INVESTIGATION_LATEST_JSON)
+    assert latest.session_id == session_id
+    assert latest.investigation_id == canonical.retained_result.investigation_id
+
+    poll = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert poll.status_code == 200
+    poll_payload = poll.json()
+    assert poll_payload["status"] == "completed"
+    assert poll_payload["result_available"] is True
+    assert poll_payload["compact_result"] is not None
+
+
+def test_api_analyze_failure_transitions_to_failed_and_poll_reports_error(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(client, session_id, name="a.png", content=b"a", normalized_text="typed explanation")
+
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _real_orchestrator_with_provider(_FailingProvider()))
+
+    trigger = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert trigger.status_code == 500
+    assert trigger.json()["detail"]["category"] == "provider_failure"
+
+    poll = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert poll.status_code == 200
+    assert poll.json()["status"] == "failed"
+    assert poll.json()["error"] is not None
+    assert poll.json()["error"]["category"] == "provider_failure"
+
+
+def test_api_analyze_persistence_failure_transitions_to_failed_and_poll_reports_safe_error(
+    session_test_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(client, session_id, name="single.png", content=b"single", normalized_text="typed explanation")
+
+    monkeypatch.setattr(
+        api,
+        "_create_session_orchestrator",
+        lambda: api.InvestigationOrchestrator(
+            session_store=api.SESSION_STORE,
+            evidence_store=api.EVIDENCE_STORE,
+            attempt_store=api.InvestigationAnalysisAttemptStore(api.SESSION_STORE),
+            analysis_provider=_StaticProvider(),
+            result_persistence=_RaisingPersistence(),
+        ),
+    )
+
+    trigger = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert trigger.status_code == 500
+    trigger_payload = trigger.json()
+    assert trigger_payload["detail"]["category"] == "result_persistence_failure"
+    assert "simulated persistence failure" not in json.dumps(trigger_payload).lower()
+
+    poll = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert poll.status_code == 200
+    poll_payload = poll.json()
+    assert poll_payload["status"] == "failed"
+    assert poll_payload["result_available"] is False
+    assert poll_payload["compact_result"] is None
+    assert poll_payload["error"] is not None
+    assert poll_payload["error"]["category"] == "result_persistence_failure"
+
+
+def test_api_analyze_route_does_not_call_openai_directly(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+    session_id = _create_collecting_session(client)
+
+    _upload_image(client, session_id, name="a.png", content=b"a", normalized_text="typed explanation")
+
+    calls = {"openai": 0}
+
+    class _ForbiddenOpenAI:
+        def __init__(self, *_args, **_kwargs):
+            calls["openai"] += 1
+
+    monkeypatch.setattr(api, "OpenAI", _ForbiddenOpenAI)
+    monkeypatch.setattr(api, "_create_session_orchestrator", lambda: _real_orchestrator_with_provider(_StaticProvider()))
+
+    trigger = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
+    assert trigger.status_code in {200, 500}
+    assert calls["openai"] == 0
+
+
+def test_api_poll_processing_has_no_compact_result(session_test_context):
+    client, store, _ = session_test_context
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    session = store.load_session(session_id)
+    analyzing = session.model_copy(
+        update={
+            "status": InvestigationSessionStatus.ANALYZING,
+            "revision": session.revision + 1,
+            "updated_at_utc": datetime.now(timezone.utc),
+        }
+    )
+    store.save_session(analyzing)
+
+    response = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] == session_id
+    assert payload["status"] == "analyzing"
+    assert payload["compact_result"] is None
+    assert payload["result_available"] is False
+    assert payload["investigation_id"] is None
+    assert payload["poll_after_ms"] == api.POLL_HINT_MS_PROCESSING
+
+
+def test_api_poll_completed_has_compact_result_and_is_idempotent(session_test_context):
+    client, store, _ = session_test_context
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    result_id = str(uuid4())
+    session = store.load_session(session_id)
+    completed = session.model_copy(
+        update={
+            "status": InvestigationSessionStatus.COMPLETED,
+            "revision": session.revision + 1,
+            "updated_at_utc": datetime.now(timezone.utc),
+            "completed_result_id": result_id,
+        }
+    )
+    store.save_session(completed)
+
+    retained = InvestigationRetainedResult(
+        schema_version="1.0",
+        projection_version="1.0",
+        investigation_id="inv-mobile-1",
+        session_id=session_id,
+        status="validated",
+        diagnosis="Diagnosis",
+        required_next_action="Capture one clearer screenshot.",
+        image_count=2,
+        image_order=["1:first.png", "2:second.png"],
+        used_user_explanation="explanation",
+        completed_at_utc=datetime.now(timezone.utc),
+        context_used=False,
+        context_staleness="unknown",
+        context_signal_age_seconds=None,
+        copilot_prompt="Prompt",
+    )
+    save_canonical_investigation_result(api.INVESTIGATION_LATEST_JSON.parent / "investigations", result_id=result_id, retained_result=retained)
+
+    first = client.get(f"/investigation-sessions/{session_id}/poll")
+    second = client.get(f"/investigation-sessions/{session_id}/poll")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+    payload = first.json()
+    assert payload["session_id"] == session_id
+    assert payload["status"] == "completed"
+    assert payload["investigation_id"] == "inv-mobile-1"
+    assert payload["result_available"] is True
+    assert payload["compact_result"] is not None
+    assert payload["poll_after_ms"] == api.POLL_HINT_MS_COMPLETED
+
+
+def test_api_poll_includes_session_scoped_image_and_explanation_signals(session_test_context):
+    client, store, _ = session_test_context
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    collecting = store.load_session(session_id).model_copy(
+        update={
+            "status": InvestigationSessionStatus.COLLECTING,
+            "revision": 1,
+            "updated_at_utc": datetime.now(timezone.utc),
+        }
+    )
+    store.save_session(collecting)
+
+    request = InvestigationEvidenceCreateRequest(
+        source="android",
+        normalized_text="Terminal shows a 401 error on the latest call.",
+    )
+    api.EVIDENCE_STORE.upload_evidence(
+        session_id=session_id,
+        evidence_type=InvestigationEvidenceType.IMAGE,
+        raw_bytes=b"fake-image-content",
+        mime_type="image/png",
+        original_filename="capture.png",
+        request=request,
+    )
+
+    response = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["image_count"] == 1
+    assert payload["explanation_present"] is True
+
+
+def test_api_poll_repeated_requests_do_not_mutate_session_state(session_test_context):
+    client, store, _ = session_test_context
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    before = store.load_session(session_id)
+
+    first = client.get(f"/investigation-sessions/{session_id}/poll")
+    second = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["created_at"] == second.json()["created_at"]
+    assert first.json()["updated_at"] == second.json()["updated_at"]
+
+    after = store.load_session(session_id)
+    assert after.model_dump(mode="json") == before.model_dump(mode="json")
+
+
+def test_api_poll_storage_error_is_structured(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    monkeypatch.setattr(
+        api.EVIDENCE_STORE,
+        "list_evidence_for_analysis",
+        lambda _session_id: (_ for _ in ()).throw(InvestigationEvidenceStoreError("disk failed")),
+    )
+    response = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert response.status_code == 500
+    assert response.json()["detail"]["category"] == "evidence_storage_error"
+    assert "disk failed" not in json.dumps(response.json()).lower()
+
+
+def test_api_poll_does_not_invoke_analysis_or_result_persistence(session_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _, _ = session_test_context
+
+    counters = {"analyze": 0, "save": 0}
+
+    async def _forbidden_analyze(*_args, **_kwargs):
+        counters["analyze"] += 1
+        raise AssertionError("poll route must not analyze")
+
+    def _forbidden_save(*_args, **_kwargs):
+        counters["save"] += 1
+        raise AssertionError("poll route must not persist latest results")
+
+    monkeypatch.setattr(api, "analyze_investigation_request_with_retained", _forbidden_analyze)
+    monkeypatch.setattr(api, "save_latest_investigation_result", _forbidden_save)
+
+    created = client.post("/investigation-sessions", json={})
+    assert created.status_code == 201
+    session_id = created.json()["session_id"]
+
+    response = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert response.status_code == 200
+    assert counters["analyze"] == 0
+    assert counters["save"] == 0
 
 
 def test_api_pause_resume_cancel_behaviors(session_test_context):
@@ -525,6 +1144,9 @@ def test_api_phase2a_endpoints_never_call_openai_or_context(session_test_context
     cancelled = client.post(f"/investigation-sessions/{session_id}/cancel", json={"expected_revision": 2})
     assert cancelled.status_code == 200
 
+    poll = client.get(f"/investigation-sessions/{session_id}/poll")
+    assert poll.status_code == 200
+
     assert counters["openai"] == 0
     assert counters["context"] == 0
 
@@ -533,6 +1155,8 @@ def test_api_routes_registered_for_phase2a():
     route_paths = {route.path for route in api.app.routes}
     assert "/investigation-sessions" in route_paths
     assert "/investigation-sessions/{session_id}" in route_paths
+    assert "/investigation-sessions/{session_id}/poll" in route_paths
+    assert "/investigation-sessions/{session_id}/analyze" in route_paths
     assert "/investigation-sessions/{session_id}/pause" in route_paths
     assert "/investigation-sessions/{session_id}/resume" in route_paths
     assert "/investigation-sessions/{session_id}/cancel" in route_paths
