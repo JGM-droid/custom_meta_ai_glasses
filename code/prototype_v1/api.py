@@ -120,7 +120,9 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent.parent
-VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
+VENV_PYTHON = (
+    REPO_ROOT / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+).resolve()
 API_LOCK_PATH = BASE_DIR / "results" / "api_server.lock"
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"
 LATEST_RESPONSE_JSON = BASE_DIR / "results" / "latest_response.json"
@@ -408,7 +410,8 @@ DEMO_INVESTIGATION_REGISTRY = _DemoInvestigationRegistry()
 
 
 def _normalized_path(path: Path) -> str:
-    return str(path.resolve()).casefold()
+    normalized = str(path.resolve())
+    return normalized.casefold() if os.name == "nt" else normalized
 
 
 def _is_canonical_python() -> bool:
