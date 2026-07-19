@@ -9,6 +9,103 @@ This prototype focuses on continuity across observations: it analyzes screenshot
 
 > **One startup path. One writer per artifact. Venv only.**
 
+## Execution Contract (Authoritative)
+
+This section is the single authoritative execution contract for this repository.
+If another document conflicts with this section, this section wins.
+
+### Canonical Repository
+
+- Active canonical repository path: `C:\Users\jesse\OneDrive\Documents\custom_meta_ai_glasses`
+- Legacy local repository is preserved for historical verification only and is not an active development target.
+
+### Official Runtime Entry Points
+
+- Official startup command:
+
+```
+.\venv\Scripts\python.exe code\prototype_v1\start_assistant.py
+```
+
+- Official launcher command (demo/operator workflow):
+
+```
+.\venv\Scripts\python.exe code\prototype_v1\launch_demo.py
+```
+
+- Official backend service:
+   - FastAPI app in `code/prototype_v1/api.py`
+   - Started and supervised by `code/prototype_v1/start_assistant.py`
+
+### Official Tunnel Workflow
+
+- Preferred operational command:
+
+```
+.\venv\Scripts\python.exe code\prototype_v1\launch_demo.py --prefer-cloudflare
+```
+
+- `launch_demo.py` is the official operator launcher for tunnel-aware demo startup and endpoint validation.
+- Diagnostic scripts such as `https_tunnel_readiness.py` and `https_tunnel_test_runner.py` are support tools and do not replace canonical startup ownership.
+
+### Official Testing Workflow
+
+- Run tests from repository root using the canonical environment:
+
+```
+.\venv\Scripts\python.exe -m pytest code\prototype_v1 --basetemp code\prototype_v1\results\.pytest_tmp
+```
+
+- Focused contract suites for Investigation Sessions and API compatibility:
+
+```
+.\venv\Scripts\python.exe -m pytest code\prototype_v1\test_investigation_sessions_phase2a.py --basetemp code\prototype_v1\results\.pytest_tmp
+.\venv\Scripts\python.exe -m pytest code\prototype_v1\test_investigation_sessions_phase2b.py --basetemp code\prototype_v1\results\.pytest_tmp
+.\venv\Scripts\python.exe -m pytest code\prototype_v1\test_investigations_api.py --basetemp code\prototype_v1\results\.pytest_tmp
+```
+
+### Official Debugging Workflow
+
+1. Start canonical runtime using `start_assistant.py`.
+2. Validate API availability on `http://127.0.0.1:8001/latest` and session routes via OpenAPI.
+3. Use diagnostic scripts only for targeted troubleshooting.
+4. Do not switch startup ownership to legacy launchers during debugging.
+
+### Official Runtime Ownership
+
+- Runtime supervisor: `code/prototype_v1/start_assistant.py`
+- Refresh loop owner: `code/prototype_v1/refresh_guidance.py --watch` (spawned by startup supervisor)
+- API owner: `code/prototype_v1/api.py`
+- Context fusion owner: `code/prototype_v1/context_fusion.py`
+- Guidance/HUD payload owner: `code/prototype_v1/glasses_demo.py`
+
+### Official Artifact Ownership
+
+| Artifact | Canonical writer | Primary reader | Lifecycle |
+|---|---|---|---|
+| `results/active_editor_state.json` | VS Code extension only | `active_editor_context.py`, `context_fusion.py` | Continuously updated signal |
+| `results/context_fusion.json` | `context_fusion.py` only | `glasses_demo.py`, `api.py` | Regenerated per refresh cycle |
+| `results/resume_now.json` | `glasses_demo.py --auto` only | `api.py`, display clients | Regenerated per refresh cycle |
+| `results/investigation_latest.json` | Investigation result persistence path in `api.py` / `investigations/result_store.py` | `api.py` projection routes | Updated on successful retained-result persistence |
+| `results/investigation_sessions/` | Investigation Session stores in `investigations/` | Session/evidence/analyze routes | Session lifecycle managed, append/update over time |
+
+### Compatibility-Only Scripts
+
+These remain for backward compatibility and historical verification. They are not official startup paths for new Investigation Session development.
+
+- `code/prototype_v1/local_demo_launcher.py`
+- `code/prototype_v1/ngrok_demo_launcher.py`
+- `code/prototype_v1/demo_server_manager.py`
+- `code/prototype_v1/resume_now.py`
+- `code/prototype_v1/folder_watcher.py`
+- `code/prototype_v1/watch_latest_image.py`
+
+### Deprecated Scripts (Governance)
+
+- Governance status for this phase: no script is physically removed.
+- Deprecated behavior means the script is retained only for compatibility verification and is blocked/warned by default where implemented.
+- Current deprecated operational paths are the same files listed in Compatibility-Only Scripts.
+
 Canonical backend interpreter:
 
 ```
