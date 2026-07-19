@@ -23,6 +23,8 @@ import sys
 import time
 from typing import Any
 
+from lock_utils import acquire_single_instance_lock_core, release_single_instance_lock_if_owned
+
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent.parent
@@ -51,66 +53,23 @@ def _is_canonical_python() -> bool:
         return False
 
 
-def _process_is_running(pid: int) -> bool:
-    if pid <= 0:
+def _acquire_single_instance_lock(lock_path: Path, label: str) -> bool:
+    result = acquire_single_instance_lock_core(
+        lock_path,
+        owner_pid=os.getpid(),
+        metadata_lines=[str(os.getpid()), sys.executable],
+    )
+    if result.status == "duplicate_running":
+        print(f"{label}: already running as PID {result.existing_pid}; refusing to start a duplicate.")
         return False
-
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    if result.status == "stale_clear_failed":
+        print(f"{label}: could not clear stale lock {lock_path}: {result.stale_clear_error}")
         return False
     return True
 
 
-def _read_lock_pid(lock_path: Path) -> int | None:
-    if not lock_path.exists() or not lock_path.is_file():
-        return None
-
-    try:
-        raw = lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
-        return int(raw)
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _acquire_single_instance_lock(lock_path: Path, label: str) -> bool:
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            existing_pid = _read_lock_pid(lock_path)
-            if existing_pid is not None and _process_is_running(existing_pid):
-                print(f"{label}: already running as PID {existing_pid}; refusing to start a duplicate.")
-                return False
-
-            try:
-                lock_path.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError as exc:
-                print(f"{label}: could not clear stale lock {lock_path}: {exc}")
-                return False
-            continue
-
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(f"{os.getpid()}\n")
-            handle.write(f"{sys.executable}\n")
-        return True
-
-
 def _release_single_instance_lock(lock_path: Path) -> None:
-    current_pid = _read_lock_pid(lock_path)
-    if current_pid != os.getpid():
-        return
-
-    try:
-        lock_path.unlink()
-    except FileNotFoundError:
-        return
-    except OSError:
-        return
+    release_single_instance_lock_if_owned(lock_path, owner_pid=os.getpid())
 
 
 def _file_signature(path: Path) -> tuple[bool, int, int, str]:
