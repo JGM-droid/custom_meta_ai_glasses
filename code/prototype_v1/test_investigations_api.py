@@ -1124,3 +1124,9 @@ def test_frontend_investigation_panel_uses_latest_endpoint_and_safe_text_renderi
     assert "textContent = requiredNextAction" in html
     assert "investigationDiagnosisEl.innerHTML" not in html
     assert "investigationNextActionEl.innerHTML" not in html
+
+    dashboard_html = (api.BASE_DIR / "dashboard.html").read_text(encoding="utf-8")
+    assert "API_INVESTIGATIONS_LATEST_URL" in dashboard_html
+    assert "fetch(API_INVESTIGATIONS_LATEST_URL" in dashboard_html
+    assert "setDemoStatePill(\"completed\")" in dashboard_html
+    assert "Session: ${sessionId} | Investigation: ${investigationId}" in dashboard_html

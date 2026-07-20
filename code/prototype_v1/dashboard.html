@@ -1043,6 +1043,7 @@
       ? window.location.origin
       : "http://127.0.0.1:8001";
     const API_LATEST_URL = `${API_ORIGIN}/latest`;
+    const API_INVESTIGATIONS_LATEST_URL = `${API_ORIGIN}/investigations/latest`;
     const API_ANALYZE_URL = `${API_ORIGIN}/analyze`;
     const API_DEMO_START_URL = `${API_ORIGIN}/demo/investigations`;
     const DEMO_MIN_IMAGES = 1;
@@ -1546,6 +1547,71 @@
       updateDemoStartButtonState();
     }
 
+    function renderRetainedLatestInvestigation(latest) {
+      if (!latest || typeof latest !== "object" || demoRunInProgress) {
+        return;
+      }
+
+      const sessionId = normalizeOrFallback(latest.session_id, "unknown");
+      const investigationId = normalizeOrFallback(latest.investigation_id, "unknown");
+      const status = normalizeOrFallback(latest.status, "analyzed");
+      const freshness = normalizeOrFallback(latest.freshness_state, "unknown");
+      const ageSeconds = Number.isFinite(Number(latest.age_seconds)) ? `${Number(latest.age_seconds)}s` : "unknown";
+      const diagnosis = normalizeOrFallback(latest.diagnosis, "No diagnosis yet.");
+      const requiredNextAction = normalizeOrFallback(latest.required_next_action, "No action yet.");
+      const copilotPrompt = normalize(latest.copilot_prompt);
+
+      setDemoStatePill("completed");
+      setDemoStatus("Loaded latest retained investigation.", "ok");
+      renderDemoProgress([{ stage: "completed", status: "Loaded retained result." }]);
+
+      renderProductAction({
+        actionStatus: `Retained investigation: ${status}`,
+        copilotPrompt,
+        whyThisShouldWork: "",
+        verificationItems: [requiredNextAction],
+        primaryNextStep: requiredNextAction,
+        glassesGuidance: requiredNextAction,
+        followUpCaptureRequired: false,
+        followUpCaptureMessage: "",
+        gitRecommendation: null,
+      });
+
+      demoDiagnosis.textContent = diagnosis;
+      demoNextAction.textContent = requiredNextAction;
+      demoObservations.textContent = "Loaded from retained latest result.";
+      demoConfidenceValue.textContent = `Freshness: ${freshness}`;
+      demoFollowUp.textContent = "No follow-up capture requested.";
+      demoError.textContent = "No warning or blocker.";
+      demoSessionId.textContent = `Session: ${sessionId} | Investigation: ${investigationId}`;
+      demoProviderModel.textContent = `Freshness: ${freshness} | Age: ${ageSeconds} | Status: ${status}`;
+
+      [
+        demoDiagnosis,
+        demoNextAction,
+        demoObservations,
+        demoConfidenceValue,
+        demoFollowUp,
+        demoError,
+        demoSessionId,
+        demoProviderModel,
+      ].forEach((el) => el.classList.remove("muted"));
+    }
+
+    async function fetchRetainedLatestInvestigation() {
+      try {
+        const response = await fetch(API_INVESTIGATIONS_LATEST_URL, { cache: "no-store" });
+        if (response.status === 404) {
+          return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const latest = await response.json();
+        renderRetainedLatestInvestigation(latest);
+      } catch (_err) {
+        // Keep dashboard usable even if latest investigation retrieval is unavailable.
+      }
+    }
+
     function resetDemoView() {
       stopDemoPolling();
       activeDemoId = null;
@@ -1863,7 +1929,9 @@
 
     resetDemoView();
     fetchLatest();
+    fetchRetainedLatestInvestigation();
     setInterval(fetchLatest, POLL_MS);
+    setInterval(fetchRetainedLatestInvestigation, POLL_MS);
   </script>
 </body>
 </html>
