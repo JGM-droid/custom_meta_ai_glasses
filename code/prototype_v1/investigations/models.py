@@ -275,6 +275,7 @@ class InvestigationSession(BaseModel):
 
     schema_version: str
     session_id: str
+    project_id: str | None = None
     status: InvestigationSessionStatus
     revision: int = Field(..., ge=0)
     created_at_utc: datetime
@@ -305,6 +306,20 @@ class InvestigationSession(BaseModel):
             parsed = UUID(text)
         except ValueError as exc:
             raise ValueError("session_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_optional_project_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("project_id must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("project_id must be a valid UUID.") from exc
         return str(parsed)
 
     @field_validator(
@@ -380,7 +395,22 @@ class InvestigationSession(BaseModel):
 class InvestigationSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    project_id: str | None = None
     client_metadata: dict[str, str | int | float | bool | None] | None = None
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_optional_project_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("project_id must be non-empty when provided.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("project_id must be a valid UUID.") from exc
+        return str(parsed)
 
 
 class InvestigationSessionMutationRequest(BaseModel):
@@ -391,12 +421,14 @@ class InvestigationSessionMutationRequest(BaseModel):
 
 def create_new_investigation_session(
     *,
+    project_id: str | None = None,
     client_metadata: dict[str, str | int | float | bool | None] | None = None,
 ) -> InvestigationSession:
     now = datetime.now(timezone.utc)
     return InvestigationSession(
         schema_version=INVESTIGATION_SESSION_SCHEMA_VERSION,
         session_id=str(uuid4()),
+        project_id=project_id,
         status=InvestigationSessionStatus.CREATED,
         revision=0,
         created_at_utc=now,

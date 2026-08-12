@@ -362,6 +362,25 @@ Atomicity note:
 
 - Connect Investigation Sessions to Projects.
 
+### Phase D1 - Implemented (Investigation -> Project Ownership)
+
+Implemented scope:
+
+- Investigation Session schema now supports an optional `project_id` ownership field.
+- New project-scoped Investigation endpoints:
+    - `POST /projects/{project_id}/investigation-sessions`
+    - `GET /projects/{project_id}/investigation-sessions`
+    - `GET /projects/{project_id}/investigation-sessions/{session_id}`
+- Project-scoped create validates project existence before session creation.
+- Project-scoped retrieval enforces ownership and returns not-found on cross-project access.
+- Ownership operations perform zero OpenAI calls.
+
+Compatibility decision:
+
+- Legacy Investigation session records without `project_id` remain valid and loadable.
+- Legacy sessions are intentionally excluded from project-scoped list/get endpoints.
+- Existing global Investigation endpoints remain compatible for legacy and transitional clients.
+
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
 ## Phase B Acceptance Contract
@@ -440,7 +459,7 @@ Implemented semantics:
 Known limitations after Phase B:
 
 - No project activity timeline/history yet.
-- No Investigation session ownership by project yet.
+- Global Investigation session endpoints remain available for compatibility and may create sessions without project ownership during transition.
 - No structured memory layering beyond checkpoint.
 - No advanced retrieval or summarization pipeline.
 
@@ -572,6 +591,9 @@ Applied and rejected proposals are terminal states.
 
 ADR-027 - ACCEPTED
 Checkpoint proposals are durable records scoped to project identity.
+
+ADR-028 - ACCEPTED
+Investigation session ownership is project-scoped, while legacy sessions missing `project_id` remain loadable and backward compatible.
 
 ## Relationship to Other Documents
 

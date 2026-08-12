@@ -1506,6 +1506,17 @@ def _validate_project_id_or_422(project_id: str) -> str:
         _raise_project_http_error(status_code=422, category="invalid_project_id", message="project_id must be a valid UUID.")
 
 
+def _ensure_project_exists_or_404(project_id: str) -> str:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        PROJECT_STORE.load_project(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    return normalized_project_id
+
+
 def _validate_activity_id_or_422(activity_id: str) -> str:
     try:
         return PROJECT_ACTIVITY_STORE.validate_activity_id(activity_id)
@@ -2559,8 +2570,67 @@ async def create_investigation_session(
     )
     create_request = _parse_session_create_payload(payload)
 
+    normalized_project_id: str | None = None
+    if create_request.project_id is not None:
+        normalized_project_id = _ensure_project_exists_or_404(create_request.project_id)
+
     try:
-        return SESSION_STORE.create_session(client_metadata=create_request.client_metadata)
+        return SESSION_STORE.create_session(
+            project_id=normalized_project_id,
+            client_metadata=create_request.client_metadata,
+        )
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/investigation-sessions", response_model=InvestigationSession, status_code=201)
+async def create_project_investigation_session(
+    project_id: str,
+    request: Request,
+    token: str = Query(default=""),
+    payload: dict[str, object] | None = None,
+) -> InvestigationSession:
+    _ensure_optional_glasses_token_auth(
+        request,
+        token,
+        unauthorized_message="Unauthorized token for session endpoint.",
+    )
+    normalized_project_id = _ensure_project_exists_or_404(project_id)
+    create_request = _parse_session_create_payload(payload)
+
+    if create_request.project_id is not None and create_request.project_id != normalized_project_id:
+        _raise_session_http_error(
+            status_code=409,
+            category="project_mismatch",
+            message="payload project_id must match the path project_id.",
+        )
+
+    try:
+        return SESSION_STORE.create_session(
+            project_id=normalized_project_id,
+            client_metadata=create_request.client_metadata,
+        )
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/investigation-sessions", response_model=list[InvestigationSession])
+async def list_project_investigation_sessions(project_id: str) -> list[InvestigationSession]:
+    normalized_project_id = _ensure_project_exists_or_404(project_id)
+    try:
+        return SESSION_STORE.list_sessions_for_project(normalized_project_id)
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/investigation-sessions/{session_id}", response_model=InvestigationSession)
+async def get_project_investigation_session(project_id: str, session_id: str) -> InvestigationSession:
+    normalized_project_id = _ensure_project_exists_or_404(project_id)
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        return SESSION_STORE.load_session_for_project(normalized_project_id, normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
 

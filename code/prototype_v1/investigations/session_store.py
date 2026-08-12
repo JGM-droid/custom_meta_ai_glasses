@@ -165,10 +165,34 @@ class InvestigationSessionStore:
     def create_session(
         self,
         *,
+        project_id: str | None = None,
         client_metadata: dict[str, str | int | float | bool | None] | None = None,
     ) -> InvestigationSession:
-        session = create_new_investigation_session(client_metadata=client_metadata)
+        session = create_new_investigation_session(project_id=project_id, client_metadata=client_metadata)
         self.save_session(session)
+        return session
+
+    def list_sessions(self) -> list[InvestigationSession]:
+        sessions: list[InvestigationSession] = []
+        for path in sorted(self.sessions_dir.glob("*.json")):
+            session_id = path.stem
+            normalized = self.validate_session_id(session_id)
+            sessions.append(self._load_session_no_lock(normalized))
+        sessions.sort(key=lambda item: (item.updated_at_utc, item.session_id), reverse=True)
+        return sessions
+
+    def list_sessions_for_project(self, project_id: str) -> list[InvestigationSession]:
+        normalized_project_id = str(project_id or "").strip()
+        sessions = self.list_sessions()
+        filtered = [item for item in sessions if item.project_id == normalized_project_id]
+        filtered.sort(key=lambda item: (item.updated_at_utc, item.session_id), reverse=True)
+        return filtered
+
+    def load_session_for_project(self, project_id: str, session_id: str) -> InvestigationSession:
+        normalized_project_id = str(project_id or "").strip()
+        session = self.load_session(session_id)
+        if session.project_id != normalized_project_id:
+            raise InvestigationSessionNotFound("Session does not exist.")
         return session
 
     def save_session(self, session: InvestigationSession) -> None:
