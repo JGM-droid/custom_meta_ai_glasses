@@ -111,11 +111,14 @@ from projects import (
     CheckpointProposalStoreError,
     Project,
     ProjectActivity,
+    ProjectActivityConfirmationStatus,
     ProjectActivityCreateRequest,
     ProjectActivityInvalidId,
     ProjectActivityNotFound,
+    ProjectActivitySourceType,
     ProjectActivityStore,
     ProjectActivityStoreError,
+    ProjectActivityType,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -1320,6 +1323,58 @@ def _build_session_analyze_response(session: InvestigationSession, *, accepted: 
         error=polling.error,
         poll_url=_poll_url_for_session(polling.session_id),
     )
+
+
+def _truncate_activity_summary(text: str, max_chars: int) -> str:
+    normalized = " ".join(str(text or "").split()).strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    if max_chars <= 3:
+        return normalized[:max_chars]
+    return normalized[: max_chars - 3].rstrip() + "..."
+
+
+def _project_completed_investigation_activity(session: InvestigationSession) -> ProjectActivity | None:
+    if not session.project_id or not session.completed_result_id:
+        return None
+
+    try:
+        retained = load_canonical_investigation_result(
+            _canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+            session.completed_result_id,
+        ).retained_result
+    except InvestigationStoreError:
+        return None
+
+    summary = _truncate_activity_summary(
+        f"Investigation completed: {retained.diagnosis}. Next step: {retained.required_next_action}",
+        500,
+    )
+    details_parts = [
+        f"Investigation session {session.session_id} completed with result {session.completed_result_id}.",
+        f"Diagnosis: {retained.diagnosis}",
+        f"Recommended next action: {retained.required_next_action}",
+    ]
+    details = " ".join(details_parts)
+
+    request = ProjectActivityCreateRequest(
+        activity_type=ProjectActivityType.RESULT,
+        source_type=ProjectActivitySourceType.AI,
+        confirmation_status=ProjectActivityConfirmationStatus.INFERRED,
+        summary=summary,
+        details=details,
+        occurred_at_utc=retained.completed_at_utc,
+        metadata={
+            "investigation_session_id": session.session_id,
+            "investigation_result_id": session.completed_result_id,
+            "investigation_result_status": retained.status.value,
+        },
+    )
+
+    try:
+        return PROJECT_ACTIVITY_STORE.create_activity(session.project_id, request)
+    except ProjectActivityStoreError:
+        return None
 
 
 def _parse_session_analyze_payload(payload: dict[str, object] | None) -> InvestigationSessionAnalyzeRequest:
@@ -2973,6 +3028,7 @@ async def analyze_investigation_session(
     if session.status == InvestigationSessionStatus.CANCELLED:
         _raise_session_http_error(status_code=409, category="invalid_state_transition", message="Cancelled sessions cannot begin analysis.")
     if session.status == InvestigationSessionStatus.COMPLETED:
+        _project_completed_investigation_activity(session)
         return _build_session_analyze_response(session, accepted=True)
     if session.status in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
         _raise_session_http_error(status_code=409, category="analysis_attempt_conflict", message="Session analysis is already in progress.")
@@ -3036,6 +3092,7 @@ async def analyze_investigation_session(
         updated = SESSION_STORE.load_session(session.session_id)
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+    _project_completed_investigation_activity(updated)
     return _build_session_analyze_response(updated, accepted=True)
 
 

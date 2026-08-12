@@ -162,11 +162,53 @@ class ProjectActivityStore:
 
         return activity
 
+    def _load_all_activities_no_lock(self, project_id: str) -> list[ProjectActivity]:
+        activity_dir = self._project_activity_dir(project_id)
+        if not activity_dir.exists() or not activity_dir.is_dir():
+            return []
+
+        activities: list[ProjectActivity] = []
+        for path in sorted(activity_dir.glob("*.json")):
+            activities.append(self._load_activity_from_path(project_id, path))
+        return activities
+
+    @staticmethod
+    def _investigation_reference_from_metadata(
+        metadata: dict[str, str | int | float | bool | None] | None,
+    ) -> tuple[str, str] | None:
+        if not metadata:
+            return None
+
+        session_value = metadata.get("investigation_session_id")
+        result_value = metadata.get("investigation_result_id")
+        if session_value is None or result_value is None:
+            return None
+
+        session_text = str(session_value).strip()
+        result_text = str(result_value).strip()
+        if not session_text or not result_text:
+            return None
+
+        try:
+            normalized_session_id = str(UUID(session_text))
+            normalized_result_id = str(UUID(result_text))
+        except ValueError:
+            return None
+
+        return normalized_session_id, normalized_result_id
+
     def create_activity(self, project_id: str, request: ProjectActivityCreateRequest) -> ProjectActivity:
         normalized_project_id = self._ensure_project_exists(project_id)
 
         lock = self._get_project_lock(normalized_project_id)
         with lock:
+            reference = self._investigation_reference_from_metadata(request.metadata)
+            if reference is not None:
+                for existing in self._load_all_activities_no_lock(normalized_project_id):
+                    existing_reference = self._investigation_reference_from_metadata(existing.metadata)
+                    if existing_reference == reference:
+                        return existing
+
             now = datetime.now(timezone.utc)
             occurred_at = request.occurred_at_utc or now
             if occurred_at.tzinfo is None:
@@ -212,13 +254,7 @@ class ProjectActivityStore:
 
         lock = self._get_project_lock(normalized_project_id)
         with lock:
-            activity_dir = self._project_activity_dir(normalized_project_id)
-            if not activity_dir.exists() or not activity_dir.is_dir():
-                return []
-
-            activities: list[ProjectActivity] = []
-            for path in sorted(activity_dir.glob("*.json")):
-                activities.append(self._load_activity_from_path(normalized_project_id, path))
+            activities = self._load_all_activities_no_lock(normalized_project_id)
 
             activities.sort(key=lambda item: (item.occurred_at_utc, item.created_at_utc, item.activity_id))
             return activities

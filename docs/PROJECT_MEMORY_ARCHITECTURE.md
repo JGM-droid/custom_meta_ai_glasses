@@ -381,6 +381,23 @@ Compatibility decision:
 - Legacy sessions are intentionally excluded from project-scoped list/get endpoints.
 - Existing global Investigation endpoints remain compatible for legacy and transitional clients.
 
+### Phase D2 - Implemented (Investigation Result -> Project Activity)
+
+Implemented scope:
+
+- Successful project-owned Investigation completions create a durable Project Activity projection.
+- Projection is idempotent and keyed by originating Investigation session/result identity.
+- Projection uses conservative provenance:
+    - source_type reflects AI/system origin
+    - confirmation_status remains inferred
+- Projection does not mutate Project checkpoint or revision.
+
+Compatibility decision:
+
+- Legacy/unowned Investigations do not receive Project Activities.
+- Failed or cancelled Investigations do not create completed-result Activities.
+- Projection failure is treated as deferred/non-canonical and does not overwrite the canonical Investigation result.
+
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
 ## Phase B Acceptance Contract
@@ -594,6 +611,9 @@ Checkpoint proposals are durable records scoped to project identity.
 
 ADR-028 - ACCEPTED
 Investigation session ownership is project-scoped, while legacy sessions missing `project_id` remain loadable and backward compatible.
+
+ADR-029 - ACCEPTED
+Project Activity projection from completed Investigations must be idempotent, conservative in provenance, and must not mutate Project checkpoint state.
 
 ## Relationship to Other Documents
 
