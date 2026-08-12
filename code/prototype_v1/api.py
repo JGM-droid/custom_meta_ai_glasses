@@ -98,6 +98,20 @@ from investigations import (
     save_latest_investigation_result,
     OpenAIInvestigationAnalysisProvider,
 )
+from projects import (
+    ActiveProjectNotSet,
+    Project,
+    ProjectCheckpoint,
+    ProjectCheckpointPatchRequest,
+    ProjectCreateRequest,
+    ProjectInvalidId,
+    ProjectNotFound,
+    ProjectRevisionConflict,
+    ProjectStore,
+    ProjectStoreError,
+    ProjectSummary,
+    to_project_summary,
+)
 
 try:
     from openai import OpenAI
@@ -131,6 +145,7 @@ RESULTS_DIR = BASE_DIR / "results"
 VISION_CONTEXT_JSON = RESULTS_DIR / "vision_context.json"
 INVESTIGATION_LATEST_JSON = RESULTS_DIR / "investigation_latest.json"
 INVESTIGATION_SESSIONS_ROOT = RESULTS_DIR / "investigation_sessions"
+PROJECTS_ROOT = RESULTS_DIR / "projects"
 CONTEXT_FUSION_JSON = RESULTS_DIR / "context_fusion.json"
 DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
 GLASSES_WEBAPP_DIR = BASE_DIR / "glasses_webapp"
@@ -162,6 +177,13 @@ def _build_evidence_store() -> InvestigationEvidenceStore:
 
 
 EVIDENCE_STORE = _build_evidence_store()
+
+
+def _build_project_store() -> ProjectStore:
+    return ProjectStore(PROJECTS_ROOT)
+
+
+PROJECT_STORE = _build_project_store()
 
 
 class InvestigationDemoMode(str, Enum):
@@ -1172,6 +1194,10 @@ def _raise_session_http_error(status_code: int, category: str, message: str) -> 
     raise HTTPException(status_code=status_code, detail={"category": category, "message": message})
 
 
+def _raise_project_http_error(status_code: int, category: str, message: str) -> None:
+    raise HTTPException(status_code=status_code, detail={"category": category, "message": message})
+
+
 def _canonical_investigation_store_root(latest_path: Path) -> Path:
     normalized = Path(latest_path)
     if normalized.name == "latest.json":
@@ -1442,6 +1468,13 @@ def _validate_session_id_or_422(session_id: str) -> str:
         return str(UUID(str(session_id).strip()))
     except ValueError:
         _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
+
+
+def _validate_project_id_or_422(project_id: str) -> str:
+    try:
+        return PROJECT_STORE.validate_project_id(project_id)
+    except ProjectInvalidId:
+        _raise_project_http_error(status_code=422, category="invalid_project_id", message="project_id must be a valid UUID.")
 
 
 def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
@@ -2487,6 +2520,127 @@ async def create_investigation_session(
         return SESSION_STORE.create_session(client_metadata=create_request.client_metadata)
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+@app.post("/projects", response_model=Project, status_code=201)
+async def create_project(payload: dict[str, object] | None = None) -> Project:
+    try:
+        create_request = ProjectCreateRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        checkpoint = create_request.checkpoint or ProjectCheckpoint()
+        return PROJECT_STORE.create_project(
+            name=create_request.name,
+            goal=create_request.goal,
+            status=create_request.status,
+            checkpoint=checkpoint,
+        )
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.get("/projects", response_model=list[ProjectSummary])
+async def list_projects() -> list[ProjectSummary]:
+    try:
+        projects = PROJECT_STORE.list_projects()
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    return [to_project_summary(project) for project in projects]
+
+
+@app.patch("/projects/{project_id}/checkpoint", response_model=Project)
+async def patch_project_checkpoint(project_id: str, payload: dict[str, object] | None = None) -> Project:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        patch = ProjectCheckpointPatchRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    fields_to_update = {
+        "current_objective": patch.current_objective,
+        "completed_summary": patch.completed_summary,
+        "discoveries_summary": patch.discoveries_summary,
+        "current_work": patch.current_work,
+        "stopped_at": patch.stopped_at,
+        "blockers": patch.blockers,
+        "next_action": patch.next_action,
+    }
+
+    try:
+        return PROJECT_STORE.mutate_project(
+            normalized_project_id,
+            expected_revision=patch.expected_revision,
+            mutator=lambda current: _apply_project_checkpoint_patch(current, fields_to_update),
+        )
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectRevisionConflict:
+        _raise_project_http_error(status_code=409, category="revision_conflict", message="expected_revision does not match the current project revision.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.put("/projects/active/{project_id}", response_model=Project)
+async def set_active_project(project_id: str) -> Project:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        PROJECT_STORE.set_active_project(normalized_project_id)
+        return PROJECT_STORE.load_project(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.get("/projects/active", response_model=Project)
+async def get_active_project() -> Project:
+    try:
+        return PROJECT_STORE.get_active_project()
+    except ActiveProjectNotSet:
+        _raise_project_http_error(status_code=404, category="active_project_not_set", message="No active project is currently selected.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.get("/projects/{project_id}", response_model=Project)
+async def get_project(project_id: str) -> Project:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return PROJECT_STORE.load_project(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+def _apply_project_checkpoint_patch(current: Project, fields_to_update: dict[str, str | None]) -> tuple[Project, bool]:
+    checkpoint_dict = current.checkpoint.model_dump(mode="python")
+    changed = False
+
+    for key, value in fields_to_update.items():
+        if value is None:
+            continue
+        if checkpoint_dict.get(key) != value:
+            checkpoint_dict[key] = value
+            changed = True
+
+    if not changed:
+        return current, False
+
+    updated_checkpoint = ProjectCheckpoint.model_validate(checkpoint_dict)
+    now = datetime.now(timezone.utc)
+    updated_project = current.model_copy(
+        update={
+            "checkpoint": updated_checkpoint,
+            "revision": current.revision + 1,
+            "updated_at_utc": now,
+        }
+    )
+    return updated_project, True
 
 
 @app.get("/investigation-sessions/{session_id}", response_model=InvestigationSession)

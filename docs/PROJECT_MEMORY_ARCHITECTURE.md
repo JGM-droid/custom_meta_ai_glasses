@@ -281,28 +281,29 @@ Status:
 
 - Architecture/research review and pivot definition.
 
-### Phase B - Next
+### Phase B - Implemented (Minimal Foundation)
 
-Minimal Persistent Project Foundation only:
+Implemented scope:
 
-- Project schema
-- Atomic ProjectStore
-- Project CRUD/read APIs needed for proof
-- Checkpoint update
-- Active project selection
-- Isolation tests
-- Restart persistence tests
-- Revision/conflict behavior
-- Existing Investigation regression tests
+- Project schema with explicit UUID identity.
+- Project checkpoint schema (minimal fields only).
+- Atomic filesystem ProjectStore.
+- One-file-per-project durable persistence.
+- Active project pointer persistence.
+- Project API endpoints for create/list/get/checkpoint update/active selection/active retrieval.
+- Optimistic revision conflict checks on checkpoint mutation.
+- Isolation and restart-persistence tests.
+- Investigation compatibility regression coverage.
 
-Explicitly not in Phase B:
+Explicitly not implemented in Phase B:
 
-- OpenAI requirement for basic project operations
-- Embeddings
-- RAG
-- Vector DB
-- Automatic project detection
-- Investigation redesign
+- Investigation-to-Project ownership linking.
+- Activity history and structured observations.
+- Evidence provenance graphing.
+- Context retrieval pipeline.
+- AI-proposed memory updates.
+- Semantic/vector/graph retrieval.
+- Dashboard/UI workflow for project memory.
 
 ### Phase C
 
@@ -351,6 +352,48 @@ Mandatory requirements:
 - Existing Investigation tests remain green.
 - Existing Investigation API behavior remains compatible.
 - Existing glasses/HUD result behavior remains compatible.
+
+### Phase B Implementation Note (2026-08-12)
+
+Implemented backend components:
+
+- Project models under `code/prototype_v1/projects/models.py`.
+- Atomic ProjectStore under `code/prototype_v1/projects/project_store.py`.
+- Project API surface in `code/prototype_v1/api.py`:
+    - `POST /projects`
+    - `GET /projects`
+    - `GET /projects/{project_id}`
+    - `PATCH /projects/{project_id}/checkpoint`
+    - `PUT /projects/active/{project_id}`
+    - `GET /projects/active`
+
+Implemented storage layout:
+
+```text
+code/prototype_v1/results/projects/
+        projects/
+                <project_uuid>.json
+        active_project.json
+        corrupt/
+        archive/
+        temp/
+```
+
+Implemented semantics:
+
+- Project identity is explicit and UUID-validated.
+- Checkpoint patch updates only provided fields.
+- Unspecified checkpoint fields are preserved.
+- Successful checkpoint mutation increments project revision exactly once.
+- Active project selection is a durable convenience pointer and does not mutate project records.
+- Project operations are deterministic and perform zero OpenAI calls.
+
+Known limitations after Phase B:
+
+- No project activity timeline/history yet.
+- No Investigation session ownership by project yet.
+- No structured memory layering beyond checkpoint.
+- No advanced retrieval or summarization pipeline.
 
 ## Architectural Risks
 
