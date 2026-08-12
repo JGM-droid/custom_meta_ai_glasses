@@ -1,8 +1,14 @@
 from .models import (
     ACTIVE_PROJECT_POINTER_SCHEMA_VERSION,
+    PROJECT_ACTIVITY_SCHEMA_VERSION,
     PROJECT_SCHEMA_VERSION,
     ActiveProjectPointer,
     Project,
+    ProjectActivity,
+    ProjectActivityConfirmationStatus,
+    ProjectActivityCreateRequest,
+    ProjectActivitySourceType,
+    ProjectActivityType,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -10,6 +16,12 @@ from .models import (
     ProjectSummary,
     create_new_project,
     to_project_summary,
+)
+from .activity_store import (
+    ProjectActivityInvalidId,
+    ProjectActivityNotFound,
+    ProjectActivityStore,
+    ProjectActivityStoreError,
 )
 from .project_store import (
     ActiveProjectNotSet,
@@ -22,9 +34,15 @@ from .project_store import (
 
 __all__ = [
     "ACTIVE_PROJECT_POINTER_SCHEMA_VERSION",
+    "PROJECT_ACTIVITY_SCHEMA_VERSION",
     "PROJECT_SCHEMA_VERSION",
     "ActiveProjectPointer",
     "Project",
+    "ProjectActivity",
+    "ProjectActivityConfirmationStatus",
+    "ProjectActivityCreateRequest",
+    "ProjectActivitySourceType",
+    "ProjectActivityType",
     "ProjectCheckpoint",
     "ProjectCheckpointPatchRequest",
     "ProjectCreateRequest",
@@ -32,6 +50,10 @@ __all__ = [
     "ProjectSummary",
     "create_new_project",
     "to_project_summary",
+    "ProjectActivityStore",
+    "ProjectActivityStoreError",
+    "ProjectActivityNotFound",
+    "ProjectActivityInvalidId",
     "ProjectStore",
     "ProjectStoreError",
     "ProjectNotFound",

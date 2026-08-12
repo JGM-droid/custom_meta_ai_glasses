@@ -309,6 +309,26 @@ Explicitly not implemented in Phase B:
 
 - Structured project activities and checkpoint evolution rules.
 
+### Phase C1 - Implemented (Project Activity History Foundation)
+
+Implemented scope:
+
+- Structured project activity schema with explicit UUID identity.
+- Project-scoped activity store with atomic one-file-per-activity persistence.
+- Hard storage namespace boundary under `activities/<project_id>/`.
+- Project activity API endpoints for append/list/get under project scope.
+- Deterministic activity ordering by `occurred_at_utc`, then `created_at_utc`, then `activity_id`.
+- Corruption quarantine handling for malformed activity records.
+- Regression tests for project isolation, ownership denial, persistence, and zero-OpenAI behavior.
+
+Explicitly not implemented in Phase C1:
+
+- Automatic checkpoint mutation from activities.
+- Automatic project revision or `updated_at_utc` mutation from activity append.
+- Any AI-generated memory writing pipeline.
+
+Phase C2 will define validated Activity -> Checkpoint update rules.
+
 ### Phase D
 
 - Connect Investigation Sessions to Projects.
@@ -487,6 +507,21 @@ Project retrieval and switching should not require an LLM call.
 
 ADR-015 - ACCEPTED
 Phase B proves deterministic persistence/isolation before AI-assisted memory generation.
+
+ADR-016 - ACCEPTED
+Project activity records are persisted per project namespace and never globally shared.
+
+ADR-017 - ACCEPTED
+Activity append operations are non-authoritative and do not automatically mutate Project checkpoint state.
+
+ADR-018 - ACCEPTED
+Activity append operations do not increment Project revision or mutate Project updated_at_utc during C1.
+
+ADR-019 - ACCEPTED
+Project activity retrieval remains deterministic through stable ordering keys.
+
+ADR-020 - ACCEPTED
+Project activity append/list/get operations must perform zero OpenAI calls.
 
 ## Relationship to Other Documents
 

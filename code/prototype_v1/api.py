@@ -101,6 +101,12 @@ from investigations import (
 from projects import (
     ActiveProjectNotSet,
     Project,
+    ProjectActivity,
+    ProjectActivityCreateRequest,
+    ProjectActivityInvalidId,
+    ProjectActivityNotFound,
+    ProjectActivityStore,
+    ProjectActivityStoreError,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -184,6 +190,13 @@ def _build_project_store() -> ProjectStore:
 
 
 PROJECT_STORE = _build_project_store()
+
+
+def _build_project_activity_store() -> ProjectActivityStore:
+    return ProjectActivityStore(PROJECTS_ROOT, PROJECT_STORE)
+
+
+PROJECT_ACTIVITY_STORE = _build_project_activity_store()
 
 
 class InvestigationDemoMode(str, Enum):
@@ -1477,6 +1490,13 @@ def _validate_project_id_or_422(project_id: str) -> str:
         _raise_project_http_error(status_code=422, category="invalid_project_id", message="project_id must be a valid UUID.")
 
 
+def _validate_activity_id_or_422(activity_id: str) -> str:
+    try:
+        return PROJECT_ACTIVITY_STORE.validate_activity_id(activity_id)
+    except ProjectActivityInvalidId:
+        _raise_project_http_error(status_code=422, category="invalid_activity_id", message="activity_id must be a valid UUID.")
+
+
 def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -2615,6 +2635,53 @@ async def get_project(project_id: str) -> Project:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectStoreError:
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/activities", response_model=ProjectActivity, status_code=201)
+async def create_project_activity(project_id: str, payload: dict[str, object] | None = None) -> ProjectActivity:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        create_request = ProjectActivityCreateRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        return PROJECT_ACTIVITY_STORE.create_activity(normalized_project_id, create_request)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except ProjectActivityStoreError:
+        _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/activities", response_model=list[ProjectActivity])
+async def list_project_activities(project_id: str) -> list[ProjectActivity]:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return PROJECT_ACTIVITY_STORE.list_activities(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except ProjectActivityStoreError:
+        _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/activities/{activity_id}", response_model=ProjectActivity)
+async def get_project_activity(project_id: str, activity_id: str) -> ProjectActivity:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_activity_id = _validate_activity_id_or_422(activity_id)
+    try:
+        return PROJECT_ACTIVITY_STORE.load_activity(normalized_project_id, normalized_activity_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectActivityNotFound:
+        _raise_project_http_error(status_code=404, category="activity_not_found", message="Activity does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except ProjectActivityStoreError:
+        _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
 
 
 def _apply_project_checkpoint_patch(current: Project, fields_to_update: dict[str, str | None]) -> tuple[Project, bool]:
