@@ -100,6 +100,15 @@ from investigations import (
 )
 from projects import (
     ActiveProjectNotSet,
+    CheckpointProposal,
+    CheckpointProposalCreateRequest,
+    CheckpointProposalForeignActivityReference,
+    CheckpointProposalInvalidId,
+    CheckpointProposalNotFound,
+    CheckpointProposalRevisionConflict,
+    CheckpointProposalStateError,
+    CheckpointProposalStore,
+    CheckpointProposalStoreError,
     Project,
     ProjectActivity,
     ProjectActivityCreateRequest,
@@ -197,6 +206,13 @@ def _build_project_activity_store() -> ProjectActivityStore:
 
 
 PROJECT_ACTIVITY_STORE = _build_project_activity_store()
+
+
+def _build_checkpoint_proposal_store() -> CheckpointProposalStore:
+    return CheckpointProposalStore(PROJECTS_ROOT, PROJECT_STORE, PROJECT_ACTIVITY_STORE)
+
+
+CHECKPOINT_PROPOSAL_STORE = _build_checkpoint_proposal_store()
 
 
 class InvestigationDemoMode(str, Enum):
@@ -1497,6 +1513,13 @@ def _validate_activity_id_or_422(activity_id: str) -> str:
         _raise_project_http_error(status_code=422, category="invalid_activity_id", message="activity_id must be a valid UUID.")
 
 
+def _validate_proposal_id_or_422(proposal_id: str) -> str:
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.validate_proposal_id(proposal_id)
+    except CheckpointProposalInvalidId:
+        _raise_project_http_error(status_code=422, category="invalid_proposal_id", message="proposal_id must be a valid UUID.")
+
+
 def _parse_optional_utc_datetime(value: str | None) -> datetime | None:
     text = str(value or "").strip()
     if not text:
@@ -2682,6 +2705,97 @@ async def get_project_activity(project_id: str, activity_id: str) -> ProjectActi
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
     except ProjectActivityStoreError:
         _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/checkpoint-proposals", response_model=CheckpointProposal, status_code=201)
+async def create_checkpoint_proposal(project_id: str, payload: dict[str, object] | None = None) -> CheckpointProposal:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        create_request = CheckpointProposalCreateRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.create_proposal(normalized_project_id, create_request)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except CheckpointProposalRevisionConflict:
+        _raise_project_http_error(status_code=409, category="revision_conflict", message="expected_project_revision does not match the current project revision.")
+    except CheckpointProposalForeignActivityReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="source_activity_ids must belong to the target project.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except CheckpointProposalStoreError:
+        _raise_project_http_error(status_code=500, category="checkpoint_proposal_storage_error", message="Checkpoint proposal storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/checkpoint-proposals", response_model=list[CheckpointProposal])
+async def list_checkpoint_proposals(project_id: str) -> list[CheckpointProposal]:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.list_proposals(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except CheckpointProposalStoreError:
+        _raise_project_http_error(status_code=500, category="checkpoint_proposal_storage_error", message="Checkpoint proposal storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/checkpoint-proposals/{proposal_id}", response_model=CheckpointProposal)
+async def get_checkpoint_proposal(project_id: str, proposal_id: str) -> CheckpointProposal:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_proposal_id = _validate_proposal_id_or_422(proposal_id)
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.load_proposal(normalized_project_id, normalized_proposal_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except CheckpointProposalNotFound:
+        _raise_project_http_error(status_code=404, category="proposal_not_found", message="Checkpoint proposal does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except CheckpointProposalStoreError:
+        _raise_project_http_error(status_code=500, category="checkpoint_proposal_storage_error", message="Checkpoint proposal storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/checkpoint-proposals/{proposal_id}/apply", response_model=CheckpointProposal)
+async def apply_checkpoint_proposal(project_id: str, proposal_id: str) -> CheckpointProposal:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_proposal_id = _validate_proposal_id_or_422(proposal_id)
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.apply_proposal(normalized_project_id, normalized_proposal_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except CheckpointProposalNotFound:
+        _raise_project_http_error(status_code=404, category="proposal_not_found", message="Checkpoint proposal does not exist.")
+    except CheckpointProposalStateError:
+        _raise_project_http_error(status_code=409, category="invalid_proposal_state", message="Only pending proposals can be applied.")
+    except CheckpointProposalRevisionConflict:
+        _raise_project_http_error(status_code=409, category="revision_conflict", message="proposal base_project_revision does not match the current project revision.")
+    except CheckpointProposalForeignActivityReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="source_activity_ids must belong to the target project.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except CheckpointProposalStoreError:
+        _raise_project_http_error(status_code=500, category="checkpoint_proposal_storage_error", message="Checkpoint proposal storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/checkpoint-proposals/{proposal_id}/reject", response_model=CheckpointProposal)
+async def reject_checkpoint_proposal(project_id: str, proposal_id: str) -> CheckpointProposal:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_proposal_id = _validate_proposal_id_or_422(proposal_id)
+    try:
+        return CHECKPOINT_PROPOSAL_STORE.reject_proposal(normalized_project_id, normalized_proposal_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except CheckpointProposalNotFound:
+        _raise_project_http_error(status_code=404, category="proposal_not_found", message="Checkpoint proposal does not exist.")
+    except CheckpointProposalStateError:
+        _raise_project_http_error(status_code=409, category="invalid_proposal_state", message="Only pending proposals can be rejected.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except CheckpointProposalStoreError:
+        _raise_project_http_error(status_code=500, category="checkpoint_proposal_storage_error", message="Checkpoint proposal storage is unavailable.")
 
 
 def _apply_project_checkpoint_patch(current: Project, fields_to_update: dict[str, str | None]) -> tuple[Project, bool]:

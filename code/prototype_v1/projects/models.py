@@ -4,12 +4,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PROJECT_SCHEMA_VERSION = "1.0"
 ACTIVE_PROJECT_POINTER_SCHEMA_VERSION = "1.0"
 PROJECT_ACTIVITY_SCHEMA_VERSION = "1.0"
+CHECKPOINT_PROPOSAL_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -17,6 +18,7 @@ _MAX_ACTIVITY_METADATA_ENTRIES = 16
 _MAX_ACTIVITY_METADATA_KEY_LENGTH = 64
 _MAX_ACTIVITY_METADATA_STRING_LENGTH = 256
 _MAX_ACTIVITY_METADATA_TOTAL_TEXT = 2048
+_MAX_CHECKPOINT_PROPOSAL_REASON_LENGTH = 1000
 
 
 class ProjectStatus(str, Enum):
@@ -47,6 +49,12 @@ class ProjectActivityConfirmationStatus(str, Enum):
     OBSERVED = "observed"
     INFERRED = "inferred"
     CONFIRMED = "confirmed"
+
+
+class CheckpointProposalStatus(str, Enum):
+    PENDING = "pending"
+    APPLIED = "applied"
+    REJECTED = "rejected"
 
 
 class ProjectCheckpoint(BaseModel):
@@ -292,6 +300,204 @@ class ProjectActivityCreateRequest(BaseModel):
         if value.tzinfo is None:
             raise ValueError("occurred_at_utc must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
+
+
+class CheckpointProposalPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    current_objective: str | None = Field(default=None, max_length=400)
+    completed_summary: str | None = Field(default=None, max_length=2000)
+    discoveries_summary: str | None = Field(default=None, max_length=2000)
+    current_work: str | None = Field(default=None, max_length=2000)
+    stopped_at: str | None = Field(default=None, max_length=500)
+    blockers: str | None = Field(default=None, max_length=2000)
+    next_action: str | None = Field(default=None, max_length=1000)
+
+    @field_validator(
+        "current_objective",
+        "completed_summary",
+        "discoveries_summary",
+        "current_work",
+        "stopped_at",
+        "blockers",
+        "next_action",
+    )
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+    def to_update_fields(self) -> dict[str, str]:
+        raw = self.model_dump(mode="python")
+        fields: dict[str, str] = {}
+        for key, value in raw.items():
+            if value is not None:
+                fields[key] = value
+        return fields
+
+
+class CheckpointProposalCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    expected_project_revision: int = Field(..., ge=0)
+    source_activity_ids: list[str] = Field(default_factory=list)
+    proposed_checkpoint_patch: CheckpointProposalPatch
+    reason: str = Field(..., min_length=1, max_length=_MAX_CHECKPOINT_PROPOSAL_REASON_LENGTH)
+
+    @field_validator("source_activity_ids")
+    @classmethod
+    def _validate_source_activity_ids(cls, value: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ValueError("source_activity_ids must contain valid UUID values.")
+            try:
+                normalized = str(UUID(text))
+            except ValueError as exc:
+                raise ValueError("source_activity_ids must contain valid UUID values.") from exc
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append(normalized)
+        return unique
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("reason is required.")
+        return text
+
+    @field_validator("proposed_checkpoint_patch")
+    @classmethod
+    def _validate_non_empty_patch(cls, value: CheckpointProposalPatch) -> CheckpointProposalPatch:
+        if not value.to_update_fields():
+            raise ValueError("proposed_checkpoint_patch must include at least one field.")
+        return value
+
+
+class CheckpointProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    proposal_id: str
+    project_id: str
+    base_project_revision: int = Field(..., ge=0)
+    source_activity_ids: list[str] = Field(default_factory=list)
+    proposed_checkpoint_patch: CheckpointProposalPatch
+    reason: str = Field(..., min_length=1, max_length=_MAX_CHECKPOINT_PROPOSAL_REASON_LENGTH)
+    status: CheckpointProposalStatus
+    created_at_utc: datetime
+    applied_at_utc: datetime | None = None
+    rejected_at_utc: datetime | None = None
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != CHECKPOINT_PROPOSAL_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {CHECKPOINT_PROPOSAL_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("proposal_id", "project_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("UUID fields are required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("source_activity_ids")
+    @classmethod
+    def _normalize_source_activity_ids(cls, value: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                raise ValueError("source_activity_ids must contain valid UUID values.")
+            try:
+                normalized = str(UUID(text))
+            except ValueError as exc:
+                raise ValueError("source_activity_ids must contain valid UUID values.") from exc
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append(normalized)
+        return unique
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("reason is required.")
+        return text
+
+    @field_validator("created_at_utc", "applied_at_utc", "rejected_at_utc")
+    @classmethod
+    def _validate_utc_timestamps(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            raise ValueError("Timestamps must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+    @field_validator("proposed_checkpoint_patch")
+    @classmethod
+    def _validate_non_empty_patch(cls, value: CheckpointProposalPatch) -> CheckpointProposalPatch:
+        if not value.to_update_fields():
+            raise ValueError("proposed_checkpoint_patch must include at least one field.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_status_timestamps(self) -> "CheckpointProposal":
+        if self.status == CheckpointProposalStatus.PENDING:
+            if self.applied_at_utc is not None or self.rejected_at_utc is not None:
+                raise ValueError("pending proposals must not have terminal timestamps.")
+        elif self.status == CheckpointProposalStatus.APPLIED:
+            if self.applied_at_utc is None or self.rejected_at_utc is not None:
+                raise ValueError("applied proposals must have applied_at_utc only.")
+        elif self.status == CheckpointProposalStatus.REJECTED:
+            if self.rejected_at_utc is None or self.applied_at_utc is not None:
+                raise ValueError("rejected proposals must have rejected_at_utc only.")
+        return self
+
+    @classmethod
+    def build_new(
+        cls,
+        *,
+        proposal_id: str,
+        project_id: str,
+        base_project_revision: int,
+        source_activity_ids: list[str],
+        proposed_checkpoint_patch: CheckpointProposalPatch,
+        reason: str,
+        created_at_utc: datetime,
+    ) -> "CheckpointProposal":
+        return cls(
+            schema_version=CHECKPOINT_PROPOSAL_SCHEMA_VERSION,
+            proposal_id=proposal_id,
+            project_id=project_id,
+            base_project_revision=base_project_revision,
+            source_activity_ids=source_activity_ids,
+            proposed_checkpoint_patch=proposed_checkpoint_patch,
+            reason=reason,
+            status=CheckpointProposalStatus.PENDING,
+            created_at_utc=created_at_utc,
+            applied_at_utc=None,
+            rejected_at_utc=None,
+        )
 
 
 class ActiveProjectPointer(BaseModel):

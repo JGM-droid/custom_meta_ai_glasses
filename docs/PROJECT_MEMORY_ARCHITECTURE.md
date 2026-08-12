@@ -329,6 +329,35 @@ Explicitly not implemented in Phase C1:
 
 Phase C2 will define validated Activity -> Checkpoint update rules.
 
+### Phase C2 - Implemented (Validated Checkpoint Update Pipeline)
+
+Implemented scope:
+
+- Explicit Checkpoint Proposal layer persisted separately from Project and Activity records.
+- Project-scoped proposal storage under `checkpoint_proposals/<project_id>/`.
+- Proposal fields include base project revision, source activity references, proposed checkpoint patch, and explicit status.
+- Proposal lifecycle is intentionally minimal: `pending`, `applied`, `rejected`.
+- Proposal creation validates source activity ownership and captures `base_project_revision`.
+- Proposal retrieval remains project-scoped and deterministic.
+- Proposal apply is explicit, validates pending state and base revision, applies only specified patch fields, and marks proposal applied.
+- Proposal reject is explicit, terminal, and does not mutate canonical Project state.
+- Proposal create/list/get/apply/reject operations perform zero OpenAI calls.
+
+Semantics and constraints:
+
+- Activity history does not directly mutate canonical Project checkpoint state.
+- AI inference does not automatically become confirmed Project fact.
+- Proposal creation does not mutate Project checkpoint, revision, or updated timestamp.
+- Proposal rejection does not mutate Project checkpoint, revision, or updated timestamp.
+- Proposal apply increments Project revision exactly once and updates Project `updated_at_utc`.
+- Applied/rejected proposals are terminal and cannot transition between terminal states.
+
+Atomicity note:
+
+- Apply uses a project-scoped lock and deterministic write ordering (Project then Proposal) within one critical section.
+- If filesystem failure occurs after Project write but before Proposal write, a subsequent apply request can reconcile by recognizing the already-applied patch at `base_revision + 1` and finalizing the Proposal state.
+- This minimizes inconsistent windows without introducing a database or broad persistence redesign.
+
 ### Phase D
 
 - Connect Investigation Sessions to Projects.
@@ -522,6 +551,27 @@ Project activity retrieval remains deterministic through stable ordering keys.
 
 ADR-020 - ACCEPTED
 Project activity append/list/get operations must perform zero OpenAI calls.
+
+ADR-021 - ACCEPTED
+Activity history does not directly mutate canonical Project checkpoint state.
+
+ADR-022 - ACCEPTED
+Checkpoint changes may be represented as explicit persisted proposals.
+
+ADR-023 - ACCEPTED
+Checkpoint proposals bind to a base Project revision and do not auto-rebase.
+
+ADR-024 - ACCEPTED
+Proposal apply is the only Phase C2 proposal operation that increments Project revision.
+
+ADR-025 - ACCEPTED
+Source activity references in proposals must belong to the same Project.
+
+ADR-026 - ACCEPTED
+Applied and rejected proposals are terminal states.
+
+ADR-027 - ACCEPTED
+Checkpoint proposals are durable records scoped to project identity.
 
 ## Relationship to Other Documents
 

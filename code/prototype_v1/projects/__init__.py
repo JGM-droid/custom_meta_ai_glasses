@@ -1,8 +1,13 @@
 from .models import (
     ACTIVE_PROJECT_POINTER_SCHEMA_VERSION,
+    CHECKPOINT_PROPOSAL_SCHEMA_VERSION,
     PROJECT_ACTIVITY_SCHEMA_VERSION,
     PROJECT_SCHEMA_VERSION,
     ActiveProjectPointer,
+    CheckpointProposal,
+    CheckpointProposalCreateRequest,
+    CheckpointProposalPatch,
+    CheckpointProposalStatus,
     Project,
     ProjectActivity,
     ProjectActivityConfirmationStatus,
@@ -16,6 +21,15 @@ from .models import (
     ProjectSummary,
     create_new_project,
     to_project_summary,
+)
+from .checkpoint_proposal_store import (
+    CheckpointProposalForeignActivityReference,
+    CheckpointProposalInvalidId,
+    CheckpointProposalNotFound,
+    CheckpointProposalRevisionConflict,
+    CheckpointProposalStateError,
+    CheckpointProposalStore,
+    CheckpointProposalStoreError,
 )
 from .activity_store import (
     ProjectActivityInvalidId,
@@ -34,9 +48,14 @@ from .project_store import (
 
 __all__ = [
     "ACTIVE_PROJECT_POINTER_SCHEMA_VERSION",
+    "CHECKPOINT_PROPOSAL_SCHEMA_VERSION",
     "PROJECT_ACTIVITY_SCHEMA_VERSION",
     "PROJECT_SCHEMA_VERSION",
     "ActiveProjectPointer",
+    "CheckpointProposal",
+    "CheckpointProposalCreateRequest",
+    "CheckpointProposalPatch",
+    "CheckpointProposalStatus",
     "Project",
     "ProjectActivity",
     "ProjectActivityConfirmationStatus",
@@ -54,6 +73,13 @@ __all__ = [
     "ProjectActivityStoreError",
     "ProjectActivityNotFound",
     "ProjectActivityInvalidId",
+    "CheckpointProposalStore",
+    "CheckpointProposalStoreError",
+    "CheckpointProposalNotFound",
+    "CheckpointProposalInvalidId",
+    "CheckpointProposalStateError",
+    "CheckpointProposalRevisionConflict",
+    "CheckpointProposalForeignActivityReference",
     "ProjectStore",
     "ProjectStoreError",
     "ProjectNotFound",
