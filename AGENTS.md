@@ -1,26 +1,53 @@
-# Project Memory
+# Custom Meta AI Glasses - Agent Guidance
 
-Project:
-Custom Meta AI Glasses
+## Instruction Hierarchy
 
-Purpose:
-Wearable AI workflow assistant for software development.
+1. Repository safety and runtime governance constraints.
+2. Product architecture authority: docs/PROJECT_MEMORY_ARCHITECTURE.md.
+3. Current phase implementation contract and tests.
+4. Historical reference documents.
 
-Current Architecture:
-VS Code
--> Active Editor Signal
--> Active Editor Context
--> Context Fusion
--> Task Tracking
--> Decision Intelligence
--> ChatGPT Guidance Engine
--> Guidance Engine
--> resume_now.json
--> FastAPI
--> Glasses Display
--> Desktop Prompt Panel
+Before making architecture changes, memory changes, Investigation changes, project-state changes, or context-retrieval changes, read docs/PROJECT_MEMORY_ARCHITECTURE.md.
 
-Signals Available:
+If an implementation task conflicts with docs/PROJECT_MEMORY_ARCHITECTURE.md:
+
+1. Stop.
+2. Describe the conflict and why a change may be required.
+3. Update architecture decisions intentionally before implementation drift.
+
+Recommended supporting architecture research reading:
+- docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md (supporting evidence only; not architecture authority)
+
+## Product Direction (Approved)
+
+The product direction is now a project-aware persistent AI assistant.
+
+- Glasses remain an important interface and evidence source.
+- Glasses are not the sole architectural center.
+- Persistent project continuity and project isolation are first-class requirements.
+
+## Investigation Subsystem Status
+
+The Investigation subsystem remains active and must be preserved:
+
+- FastAPI backend and existing investigation APIs.
+- Session lifecycle, evidence storage, orchestration, and retained results.
+- Desktop and glasses projections.
+- Backward compatibility guarantees already in place.
+
+Investigation architecture is an important pattern source for upcoming Project Memory design, but Project Memory should reuse principles before reusing implementation classes.
+
+## Legacy Memory Warning
+
+code/prototype_v1/memory_manager.py and results/session_memory.json are legacy prototype memory and not the foundation of the approved Project Memory architecture.
+
+- Keep for compatibility until migration is intentionally planned.
+- Do not expand legacy global-memory patterns for new project-memory features.
+
+## Existing Runtime/Signal Context
+
+Signals currently available:
+
 - Active file
 - Language
 - Dirty state
@@ -28,37 +55,12 @@ Signals Available:
 - Terminal errors
 - Coding session snapshot
 
-Current Features:
-- Active file awareness
-- File-aware guidance
-- Context fusion
-- Task completion evidence and reason codes
-- Real ChatGPT guidance integration with fallback
-- Desktop prompt panel
-- Copy-to-AI workflow
+Current architecture relationships in the implemented guidance pipeline:
 
-Design Rules:
-- Preserve guidance priority ordering
-- Preserve context fusion architecture
-- Fail gracefully when signals are missing
-- Keep display layer separate from signal layer
-- Prefer additive changes over rewrites
-
-Current Milestone:
-V8.7 Prompt Library
-
-Architecture Relationships:
 - active_editor_context.py -> context_fusion.py
 - context_fusion.py -> glasses_demo.py
 - glasses_demo.py -> resume_now.json
 - resume_now.json -> FastAPI
 - FastAPI -> glasses_display_mock.html
-- glasses_display_mock.html -> Phone / Glasses Display
 
-Future Vision:
-Generate context-aware prompts that can be pasted into:
-- ChatGPT
-- Copilot
-- Claude
-- Cursor
-- Cline
+These relationships are still valid for current runtime behavior, while forward product architecture is governed by docs/PROJECT_MEMORY_ARCHITECTURE.md.

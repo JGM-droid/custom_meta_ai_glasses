@@ -1,12 +1,28 @@
 # Architecture
 
-## System Overview
+## Authority and Scope
 
-This repository implements a local-first, workflow-aware AI assistant prototype. The system processes screenshots, infers workflow state, and writes structured output that can be consumed by scripts and dashboard views.
+This document summarizes architecture in three categories:
 
-The architecture emphasizes continuity across runs rather than isolated single-prompt responses.
+- legacy/historical architecture,
+- currently implemented architecture,
+- approved future architecture.
 
-## Architecture Diagram
+Forward product architecture authority is:
+
+- docs/PROJECT_MEMORY_ARCHITECTURE.md
+
+Runtime/startup ownership authority remains:
+
+- docs/runtime_governance.md
+
+Investigation API contract authority remains:
+
+- docs/investigation_session_api_v1.md
+
+## Legacy Architecture (Historical)
+
+Early prototype flow emphasized screenshot-to-guidance with global session memory:
 
 ```text
 Screenshot Input
@@ -18,195 +34,109 @@ Image Analysis
 Task Continuity
     |
     v
-Session Memory
+Global Session Memory (legacy)
     |
     v
-Progress Tracking
-    |
-    v
-Stuck Detection
-    |
-    v
-Resume Previous Task
-    |
-    v
-Smart Intervention
-    |
-    v
-Metrics Snapshot
-  |
-  v
 Dashboard / Glasses Guidance
 ```
 
-## Phase 1C Completed Architecture
+Legacy components preserved for compatibility/reference:
+
+- code/prototype_v1/memory_manager.py
+- code/prototype_v1/results/session_memory.json
+
+Important status:
+
+- This legacy global-memory pattern is not the approved foundation for Project Memory.
+
+## Currently Implemented Architecture (Investigation Subsystem)
+
+### Phase 1C retained-result architecture
 
 ```text
-Meta Ray-Ban Display Glasses
-  |
-  | Capture ordered investigation images
-  v
 POST /investigations/analyze
   |
-  | Single OpenAI multimodal request
   v
-Context Engine
+Context + one OpenAI multimodal request
   |
   v
 Canonical Retained Investigation
   |
-  |--------------|
-  |              |
-  v              v
-Desktop Projection   Glasses Projection
-  |              |
-GET /investigations/latest
-GET /investigations/latest/glasses
+  +--> Desktop projection endpoint
+  +--> Glasses projection endpoint
 ```
 
-- Only one OpenAI request occurs during investigation analysis.
-- The retained investigation is the canonical source of truth.
-- Desktop and glasses responses are projections of the same retained result.
-- Retrieval endpoints do not invoke OpenAI.
-- Atomic persistence protects the retained investigation from partial writes.
-
-## Phase 2A Implemented Architecture
+### Phase 2A/2B/2C session-centric architecture
 
 ```text
 POST /investigation-sessions
-GET /investigation-sessions/{session_id}
-POST /investigation-sessions/{session_id}/pause
-POST /investigation-sessions/{session_id}/resume
-POST /investigation-sessions/{session_id}/cancel
+POST /investigation-sessions/{session_id}/evidence/image
+POST /investigation-sessions/{session_id}/evidence/audio
+POST /investigation-sessions/{session_id}/analyze
+GET  /investigation-sessions/{session_id}/poll
         |
         v
-InvestigationSession lifecycle state machine
-  states: created, collecting, paused, cancelled
+Investigation session lifecycle + evidence store + orchestrator
         |
         v
-Filesystem session store
-  code/prototype_v1/results/investigation_sessions/
-  - sessions/
-  - corrupt/
-  - archive/
-  - temp/
+Filesystem persistence under results/investigation_sessions/
 ```
 
-- Phase 2A session endpoints perform zero OpenAI calls.
-- Phase 2A session endpoints perform zero Context Engine calls.
-- Session persistence uses one JSON file per session with atomic replace semantics.
-- Session mutation supports optional optimistic concurrency via expected_revision.
-- Authentication reuses the existing optional GLASSES_API_TOKEN behavior.
-- Phase 2B evidence storage is implemented as a separate per-session evidence workspace under code/prototype_v1/results/investigation_sessions/<session_id>/evidence/.
-- Evidence uploads use server-managed sequence numbers, hard delete, quarantine for malformed records, and zero OpenAI / zero Context Engine execution.
-- Session metadata ownership remains with the Phase 2A session store.
+Implemented invariants preserved:
 
-## Component Descriptions
+- explicit UUID identities,
+- server-owned evidence identities and sequencing,
+- atomic persistence,
+- optimistic revision protection,
+- frozen evidence manifests,
+- attempt ownership,
+- canonical retained results,
+- provider abstraction,
+- compatible existing Investigation endpoints and projections.
 
-- Pipeline entrypoint: [code/prototype_v1/watch_latest_image.py](code/prototype_v1/watch_latest_image.py)
-  - Accepts an image path.
-  - Builds prompt context.
-  - Calls model inference.
-  - Persists outputs.
+## Approved Future Architecture (Product Pivot)
 
-- Prompt builder: [code/prototype_v1/context_aware_prompt.py](code/prototype_v1/context_aware_prompt.py)
-  - Defines structured response expectations.
-  - Encourages continuity-oriented guidance.
+The approved product direction is a project-aware persistent AI assistant where Investigation remains a subsystem.
 
-- Output and state logic: [code/prototype_v1/fix_writer.py](code/prototype_v1/fix_writer.py)
-  - Parses structured sections from model text.
-  - Builds task continuity, progress, stuck, resume, intervention, and metrics fields.
-  - Writes [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
+Conceptual direction:
 
-- Session memory manager: [code/prototype_v1/memory_manager.py](code/prototype_v1/memory_manager.py)
-  - Persists observations and active task state.
-  - Maintains [code/prototype_v1/results/session_memory.json](code/prototype_v1/results/session_memory.json).
+```text
+Interfaces (glasses, desktop, phone, voice)
+    |
+    v
+Project Manager
+    |
+    v
+Project-scoped memory + checkpoint + activities + evidence
+    |
+    v
+Selective Context Retriever
+    |
+    v
+AI reasoning / Investigation orchestration
+```
 
-- API surface: [code/prototype_v1/api.py](code/prototype_v1/api.py)
-  - Exposes analyze and latest-state endpoints for dashboard use.
+Key principle:
 
-- Dashboard: [code/prototype_v1/dashboard.html](code/prototype_v1/dashboard.html)
-  - Renders structured fields, metrics snapshot, and demo-oriented summaries.
+- Application-owned state is authoritative.
+- LLM reasoning is applied to selected state.
+- LLM conversation is not canonical project memory.
 
-- Demo runner: [code/prototype_v1/demo_scenario.py](code/prototype_v1/demo_scenario.py)
-  - Executes a repeatable recruiter scenario.
-  - Prints stage-by-stage summaries from latest response output.
+## Project vs Investigation
 
-## Data Flow Walkthrough
+- Project: long-lived container for continuity and isolation.
+- Investigation Session: bounded activity that may occur inside a project.
 
-1. A screenshot path is provided to [code/prototype_v1/watch_latest_image.py](code/prototype_v1/watch_latest_image.py).
-2. The script invokes model analysis with structured workflow instructions.
-3. Parsed fields are assembled and persisted by [code/prototype_v1/fix_writer.py](code/prototype_v1/fix_writer.py).
-4. Observation history and active task data are updated in [code/prototype_v1/results/session_memory.json](code/prototype_v1/results/session_memory.json).
-5. The latest structured payload is written to [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-6. Dashboard and demo scripts consume the latest payload for presentation and validation.
+Project is not equal to Investigation Session.
 
-## Session Memory Design
+## Contradiction Guardrails
 
-- Storage model: file-based JSON in [code/prototype_v1/results/session_memory.json](code/prototype_v1/results/session_memory.json).
-- Main responsibilities:
-  - Track observations over sequential runs.
-  - Persist active task context.
-- Design tradeoff:
-  - Simple and transparent for prototyping.
-  - Not optimized for multi-user or high-volume concurrent writes.
+When planning architecture or memory changes:
 
-## Progress Tracking Design
+1. Read docs/PROJECT_MEMORY_ARCHITECTURE.md first.
+2. Preserve working Investigation behavior unless architecture decisions are intentionally changed.
+3. Do not expand legacy global session memory as new project memory.
 
-- Output field: task_progress in [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-- Contains:
-  - completed_steps
-  - next_step
-  - step_count
-- Source:
-  - Structured extraction of response text sections and labeled fields.
+## Historical Notes Kept Intentionally
 
-## Stuck Detection Design
-
-- Output field: stuck_status in [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-- Heuristic:
-  - Compares current task + next-step patterns against recent observations.
-  - Flags repetition as a stalled-progress signal.
-- Scope:
-  - Lightweight heuristic for demo and prototyping.
-  - Not a probabilistic classifier.
-
-## Resume Previous Task Design
-
-- Output field: resume_previous_task in [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-- Behavior:
-  - Uses active task and matching prior observations.
-  - Surfaces available resume context, completed steps, and next step.
-
-## Intervention Design
-
-- Output field: intervention in [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-- Behavior:
-  - Generates concise intervention guidance when stuck signals are present.
-  - Falls back to continue-current-step guidance when no intervention is recommended.
-
-## Metrics Snapshot Design
-
-- Output field: metrics_snapshot in [code/prototype_v1/results/latest_response.json](code/prototype_v1/results/latest_response.json).
-- Current values summarize recent behavior:
-  - recent_observation_count
-  - stuck_count
-  - intervention_count
-  - latest_task_continuity
-  - latest_step_count
-- Purpose:
-  - Lightweight visibility into recent assistant behavior for demos and iteration.
-
-## Current Limitations
-
-- File-based memory is single-node and prototype-oriented.
-- Behavior quality depends on screenshot clarity and prompt/model responses.
-- Stuck and continuity logic are heuristic and may need tuning for broader domains.
-- Validation is mostly smoke-test style rather than benchmark-driven.
-
-## Future Roadmap
-
-- Voice readout for hands-free assistance.
-- Hosted glasses web app delivery path.
-- Meta Ray-Ban Display integration exploration.
-- Expanded evaluation harness for scenario-level quality tracking.
+Historical sections and repository artifacts describing glasses-first exploration are retained for research lineage and release history. They do not override the approved forward architecture.

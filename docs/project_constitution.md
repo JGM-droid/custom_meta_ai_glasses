@@ -2,6 +2,10 @@
 
 Authoritative scope: This document defines architecture boundaries and guardrails for the backend repository at C:/Users/jesse/OneDrive/Documents/custom_meta_ai_glasses and its integration relationship with Android client work.
 
+Forward-architecture authority update:
+- docs/PROJECT_MEMORY_ARCHITECTURE.md is authoritative for approved product direction and future architecture decisions.
+- This constitution remains authoritative for implementation guardrails, investigation subsystem boundaries, and delivery discipline unless conflicting with the approved forward architecture.
+
 Evidence basis for this constitution:
 - README.md
 - AGENTS.md
@@ -31,8 +35,8 @@ Implementation status legend used in this document:
 ## 1. Product Vision
 
 Target product:
-- Hands-free multimodal assistance for technical investigations.
-- Meta Ray-Ban Display glasses as the wearable endpoint.
+- Project-aware persistent AI assistant with hands-free multimodal investigation capability.
+- Meta Ray-Ban Display glasses as an important interface and evidence source.
 - Android as the capture and integration client.
 - FastAPI backend as the orchestration and contract layer.
 - OpenAI as the primary model and vision provider.
@@ -48,7 +52,7 @@ Current state relative to this vision:
 
 ## 2. Primary User Workflow
 
-Canonical Investigation Session workflow:
+Canonical Investigation Session workflow (subsystem-level):
 1. User starts an investigation.
 2. User captures 1 to 3 ordered images.
 3. User provides one spoken or typed explanation.
@@ -59,8 +63,9 @@ Canonical Investigation Session workflow:
 8. Desktop dashboard receives the full technical response and Copilot prompt.
 
 Workflow priority:
-- Multi-capture investigation is the primary workflow.
+- Multi-capture investigation remains the primary investigation workflow.
 - Single-photo analysis remains a secondary quick workflow.
+- Project continuity across multiple projects is a higher-level product requirement.
 
 Current implementation reality:
 - Implemented: Multi-image combined analysis at POST /investigations/analyze with ordered evidence and one normalized explanation.
@@ -133,6 +138,10 @@ Current state:
 - Implemented: Mixed legacy and investigation-era endpoints coexist; production mobile session polling contract is finalized under /investigation-sessions/{session_id}/poll.
 
 ## 5. Canonical Architecture
+
+Scope note:
+- This section describes the investigation delivery path and client/backend boundaries.
+- It does not supersede docs/PROJECT_MEMORY_ARCHITECTURE.md as top-level product architecture authority.
 
 Canonical target architecture:
 
@@ -325,7 +334,7 @@ Commit policy:
 
 | Decision | Status | Rationale | Change authority |
 |---|---|---|---|
-| Meta Ray-Ban Display is the target wearable | Locked | Core product direction and recruiter demo goal | User/Lead Architect approval required |
+| Meta Ray-Ban Display is a strategic interface and evidence source (not sole architectural center) | Locked | Wearable UX remains core while project-aware persistence is first-class | User/Lead Architect approval required |
 | OpenAI is the primary model provider | Locked | Existing backend and tests are built around OpenAI contract behavior | User/Lead Architect approval required |
 | Multi-capture session is the primary UX | Locked | Better investigation quality and sequence context than single-image quick checks | User/Lead Architect approval required |
 | Backend owns orchestration | Locked | Prevents duplicate client-side logic and preserves deterministic lifecycle | User/Lead Architect approval required |
@@ -359,6 +368,8 @@ The first true demo is complete only when all are true:
 - No provider secrets exist on Android.
 - Tests pass.
 - No duplicate architecture was introduced.
+
+This wearable demo definition is an interface milestone and does not redefine top-level product architecture away from project-aware persistence.
 
 ## 17. Current Reality, Conflicts, and Gaps
 

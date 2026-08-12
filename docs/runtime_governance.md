@@ -1,5 +1,9 @@
 # Runtime Governance
 
+Forward architecture reference:
+- docs/PROJECT_MEMORY_ARCHITECTURE.md governs approved future product architecture.
+- This runtime governance document remains authoritative for startup, process ownership, artifact ownership, and operational execution contracts.
+
 ## Canonical Runtime (V16+)
 
 > **One startup path. One writer per artifact. Venv only.**

@@ -1,5 +1,10 @@
 # System Architecture
 
+Status note:
+- This document records earlier architecture decisions and platform assumptions.
+- It is retained for historical and research traceability.
+- For approved forward architecture decisions, use docs/PROJECT_MEMORY_ARCHITECTURE.md.
+
 ## Project Hardware
 
 Meta Ray-Ban Display

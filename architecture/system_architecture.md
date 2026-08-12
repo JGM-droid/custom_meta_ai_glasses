@@ -1,5 +1,10 @@
 # System Architecture
 
+Status note:
+- This document captures an earlier hardware/integration-oriented architecture snapshot.
+- It is preserved for historical reference.
+- For approved forward product architecture, use docs/PROJECT_MEMORY_ARCHITECTURE.md.
+
 ## Version 1 Architecture
 
 Current architecture based on:

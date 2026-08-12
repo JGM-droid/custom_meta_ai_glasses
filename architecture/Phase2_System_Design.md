@@ -1,5 +1,10 @@
 # Phase 2 System Design
 
+Scope authority note:
+- This document is the design and contract reference for the Investigation subsystem.
+- It is intentionally preserved as implementation and milestone history.
+- It does not supersede docs/PROJECT_MEMORY_ARCHITECTURE.md for top-level forward product architecture.
+
 ## 1. Executive Summary
 
 Phase 2 introduces a managed investigation lifecycle on top of the existing Phase 1 investigation APIs and retention architecture.

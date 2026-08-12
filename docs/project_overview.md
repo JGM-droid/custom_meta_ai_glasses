@@ -1,5 +1,10 @@
 # Custom Meta AI Glasses
 
+Status note:
+- This document is a historical product/research overview.
+- Approved forward architecture authority is docs/PROJECT_MEMORY_ARCHITECTURE.md.
+- Glasses remain an important interface, while product architecture is now project-aware and persistence-first.
+
 ## Project Status
 
 Research and Prototype Phase
