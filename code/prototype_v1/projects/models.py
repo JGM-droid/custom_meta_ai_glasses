@@ -11,6 +11,8 @@ PROJECT_SCHEMA_VERSION = "1.0"
 ACTIVE_PROJECT_POINTER_SCHEMA_VERSION = "1.0"
 PROJECT_ACTIVITY_SCHEMA_VERSION = "1.0"
 CHECKPOINT_PROPOSAL_SCHEMA_VERSION = "1.0"
+PROJECT_CONTEXT_PACK_SCHEMA_VERSION = "1.0"
+PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -532,6 +534,184 @@ class ActiveProjectPointer(BaseModel):
         if value.tzinfo is None:
             raise ValueError("updated_at_utc must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
+
+
+class ProjectInvestigationSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    session_id: str
+    result_id: str
+    investigation_id: str
+    status: str
+    diagnosis: str = Field(..., min_length=1, max_length=500)
+    required_next_action: str = Field(..., min_length=1, max_length=280)
+    completed_at_utc: datetime
+
+    @field_validator("session_id", "result_id")
+    @classmethod
+    def _validate_uuid_fields(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("UUID fields are required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("UUID fields must be valid UUIDs.") from exc
+        return str(parsed)
+
+    @field_validator("investigation_id", "status", "diagnosis", "required_next_action")
+    @classmethod
+    def _normalize_required_text(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Field must be non-empty.")
+        return text
+
+    @field_validator("completed_at_utc")
+    @classmethod
+    def _validate_completed_at_utc(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("completed_at_utc must be timezone-aware UTC.")
+        return value.astimezone(timezone.utc)
+
+
+class ProjectContextPack(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    project_id: str
+    project_name: str
+    project_goal: str
+    project_status: ProjectStatus
+    checkpoint: ProjectCheckpoint
+    current_objective: str | None = None
+    blockers: str | None = None
+    next_action: str | None = None
+    recent_activity_limit: int = Field(..., ge=1)
+    recent_investigation_limit: int = Field(..., ge=1)
+    recent_activities: list[ProjectActivity] = Field(default_factory=list)
+    recent_investigations: list[ProjectInvestigationSummary] = Field(default_factory=list)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_context_pack_schema_version(cls, value: str) -> str:
+        if value != PROJECT_CONTEXT_PACK_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {PROJECT_CONTEXT_PACK_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_project_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("project_id is required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("project_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator("project_name", "project_goal", "current_objective", "blockers", "next_action")
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+
+class ProjectContextQueryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    question: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("question")
+    @classmethod
+    def _normalize_question(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("question is required.")
+        return text
+
+
+class ProjectContextSelectionMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    strategy: str = Field(..., min_length=1, max_length=64)
+    matched_terms: list[str] = Field(default_factory=list)
+    recent_activity_limit: int = Field(..., ge=1)
+    recent_investigation_limit: int = Field(..., ge=1)
+    fallback_used: bool = False
+
+    @field_validator("strategy")
+    @classmethod
+    def _normalize_strategy(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("strategy is required.")
+        return text
+
+    @field_validator("matched_terms")
+    @classmethod
+    def _normalize_matched_terms(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip().lower()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+
+class ProjectContextQueryPack(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    project_id: str
+    project_name: str
+    project_goal: str
+    project_status: ProjectStatus
+    question: str = Field(..., min_length=1, max_length=1000)
+    checkpoint: ProjectCheckpoint
+    current_objective: str | None = None
+    blockers: str | None = None
+    next_action: str | None = None
+    selection: ProjectContextSelectionMetadata
+    selected_activities: list[ProjectActivity] = Field(default_factory=list)
+    selected_investigations: list[ProjectInvestigationSummary] = Field(default_factory=list)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_context_query_pack_schema_version(cls, value: str) -> str:
+        if value != PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported schema_version. Use {PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_project_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("project_id is required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("project_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator("project_name", "project_goal", "question", "current_objective", "blockers", "next_action")
+    @classmethod
+    def _normalize_optional_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
 
 
 def create_new_project(

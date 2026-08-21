@@ -253,6 +253,12 @@ Which future phase should reconsider the concept:
 9. Glasses ingestion and multimodal reasoning remain important, but Project continuity is the platform-level differentiator.
 10. Cross-project contamination is a more serious architectural failure than imperfect semantic retrieval.
 
+11. Durable structured knowledge plus a map/index plus selective retrieval is preferable to repeatedly sending the entire knowledge corpus to an AI.
+
+Supporting inspiration note:
+
+- Clief Notes is a useful pattern reference for the idea above, but it is inspiration only and not an implementation dependency.
+
 ## Revisit Triggers
 
 Revisit these references when any of the following occur:

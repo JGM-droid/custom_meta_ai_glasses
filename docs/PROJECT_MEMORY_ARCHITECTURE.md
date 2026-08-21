@@ -101,7 +101,9 @@ Application-owned Project Memory
 
 - Project Manager + Project Memory become top-level continuity layer.
 - Investigation Sessions become bounded activities within projects.
-- Context retrieval becomes explicit and selective per project/task.
+- Context retrieval becomes explicit, deterministic, and selective per project/task.
+- A Project Context Retriever sits between persistent Project Memory and model calls.
+- The retriever produces a compact Context Pack instead of sending full project history by default.
 
 ## Project vs Investigation
 
@@ -179,9 +181,33 @@ PROJECT SUMMARY
 
 Retrieval rule:
 
-- Do not send full history by default.
+- Do not send full Project history to the LLM by default.
 - Use checkpoint-level context for common continuity questions.
 - Retrieve deeper evidence only when needed.
+
+### Hot vs Historical Context
+
+Hot context:
+
+- canonical checkpoint
+- current objective
+- blockers
+- next action
+- recent/relevant activities
+- relevant recent Investigation summaries
+
+Historical memory:
+
+- older activities
+- older Investigations
+- evidence
+- historical checkpoint/proposal information
+
+### Context Pack
+
+Project Memory -> deterministic retrieval -> small Context Pack -> OpenAI.
+
+The first implementation milestone for this layer is a deterministic Project Context Retriever / Context Pack.
 
 ## Context Retrieval
 
@@ -397,6 +423,65 @@ Compatibility decision:
 - Legacy/unowned Investigations do not receive Project Activities.
 - Failed or cancelled Investigations do not create completed-result Activities.
 - Projection failure is treated as deferred/non-canonical and does not overwrite the canonical Investigation result.
+
+Next implementation milestone:
+
+- Deterministic Project Context Retriever / Context Pack.
+- First version must prove selective retrieval over existing checkpoint, Activity, and Investigation data.
+- First version must not use embeddings, vector databases, graph databases, semantic RAG, new AI calls, dashboard changes, or glasses/Android changes.
+
+### Phase E1 - Implemented (Deterministic Project Context Retriever / Context Pack)
+
+Implemented scope:
+
+- Read-only deterministic Project Context Retriever using existing Project, Activity, and Investigation stores.
+- Explicit project-scoped Context Pack endpoint: `GET /projects/{project_id}/context`.
+- Context Pack includes:
+    - project identity/name/goal/status
+    - canonical checkpoint
+    - current objective
+    - blockers
+    - next action
+    - recent project activities
+    - recent completed project-owned Investigation summaries
+- Deterministic hot-context limits:
+    - recent activities: last 5
+    - recent completed project-owned Investigations: last 3
+- Context retrieval performs zero OpenAI/model calls.
+- Context retrieval does not mutate Project state, revision, timestamps, checkpoints, or proposals.
+
+Known limitations:
+
+- First version is bounded but not question-aware.
+- Historical memory, evidence expansion, and proposal history are intentionally excluded by default.
+- Retrieval is deterministic only; no semantic/vector/graph retrieval is used.
+
+### Phase E2 - Implemented (Question-Aware Project Context Retrieval)
+
+Implemented scope:
+
+- Read-only question-aware project context retrieval path: `POST /projects/{project_id}/context/query`.
+- Uses the E1 Context Pack boundary and deterministic filtering/ranking over existing checkpoint, recent activities, and recent project-owned Investigation summaries.
+- Core checkpoint/current objective/blockers/next action remain available as stable hot context.
+
+Deterministic ranking strategy:
+
+- Lowercased token normalization.
+- Simple keyword overlap scoring.
+- Common stopwords excluded from matching.
+- Deterministic tie-breaking by recency and stable IDs.
+- Activity metadata may influence tie-breaking through activity type, source, and confirmation status.
+
+Fallback behavior:
+
+- If the question does not meaningfully match hot-context terms, retrieval falls back to checkpoint plus bounded recent context.
+- No historical expansion or semantic retrieval is attempted.
+
+Known limitations:
+
+- Ranking is lexical and deterministic only; it is not semantic.
+- The query path does not yet generate answers or call OpenAI.
+- Historical evidence/proposal expansion remains intentionally excluded by default.
 
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
@@ -614,6 +699,12 @@ Investigation session ownership is project-scoped, while legacy sessions missing
 
 ADR-029 - ACCEPTED
 Project Activity projection from completed Investigations must be idempotent, conservative in provenance, and must not mutate Project checkpoint state.
+
+ADR-030 - ACCEPTED
+Project context for model-facing use must be assembled through a deterministic, bounded Context Pack rather than by sending full Project history by default.
+
+ADR-031 - ACCEPTED
+Question-aware Project context retrieval should begin with deterministic lexical ranking and bounded fallback before any semantic retrieval is introduced.
 
 ## Relationship to Other Documents
 

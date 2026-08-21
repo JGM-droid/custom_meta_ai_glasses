@@ -121,7 +121,14 @@ from projects import (
     ProjectActivityType,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
+    ProjectContextPack,
+    ProjectContextQueryPack,
+    ProjectContextQueryRequest,
+    ProjectContextRetriever,
+    ProjectContextRetrieverError,
     ProjectCreateRequest,
+    DEFAULT_RECENT_ACTIVITY_LIMIT,
+    DEFAULT_RECENT_INVESTIGATION_LIMIT,
     ProjectInvalidId,
     ProjectNotFound,
     ProjectRevisionConflict,
@@ -1470,6 +1477,17 @@ def _create_session_orchestrator() -> InvestigationOrchestrator:
     )
 
 
+def _create_project_context_retriever() -> ProjectContextRetriever:
+    return ProjectContextRetriever(
+        project_store=PROJECT_STORE,
+        activity_store=PROJECT_ACTIVITY_STORE,
+        session_store=SESSION_STORE,
+        investigation_store_root=_canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+        recent_activity_limit=DEFAULT_RECENT_ACTIVITY_LIMIT,
+        recent_investigation_limit=DEFAULT_RECENT_INVESTIGATION_LIMIT,
+    )
+
+
 def _safe_mark_session_failed(
     *,
     session_id: str,
@@ -2783,6 +2801,35 @@ async def get_project(project_id: str) -> Project:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectStoreError:
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/context", response_model=ProjectContextPack)
+async def get_project_context(project_id: str) -> ProjectContextPack:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    retriever = _create_project_context_retriever()
+    try:
+        return retriever.get_context(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+
+
+@app.post("/projects/{project_id}/context/query", response_model=ProjectContextQueryPack)
+async def query_project_context(project_id: str, payload: dict[str, object] | None = None) -> ProjectContextQueryPack:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectContextQueryRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    retriever = _create_project_context_retriever()
+    try:
+        return retriever.get_context_for_question(normalized_project_id, request.question)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
 
 
 @app.post("/projects/{project_id}/activities", response_model=ProjectActivity, status_code=201)
