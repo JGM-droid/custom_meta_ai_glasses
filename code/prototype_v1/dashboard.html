@@ -1044,6 +1044,12 @@
                 <option value="live">Live OpenAI run</option>
               </select>
             </div>
+            <div>
+              <label class="demo-label" for="demoProjectSelect">Project (optional)</label>
+              <select id="demoProjectSelect" class="demo-select">
+                <option value="">No project (not tracked in Project Workspace)</option>
+              </select>
+            </div>
             <div class="demo-actions">
               <button id="demoStartBtn" class="demo-btn primary" type="button">Start Investigation</button>
               <button id="demoResetBtn" class="demo-btn secondary" type="button">Reset</button>
@@ -1445,6 +1451,7 @@
     const demoImages = document.getElementById("demoImages");
     const demoExplanation = document.getElementById("demoExplanation");
     const demoMode = document.getElementById("demoMode");
+    const demoProjectSelect = document.getElementById("demoProjectSelect");
     const demoSelectedImagesContainer = document.getElementById("demoSelectedImages");
     const demoStartBtn = document.getElementById("demoStartBtn");
     const demoResetBtn = document.getElementById("demoResetBtn");
@@ -2061,6 +2068,29 @@
       setWorkspaceStatus(workspaceProjectsStatus, `${projects.length} project(s) loaded.`);
     }
 
+    function renderDemoProjectOptions() {
+      const previousValue = demoProjectSelect.value;
+      demoProjectSelect.innerHTML = "";
+
+      const noneOption = document.createElement("option");
+      noneOption.value = "";
+      noneOption.textContent = "No project (not tracked in Project Workspace)";
+      demoProjectSelect.appendChild(noneOption);
+
+      for (const project of workspaceProjectsCache) {
+        const option = document.createElement("option");
+        option.value = project.project_id;
+        option.textContent = normalize(project.name) || project.project_id;
+        demoProjectSelect.appendChild(option);
+      }
+
+      if (previousValue && workspaceProjectsCache.some((item) => item.project_id === previousValue)) {
+        demoProjectSelect.value = previousValue;
+      } else {
+        demoProjectSelect.value = "";
+      }
+    }
+
     function renderWorkspaceHistory(activities) {
       if (!Array.isArray(activities) || activities.length === 0) {
         workspaceHistory.textContent = "No project activities yet.";
@@ -2321,6 +2351,7 @@
         const projects = await fetchJsonOrThrow(API_PROJECTS_URL, "Unable to load projects");
         workspaceProjectsCache = Array.isArray(projects) ? projects : [];
         renderWorkspaceProjectsList(workspaceProjectsCache);
+        renderDemoProjectOptions();
 
         if (workspaceProjectsCache.length === 0) {
           workspaceSelectedProjectId = "";
@@ -2459,6 +2490,7 @@
       demoImages.value = "";
       demoExplanation.value = "";
       demoMode.value = "dry_run";
+      demoProjectSelect.value = "";
       latestCopilotPromptText = "";
       latestGitCommandsText = "";
       copilotPromptCopyStatus.textContent = "";
@@ -2534,6 +2566,9 @@
         const formData = new FormData();
         formData.append("mode", demoMode.value);
         formData.append("user_explanation", demoExplanation.value);
+        if (demoProjectSelect.value) {
+          formData.append("project_id", demoProjectSelect.value);
+        }
         demoSelectedImages.forEach((entry) => formData.append("images", entry.file));
 
         const response = await fetch(API_DEMO_START_URL, {

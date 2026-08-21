@@ -343,8 +343,14 @@ class _DemoInvestigationRegistry:
             return self._records.get(demo_id)
 
     def snapshot(self, demo_id: str) -> InvestigationDemoRunView | None:
-        record = self.get(demo_id)
-        return record.snapshot() if record is not None else None
+        # Must read the record's fields under the same lock `update()` mutates
+        # them under. Fetching the record via get() (which releases the lock
+        # before returning) and then reading its fields afterward allows a
+        # torn read: a concurrent update() can be observed mid-mutation, e.g.
+        # status already "completed" but retained_result not yet assigned.
+        with self._lock:
+            record = self._records.get(demo_id)
+            return record.snapshot() if record is not None else None
 
     def update(self, demo_id: str, mutator) -> None:
         with self._lock:
@@ -370,17 +376,24 @@ class _DemoResultPersistence:
         request_package: InvestigationAnalysisRequestPackage,
         response: InvestigationAnalysisResponse,
     ) -> str:
-        result_id = str(uuid4())
-        self.latest_result_id = result_id
-
         # Keep one-image demo runs valid without widening production retained-result constraints.
         if len(request_package.ordered_evidence_inputs) >= 2:
             retained_result = _build_retained_result(session=session, request_package=request_package, response=response)
             save_latest_investigation_result(INVESTIGATION_LATEST_JSON, retained_result)
             self.latest_retained_result = retained_result
+            # Reuse the same deterministic id save_latest_investigation_result derives
+            # internally for the canonical per-result store (seeded from
+            # investigation_id + completed_at_utc), so session.completed_result_id
+            # actually resolves back to the just-saved canonical result. Returning an
+            # unrelated random id here previously left completed_result_id pointing
+            # at nothing, which silently broke any downstream canonical-result lookup
+            # (e.g. Project Activity projection) for demo-created results.
+            result_id = _canonical_result_id_for_retained(retained_result)
         else:
             self.latest_retained_result = None
+            result_id = str(uuid4())
 
+        self.latest_result_id = result_id
         return result_id
 
 
@@ -2140,16 +2153,19 @@ def _build_retained_result(
 
 
 def _demo_progress_sink(demo_id: str):
+    # Record progress only; terminal status is set exclusively by
+    # _run_demo_investigation's _complete()/_fail() handlers, after that
+    # function has finished all completion post-processing (capturing
+    # retained_result and running the D2 Activity projection). The
+    # orchestrator emits its COMPLETED/FAILED stage event synchronously,
+    # from inside run_confirmed_investigation, i.e. before that
+    # post-processing has even started — setting status here as well let
+    # pollers observe "completed" while retained_result and the projected
+    # Activity were still unset.
     def _sink(event: InvestigationOrchestrationProgressEvent) -> None:
         def _apply(record: _DemoInvestigationRecord) -> None:
             record.progress_events.append(event)
             record.analysis_attempt_id = event.analysis_attempt_id or record.analysis_attempt_id
-            if event.stage == InvestigationOrchestrationStage.COMPLETED:
-                record.status = "completed"
-                record.completed_at_utc = datetime.now(timezone.utc)
-            elif event.stage == InvestigationOrchestrationStage.FAILED:
-                record.status = "failed"
-                record.completed_at_utc = datetime.now(timezone.utc)
 
         DEMO_INVESTIGATION_REGISTRY.update(demo_id, _apply)
 
@@ -2204,6 +2220,21 @@ def _run_demo_investigation(
         retained_result = result_persistence.latest_retained_result
         if outcome.response is None:
             raise InvestigationOrchestrationError("Missing structured response after orchestration.")
+
+        # D2 reuse: project a completed, project-owned demo Investigation into that
+        # Project's Activity history using the existing conservative-provenance
+        # projection. Soft-fail so a projection problem never turns a successful
+        # demo Investigation into a failed one. This must run before the demo
+        # record is marked "completed" below: callers (including dashboard
+        # polling and these tests) treat "completed" as their signal that it's
+        # safe to read the projected Activity, so the projection has to be
+        # durable first or that read can race the background write.
+        try:
+            completed_demo_session = SESSION_STORE.load_session(session_id)
+            if completed_demo_session.project_id:
+                _project_completed_investigation_activity(completed_demo_session)
+        except Exception:
+            pass
 
         def _complete(record: _DemoInvestigationRecord) -> None:
             record.status = "completed"
@@ -2292,10 +2323,18 @@ async def start_demo_investigation(
     request: Request,
     mode: str = Form(default="dry_run"),
     user_explanation: str = Form(default=""),
+    project_id: str | None = Form(default=None),
     images: list[UploadFile] = File(default=[]),
 ) -> InvestigationDemoRunView:
     demo_mode = _normalize_demo_mode(mode)
     explanation = _normalize_demo_text(user_explanation)
+
+    # Optional Project ownership: when supplied, the project must already exist.
+    # Absent/blank project_id preserves the original ownerless demo behavior.
+    normalized_demo_project_id: str | None = None
+    raw_demo_project_id = (project_id or "").strip()
+    if raw_demo_project_id:
+        normalized_demo_project_id = _ensure_project_exists_or_404(raw_demo_project_id)
 
     if not explanation:
         raise HTTPException(status_code=422, detail="user_explanation is required.")
@@ -2324,7 +2363,10 @@ async def start_demo_investigation(
         )
         prepared_images.append((raw_bytes, content_type, filename, create_request))
 
-    session = SESSION_STORE.create_session(client_metadata={"source": "dashboard_demo", "mode": demo_mode.value})
+    session = SESSION_STORE.create_session(
+        project_id=normalized_demo_project_id,
+        client_metadata={"source": "dashboard_demo", "mode": demo_mode.value},
+    )
     session = SESSION_STORE.mutate_session(session.session_id, lambda current: apply_start_transition(current, expected_revision=0))
 
     evidence_ids: list[str] = []

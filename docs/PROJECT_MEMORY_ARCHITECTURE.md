@@ -2,7 +2,7 @@
 
 Status: Authoritative for approved forward product architecture.
 
-Last Updated: 2026-08-12
+Last Updated: 2026-08-21
 
 ## Product Vision
 
@@ -556,6 +556,22 @@ UI projection scope:
 
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
+### Phase G1 Addendum - Implemented (Demo Investigation Path Ownership)
+
+Implemented scope:
+
+- The dashboard's existing live demo Investigation path (`POST /demo/investigations`) now accepts an optional `project_id` field.
+- When supplied, `project_id` must reference an existing Project (404 otherwise); the created Investigation Session is owned by that Project using the existing D1 ownership mechanism (`SESSION_STORE.create_session(project_id=...)`).
+- On successful demo completion, the existing D2 conservative-provenance projection (`_project_completed_investigation_activity`) is invoked for project-owned demo sessions, reusing the same store-level idempotency guarantee already relied on by the canonical `/investigation-sessions/{id}/analyze` path.
+- Absent or blank `project_id` preserves the original ownerless demo behavior exactly.
+- Fixed a pre-existing defect in the demo path's result persistence (`_DemoResultPersistence.persist_result`) where the returned `result_id` was an unrelated random value instead of the deterministic id the canonical result store actually saves under. This silently prevented any downstream canonical-result lookup (including D2 projection) for demo-created results and is now corrected to match the derivation already used by the canonical session-scoped path.
+- Dashboard: the existing "Start Demo Investigation" panel gained an optional Project selector, populated from the existing `GET /projects`, so a live demo Investigation can be attributed to an already-open Project Workspace without any new backend phase.
+
+Compatibility decision:
+
+- No Project creation UI was added in this slice; Projects must already exist (created via the existing `POST /projects`).
+- No automatic checkpoint proposal is created from a demo-projected Activity; checkpoint state remains untouched (ADR-017/018 apply unchanged to the demo path).
+
 ## Phase B Acceptance Contract
 
 Proof scenario:
@@ -785,6 +801,9 @@ The initial Project Workspace is a read-only projection over authoritative Proje
 
 ADR-034 - ACCEPTED
 Grounded Project Q&A must reason only over the E3 deterministic Context Pack through a provider-neutral boundary, execute one model call per ask request, and never mutate authoritative project memory.
+
+ADR-035 - ACCEPTED
+The dashboard's live demo Investigation entry point is not exempt from Project ownership: it reuses the existing D1 ownership and D2 projection mechanisms exactly as the canonical session-scoped path does, rather than remaining a permanently separate, unowned legacy-only surface.
 
 ## Relationship to Other Documents
 
