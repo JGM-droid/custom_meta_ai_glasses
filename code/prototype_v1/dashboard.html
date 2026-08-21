@@ -1516,6 +1516,12 @@
     let workspaceSelectedProjectId = "";
     let workspaceProjectsCache = [];
     let workspaceLoadingToken = 0;
+    // Tracks which project's Ask views (AI Answer / Selected Project Context /
+    // Why This Context / debug pack) are currently displayed, separately from
+    // workspaceSelectedProjectId. Background polling reopens the same project
+    // on every cycle; only an actual project change (or an explicit Open
+    // click) should clear those views.
+    let workspaceAskViewsProjectId = "";
     let workspaceAskInFlight = false;
     let workspaceAskAiInFlight = false;
 
@@ -2055,7 +2061,7 @@
         openBtn.textContent = (workspaceSelectedProjectId === project.project_id) ? "Open (Selected)" : "Open";
         openBtn.setAttribute("aria-current", workspaceSelectedProjectId === project.project_id ? "true" : "false");
         openBtn.addEventListener("click", () => {
-          openWorkspaceProject(project.project_id);
+          openWorkspaceProject(project.project_id, { forceReset: true });
         });
 
         item.appendChild(title);
@@ -2369,8 +2375,15 @@
       }
     }
 
-    async function openWorkspaceProject(projectId) {
+    async function openWorkspaceProject(projectId, { forceReset = false } = {}) {
       if (!projectId) return;
+      // Background polling (loadWorkspaceProjects) reopens the already-selected
+      // project on every cycle to keep Now/Next/History/Investigations fresh.
+      // Only reset the Ask views when the project actually changes, or when the
+      // caller explicitly requests it (an explicit Open click) - otherwise a
+      // currently displayed AI Answer / Selected Project Context disappears on
+      // the next poll tick even though nothing the user did changed.
+      const projectChanged = projectId !== workspaceAskViewsProjectId;
       workspaceSelectedProjectId = projectId;
       renderWorkspaceProjectsList(workspaceProjectsCache);
       setWorkspaceStatus(workspaceInspectorStatus, "Loading selected project...");
@@ -2380,7 +2393,10 @@
       workspaceHistory.textContent = "Loading...";
       workspaceInvestigations.textContent = "Loading...";
       [workspaceNow, workspaceNext, workspaceHistory, workspaceInvestigations].forEach((el) => el.classList.remove("muted"));
-      resetWorkspaceAskViews();
+      if (projectChanged || forceReset) {
+        resetWorkspaceAskViews();
+        workspaceAskViewsProjectId = projectId;
+      }
 
       const loadToken = ++workspaceLoadingToken;
       try {

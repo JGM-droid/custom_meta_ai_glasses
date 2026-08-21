@@ -66,4 +66,33 @@ def test_workspace_project_switching_and_isolation_guards_contract():
     assert 'let workspaceLoadingToken = 0;' in source
     assert 'const loadToken = ++workspaceLoadingToken;' in source
     assert 'if (loadToken !== workspaceLoadingToken) return;' in source
-    assert 'openWorkspaceProject(project.project_id);' in source
+    assert 'openWorkspaceProject(project.project_id, { forceReset: true });' in source
+
+
+def test_workspace_ask_views_survive_background_poll_of_same_project_contract():
+    # Background polling (loadWorkspaceProjects, on a setInterval) reopens the
+    # already-selected project on every cycle to keep Now/Next/History/
+    # Investigations fresh. It must not silently wipe an Ask AI answer or Get
+    # Context result the user is currently looking at just because a poll
+    # tick fired. Only an actual project change, or an explicit Open click,
+    # may clear those views.
+    source = _dashboard_source()
+
+    # A tracking variable distinct from workspaceSelectedProjectId is required:
+    # loadWorkspaceProjects() reassigns workspaceSelectedProjectId to the
+    # target project *before* calling openWorkspaceProject, so comparing
+    # against workspaceSelectedProjectId inside openWorkspaceProject could
+    # never detect a change.
+    assert 'let workspaceAskViewsProjectId = "";' in source
+
+    assert 'async function openWorkspaceProject(projectId, { forceReset = false } = {}) {' in source
+    assert 'const projectChanged = projectId !== workspaceAskViewsProjectId;' in source
+    assert 'if (projectChanged || forceReset) {' in source
+    assert 'resetWorkspaceAskViews();\n        workspaceAskViewsProjectId = projectId;' in source
+
+    # The background-poll call site must NOT force a reset.
+    assert 'await openWorkspaceProject(workspaceSelectedProjectId);' in source
+    assert 'await openWorkspaceProject(workspaceSelectedProjectId, { forceReset: true });' not in source
+
+    # The explicit "Open" button click must force a reset.
+    assert 'openWorkspaceProject(project.project_id, { forceReset: true });' in source
