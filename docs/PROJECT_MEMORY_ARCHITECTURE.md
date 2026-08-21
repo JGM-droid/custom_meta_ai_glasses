@@ -569,8 +569,22 @@ Implemented scope:
 
 Compatibility decision:
 
-- No Project creation UI was added in this slice; Projects must already exist (created via the existing `POST /projects`).
+- No Project creation UI was added in this slice; Projects must already exist (created via the existing `POST /projects`). Superseded by the Phase F1 Addendum below, which adds exactly that UI.
 - No automatic checkpoint proposal is created from a demo-projected Activity; checkpoint state remains untouched (ADR-017/018 apply unchanged to the demo path).
+
+### Phase F1 Addendum - Implemented (Create Project from Workspace)
+
+Implemented scope:
+
+- The Project Workspace's My Projects pane gains an explicit "Create Project" action so a Project can be created entirely from `dashboard.html`, with no PowerShell/curl step required.
+- Reuses the existing Phase B `POST /projects` endpoint exactly as-is; no backend, storage, or schema changes.
+- Required fields: `name`, `goal`. Optional initial checkpoint fields: `current_objective`, `next_action`, passed through unchanged via the existing `ProjectCreateRequest.checkpoint` field. No other checkpoint fields, and no backend-only concepts (revision, checkpoint proposals, schema versions, Activity store internals), are exposed in the form.
+- On success, the new Project is opened/selected in the Workspace immediately by reusing the existing project-changed detection added for Ask-view persistence (see the "Preserve project ask results during workspace refresh" change): selecting the new project id before the existing `loadWorkspaceProjects()` refresh runs is sufficient to both open it and correctly clear the previously selected Project's Ask AI answer, Selected Project Context, Why This Context, and debug pack.
+- On a validation or server error, the concise error message from the existing `POST /projects` error contract is shown inline in the form; the form stays open and editable, and is never left in a stuck/disabled state.
+
+Compatibility decision:
+
+- This updates the Phase F1 "read-only projection" framing: Project *creation* is now an explicit, user-initiated Workspace action. All other Phase F1 invariants are unchanged - the Workspace still does not edit, delete, archive, or AI-generate state for any *existing* Project, Activity, Checkpoint, or Proposal.
 
 ## Phase B Acceptance Contract
 
@@ -804,6 +818,9 @@ Grounded Project Q&A must reason only over the E3 deterministic Context Pack thr
 
 ADR-035 - ACCEPTED
 The dashboard's live demo Investigation entry point is not exempt from Project ownership: it reuses the existing D1 ownership and D2 projection mechanisms exactly as the canonical session-scoped path does, rather than remaining a permanently separate, unowned legacy-only surface.
+
+ADR-036 - ACCEPTED
+The Project Workspace may perform explicit, user-initiated Project creation by reusing the existing Phase B `POST /projects` endpoint unchanged; this does not authorize editing, deleting, archiving, templating, or AI-generated mutation of existing Project state, and does not expose backend-only concepts (revision, checkpoint proposals, schema versions, Activity store internals) in the UI.
 
 ## Relationship to Other Documents
 

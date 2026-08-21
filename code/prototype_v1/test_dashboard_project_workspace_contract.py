@@ -96,3 +96,87 @@ def test_workspace_ask_views_survive_background_poll_of_same_project_contract():
 
     # The explicit "Open" button click must force a reset.
     assert 'openWorkspaceProject(project.project_id, { forceReset: true });' in source
+
+
+def test_create_project_form_exists_with_required_and_optional_fields_contract():
+    source = _dashboard_source()
+
+    assert 'id="workspaceCreateProjectBtn"' in source
+    assert '>Create Project<' in source
+    assert 'id="workspaceCreateProjectForm"' in source
+    # Hidden until the user opts in; this is not a redesign of the read-only
+    # inspector default view.
+    assert 'id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">' in source
+
+    # Required fields per the approved scope: name and goal only.
+    assert 'id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>' in source
+    assert 'id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>' in source
+
+    # Optional initial checkpoint fields, reusing the existing checkpoint
+    # contract's own field names/limits (current_objective, next_action) -
+    # not marked required.
+    assert 'id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400"' in source
+    assert 'id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000"' in source
+    objective_input_line = next(line for line in source.splitlines() if 'id="workspaceCreateProjectObjective"' in line)
+    next_action_input_line = next(line for line in source.splitlines() if 'id="workspaceCreateProjectNextAction"' in line)
+    assert "required" not in objective_input_line
+    assert "required" not in next_action_input_line
+
+    assert 'id="workspaceCreateProjectSubmitBtn"' in source
+    assert 'id="workspaceCreateProjectCancelBtn"' in source
+    assert 'id="workspaceCreateProjectStatus"' in source
+
+    # Backend-only concepts must not be surfaced as user-facing fields/labels.
+    for hidden_concept in ["revision", "checkpoint proposal", "schema_version", "activity store"]:
+        assert hidden_concept not in source.lower()
+
+
+def test_create_project_reuses_existing_post_projects_endpoint_contract():
+    source = _dashboard_source()
+
+    # No new/duplicate endpoint constant - reuses the existing POST /projects
+    # surface exactly as-is.
+    assert source.count('const API_PROJECTS_URL = `${API_ORIGIN}/projects`;') == 1
+    assert 'async function submitCreateWorkspaceProject(event) {' in source
+    assert 'const response = await fetch(API_PROJECTS_URL, {' in source
+    assert 'method: "POST",' in source
+
+    # name/goal are always sent; checkpoint is only attached when the optional
+    # objective/next_action fields were actually filled in.
+    assert 'const payload = { name, goal };' in source
+    assert 'if (currentObjective) checkpoint.current_objective = currentObjective;' in source
+    assert 'if (nextAction) checkpoint.next_action = nextAction;' in source
+    assert 'payload.checkpoint = checkpoint;' in source
+
+
+def test_create_project_success_opens_new_project_and_clears_previous_ask_views_contract():
+    source = _dashboard_source()
+
+    # On success, selecting the new project id before the existing
+    # loadWorkspaceProjects()/openWorkspaceProject() refresh pipeline is what
+    # makes the project-changed check (see
+    # test_workspace_ask_views_survive_background_poll_of_same_project_contract)
+    # clear the previously selected project's Ask AI answer / Selected Project
+    # Context / Why This Context / debug pack - no separate reset call is
+    # duplicated here.
+    assert 'const created = await response.json();' in source
+    assert 'hideCreateProjectForm();' in source
+    assert 'workspaceSelectedProjectId = created.project_id;' in source
+    assert 'await loadWorkspaceProjects();' in source
+
+
+def test_create_project_validation_and_error_handling_contract():
+    source = _dashboard_source()
+
+    assert 'if (!name) {' in source
+    assert 'setWorkspaceStatus(workspaceCreateProjectStatus, "Name is required.", true);' in source
+    assert 'if (!goal) {' in source
+    assert 'setWorkspaceStatus(workspaceCreateProjectStatus, "Goal is required.", true);' in source
+
+    # Server errors must surface a concise message and must not leave the
+    # form stuck disabled/loading.
+    assert 'async function parseErrorResponseMessage(response, fallback) {' in source
+    assert 'let workspaceCreateProjectInFlight = false;' in source
+    assert 'workspaceCreateProjectInFlight = false;' in source
+    assert 'workspaceCreateProjectSubmitBtn.disabled = false;' in source
+    assert 'workspaceCreateProjectCancelBtn.disabled = false;' in source

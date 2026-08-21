@@ -862,6 +862,27 @@
       color: #b42318;
     }
 
+    .workspace-create-project {
+      margin-bottom: 10px;
+    }
+
+    .workspace-create-project-form {
+      margin-top: 8px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .workspace-form-label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #425466;
+      margin: 6px 0 2px;
+    }
+
+    .workspace-form-label:first-child {
+      margin-top: 0;
+    }
+
     .workspace-block {
       margin-top: 11px;
       border-top: 1px solid #e1e8f5;
@@ -1158,11 +1179,33 @@
 
     <section class="workspace-shell" id="projectWorkspaceSection">
       <h2>Project Workspace</h2>
-      <p class="subtle">Read-only project inspector built from authoritative project memory and investigation records.</p>
+      <p class="subtle">Project inspector built from authoritative project memory and investigation records. Create a Project here; existing Projects are inspected read-only.</p>
 
       <div class="workspace-grid">
         <article class="workspace-pane">
           <h3>My Projects</h3>
+          <div class="workspace-create-project">
+            <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
+            <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
+              <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
+              <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
+
+              <label class="workspace-form-label" for="workspaceCreateProjectGoal">Goal</label>
+              <input id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>
+
+              <label class="workspace-form-label" for="workspaceCreateProjectObjective">Current objective (optional)</label>
+              <input id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400" placeholder="e.g. Diagnose intermittent Wi-Fi drop">
+
+              <label class="workspace-form-label" for="workspaceCreateProjectNextAction">Next action (optional)</label>
+              <input id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000" placeholder="e.g. Capture router logs during next drop">
+
+              <div class="demo-actions" style="margin-top: 8px;">
+                <button id="workspaceCreateProjectSubmitBtn" class="workspace-ask-btn" type="submit">Create</button>
+                <button id="workspaceCreateProjectCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
+              </div>
+              <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
+            </form>
+          </div>
           <ul id="workspaceProjectsList" class="workspace-list"></ul>
           <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
         </article>
@@ -1489,6 +1532,15 @@
 
     const workspaceProjectsList = document.getElementById("workspaceProjectsList");
     const workspaceProjectsStatus = document.getElementById("workspaceProjectsStatus");
+    const workspaceCreateProjectBtn = document.getElementById("workspaceCreateProjectBtn");
+    const workspaceCreateProjectForm = document.getElementById("workspaceCreateProjectForm");
+    const workspaceCreateProjectName = document.getElementById("workspaceCreateProjectName");
+    const workspaceCreateProjectGoal = document.getElementById("workspaceCreateProjectGoal");
+    const workspaceCreateProjectObjective = document.getElementById("workspaceCreateProjectObjective");
+    const workspaceCreateProjectNextAction = document.getElementById("workspaceCreateProjectNextAction");
+    const workspaceCreateProjectSubmitBtn = document.getElementById("workspaceCreateProjectSubmitBtn");
+    const workspaceCreateProjectCancelBtn = document.getElementById("workspaceCreateProjectCancelBtn");
+    const workspaceCreateProjectStatus = document.getElementById("workspaceCreateProjectStatus");
     const workspaceInspectorStatus = document.getElementById("workspaceInspectorStatus");
     const workspaceNow = document.getElementById("workspaceNow");
     const workspaceNext = document.getElementById("workspaceNext");
@@ -1524,6 +1576,7 @@
     let workspaceAskViewsProjectId = "";
     let workspaceAskInFlight = false;
     let workspaceAskAiInFlight = false;
+    let workspaceCreateProjectInFlight = false;
 
     const PROGRESS_STAGES = [
       ["validating", "Preparing Investigation"],
@@ -2351,6 +2404,102 @@
       return response.json();
     }
 
+    function showCreateProjectForm() {
+      workspaceCreateProjectForm.style.display = "grid";
+      workspaceCreateProjectBtn.setAttribute("aria-expanded", "true");
+      workspaceCreateProjectBtn.style.display = "none";
+      workspaceCreateProjectName.focus();
+    }
+
+    function hideCreateProjectForm({ clearFields = true } = {}) {
+      workspaceCreateProjectForm.style.display = "none";
+      workspaceCreateProjectBtn.setAttribute("aria-expanded", "false");
+      workspaceCreateProjectBtn.style.display = "";
+      if (clearFields) {
+        workspaceCreateProjectName.value = "";
+        workspaceCreateProjectGoal.value = "";
+        workspaceCreateProjectObjective.value = "";
+        workspaceCreateProjectNextAction.value = "";
+        setWorkspaceStatus(workspaceCreateProjectStatus, "");
+      }
+    }
+
+    async function parseErrorResponseMessage(response, fallback) {
+      try {
+        const body = await response.json();
+        const detail = body?.detail;
+        if (typeof detail === "string" && detail.trim()) {
+          return detail.trim();
+        }
+        if (detail && typeof detail === "object" && typeof detail.message === "string" && detail.message.trim()) {
+          return detail.message.trim();
+        }
+      } catch (_parseErr) {
+        // Body wasn't JSON (or had no useful detail) - fall through to the generic message.
+      }
+      return fallback;
+    }
+
+    async function submitCreateWorkspaceProject(event) {
+      event.preventDefault();
+      if (workspaceCreateProjectInFlight) return;
+
+      const name = normalize(workspaceCreateProjectName.value);
+      const goal = normalize(workspaceCreateProjectGoal.value);
+      const currentObjective = normalize(workspaceCreateProjectObjective.value);
+      const nextAction = normalize(workspaceCreateProjectNextAction.value);
+
+      if (!name) {
+        setWorkspaceStatus(workspaceCreateProjectStatus, "Name is required.", true);
+        workspaceCreateProjectName.focus();
+        return;
+      }
+      if (!goal) {
+        setWorkspaceStatus(workspaceCreateProjectStatus, "Goal is required.", true);
+        workspaceCreateProjectGoal.focus();
+        return;
+      }
+
+      const payload = { name, goal };
+      const checkpoint = {};
+      if (currentObjective) checkpoint.current_objective = currentObjective;
+      if (nextAction) checkpoint.next_action = nextAction;
+      if (Object.keys(checkpoint).length > 0) {
+        payload.checkpoint = checkpoint;
+      }
+
+      workspaceCreateProjectInFlight = true;
+      workspaceCreateProjectSubmitBtn.disabled = true;
+      workspaceCreateProjectCancelBtn.disabled = true;
+      setWorkspaceStatus(workspaceCreateProjectStatus, "Creating project...");
+
+      try {
+        const response = await fetch(API_PROJECTS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const message = await parseErrorResponseMessage(response, `Unable to create project (HTTP ${response.status}).`);
+          throw new Error(message);
+        }
+
+        const created = await response.json();
+        hideCreateProjectForm();
+        // Opening the new project as soon as it's selected (before the refetch
+        // below) is what makes openWorkspaceProject's own project-changed check
+        // clear the previously selected project's Ask/context views correctly.
+        workspaceSelectedProjectId = created.project_id;
+        await loadWorkspaceProjects();
+      } catch (err) {
+        setWorkspaceStatus(workspaceCreateProjectStatus, err?.message || "Unable to create project.", true);
+      } finally {
+        workspaceCreateProjectInFlight = false;
+        workspaceCreateProjectSubmitBtn.disabled = false;
+        workspaceCreateProjectCancelBtn.disabled = false;
+      }
+    }
+
     async function loadWorkspaceProjects() {
       setWorkspaceStatus(workspaceProjectsStatus, "Loading projects...");
       try {
@@ -2823,6 +2972,9 @@
         askWorkspaceProjectWithAI();
       }
     });
+    workspaceCreateProjectBtn.addEventListener("click", showCreateProjectForm);
+    workspaceCreateProjectCancelBtn.addEventListener("click", () => hideCreateProjectForm());
+    workspaceCreateProjectForm.addEventListener("submit", submitCreateWorkspaceProject);
 
     resetDemoView();
     resetWorkspaceAskViews();
