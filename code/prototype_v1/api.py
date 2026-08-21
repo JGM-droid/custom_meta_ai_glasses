@@ -126,6 +126,14 @@ from projects import (
     ProjectContextQueryRequest,
     ProjectContextRetriever,
     ProjectContextRetrieverError,
+    ProjectAskRequest,
+    ProjectGroundedAnswerResponse,
+    ProjectQuestionAnsweringService,
+    ProjectReasoningError,
+    ProjectReasoningProviderMissingApiKeyError,
+    OpenAIProjectReasoningProvider,
+    load_project_qa_model_name,
+    load_project_qa_timeout_seconds,
     ProjectCreateRequest,
     DEFAULT_RECENT_ACTIVITY_LIMIT,
     DEFAULT_RECENT_INVESTIGATION_LIMIT,
@@ -1488,6 +1496,22 @@ def _create_project_context_retriever() -> ProjectContextRetriever:
     )
 
 
+def _create_project_question_answering_service() -> ProjectQuestionAnsweringService:
+    api_key = _load_openai_api_key()
+    if not api_key:
+        raise ProjectReasoningProviderMissingApiKeyError("OPENAI_API_KEY is required for project Q&A execution.")
+
+    provider = OpenAIProjectReasoningProvider(
+        api_key=api_key,
+        model=load_project_qa_model_name(),
+        timeout_seconds=load_project_qa_timeout_seconds(),
+    )
+    return ProjectQuestionAnsweringService(
+        context_retriever=_create_project_context_retriever(),
+        reasoning_provider=provider,
+    )
+
+
 def _safe_mark_session_failed(
     *,
     session_id: str,
@@ -2830,6 +2854,27 @@ async def query_project_context(project_id: str, payload: dict[str, object] | No
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectContextRetrieverError:
         _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+
+
+@app.post("/projects/{project_id}/ask", response_model=ProjectGroundedAnswerResponse)
+async def ask_project_question(project_id: str, payload: dict[str, object] | None = None) -> ProjectGroundedAnswerResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectAskRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        service = _create_project_question_answering_service()
+        return service.ask(project_id=normalized_project_id, question=request.question)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectReasoningProviderMissingApiKeyError:
+        _raise_project_http_error(status_code=503, category="project_qa_provider_unavailable", message="Project Q&A provider is unavailable.")
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+    except ProjectReasoningError:
+        _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
 
 
 @app.post("/projects/{project_id}/activities", response_model=ProjectActivity, status_code=201)

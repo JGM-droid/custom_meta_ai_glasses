@@ -765,6 +765,105 @@ class ProjectContextQueryPack(BaseModel):
         return text
 
 
+class ProjectAskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    question: str = Field(..., min_length=1, max_length=1000)
+
+    @field_validator("question")
+    @classmethod
+    def _normalize_question(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("question is required.")
+        return text
+
+
+class ProjectGroundedAnswerReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_kind: str = Field(..., min_length=1, max_length=64)
+    source_id: str | None = Field(default=None, max_length=64)
+    summary: str = Field(..., min_length=1, max_length=500)
+    evidence_status: str | None = Field(default=None, max_length=64)
+
+    @field_validator("source_kind", "summary", "evidence_status")
+    @classmethod
+    def _normalize_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+
+class ProjectGroundedAnswerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    project_id: str
+    project_name: str
+    question: str = Field(..., min_length=1, max_length=1000)
+    question_class: str = Field(..., min_length=1, max_length=64)
+    answer: str = Field(..., min_length=1, max_length=4000)
+    grounding_status: str = Field(..., min_length=1, max_length=64)
+    insufficient_context: bool = False
+    uncertainty_note: str | None = Field(default=None, max_length=1000)
+    fallback_used: bool = False
+    selected_context_summary: list[str] = Field(default_factory=list)
+    references: list[ProjectGroundedAnswerReference] = Field(default_factory=list)
+    provider: str | None = Field(default=None, max_length=64)
+    provider_model: str | None = Field(default=None, max_length=200)
+    model_call_count: int = Field(default=1, ge=1)
+
+    @field_validator("project_id")
+    @classmethod
+    def _validate_project_id(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("project_id is required.")
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("project_id must be a valid UUID.") from exc
+        return str(parsed)
+
+    @field_validator(
+        "project_name",
+        "question",
+        "question_class",
+        "answer",
+        "grounding_status",
+        "uncertainty_note",
+        "provider",
+        "provider_model",
+    )
+    @classmethod
+    def _normalize_text_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
+
+    @field_validator("selected_context_summary")
+    @classmethod
+    def _normalize_selected_context_summary(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+        return normalized
+
+
 def create_new_project(
     *,
     name: str,

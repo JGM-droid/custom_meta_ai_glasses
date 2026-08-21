@@ -961,6 +961,11 @@
       cursor: not-allowed;
     }
 
+    .workspace-ask-btn.secondary {
+      background: #ffffff;
+      color: #0f4fcc;
+    }
+
     .workspace-ask-disclaimer {
       margin-top: 8px;
       font-size: 0.84rem;
@@ -1184,10 +1189,21 @@
             <h4>Ask This Project</h4>
             <div class="workspace-ask-row">
               <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
-              <button id="workspaceAskBtn" class="workspace-ask-btn" type="button">Get Context</button>
+              <div class="demo-actions" style="margin: 0;">
+                <button id="workspaceAskBtn" class="workspace-ask-btn secondary" type="button">Get Context</button>
+                <button id="workspaceAskAiBtn" class="workspace-ask-btn" type="button">Ask AI</button>
+              </div>
             </div>
-            <div class="workspace-ask-disclaimer">Selected project context only, not an AI answer.</div>
+            <div class="workspace-ask-disclaimer">Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.</div>
             <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
+            <div id="workspaceAskAiStatus" class="workspace-status-note">Ask AI to receive a grounded answer (non-canonical).</div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>AI Answer (Grounded)</h4>
+              <div id="workspaceAskAiAnswer" class="workspace-value muted">No AI answer yet.</div>
+              <div id="workspaceAskAiMeta" class="workspace-value muted" style="margin-top: 6px;">No AI grounding metadata yet.</div>
+              <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
+            </div>
 
             <div class="workspace-block" style="margin-top: 8px;">
               <h4>Selected Project Context</h4>
@@ -1384,6 +1400,7 @@
     const API_PROJECT_ACTIVITIES_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/activities`;
     const API_PROJECT_INVESTIGATIONS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/investigation-sessions`;
     const API_PROJECT_CONTEXT_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/context`;
+    const API_PROJECT_ASK_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/ask`;
     const DEMO_MIN_IMAGES = 1;
     const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
@@ -1472,7 +1489,12 @@
     const workspaceInvestigations = document.getElementById("workspaceInvestigations");
     const workspaceAskInput = document.getElementById("workspaceAskInput");
     const workspaceAskBtn = document.getElementById("workspaceAskBtn");
+    const workspaceAskAiBtn = document.getElementById("workspaceAskAiBtn");
     const workspaceAskStatus = document.getElementById("workspaceAskStatus");
+    const workspaceAskAiStatus = document.getElementById("workspaceAskAiStatus");
+    const workspaceAskAiAnswer = document.getElementById("workspaceAskAiAnswer");
+    const workspaceAskAiMeta = document.getElementById("workspaceAskAiMeta");
+    const workspaceAskAiRefs = document.getElementById("workspaceAskAiRefs");
     const workspaceAskContext = document.getElementById("workspaceAskContext");
     const workspaceAskWhy = document.getElementById("workspaceAskWhy");
     const workspaceAskDebug = document.getElementById("workspaceAskDebug");
@@ -1488,6 +1510,7 @@
     let workspaceProjectsCache = [];
     let workspaceLoadingToken = 0;
     let workspaceAskInFlight = false;
+    let workspaceAskAiInFlight = false;
 
     const PROGRESS_STAGES = [
       ["validating", "Preparing Investigation"],
@@ -2175,6 +2198,16 @@
     function resetWorkspaceAskViews() {
       workspaceAskStatus.textContent = "Ask a question to inspect context selection.";
       workspaceAskStatus.classList.remove("error");
+      workspaceAskAiStatus.textContent = "Ask AI to receive a grounded answer (non-canonical).";
+      workspaceAskAiStatus.classList.remove("error");
+
+      workspaceAskAiAnswer.textContent = "No AI answer yet.";
+      workspaceAskAiAnswer.classList.add("muted");
+      workspaceAskAiMeta.textContent = "No AI grounding metadata yet.";
+      workspaceAskAiMeta.classList.add("muted");
+      workspaceAskAiRefs.textContent = "No supporting project facts yet.";
+      workspaceAskAiRefs.classList.add("muted");
+
       workspaceAskContext.textContent = "No context selected yet.";
       workspaceAskContext.classList.add("muted");
       workspaceAskWhy.textContent = "No retrieval details yet.";
@@ -2230,6 +2263,48 @@
       workspaceAskWhy.appendChild(whyList);
       workspaceAskWhy.classList.remove("muted");
       workspaceAskDebug.textContent = JSON.stringify(queryPack, null, 2);
+    }
+
+    function renderWorkspaceAskAiResult(payload) {
+      const references = Array.isArray(payload?.references) ? payload.references : [];
+      const summary = Array.isArray(payload?.selected_context_summary) ? payload.selected_context_summary : [];
+      const contextSummaryText = summary.length ? summary.join("\n") : "No selected context summary available.";
+
+      workspaceAskAiAnswer.textContent = normalizeOrFallback(payload?.answer, "No grounded answer returned.");
+      workspaceAskAiAnswer.classList.remove("muted");
+
+      const groundingStatus = normalizeOrFallback(payload?.grounding_status, "unknown");
+      const questionClass = normalizeOrFallback(payload?.question_class, "unknown");
+      const insufficient = payload?.insufficient_context ? "yes" : "no";
+      const uncertainty = normalize(payload?.uncertainty_note) || "none";
+      const provider = normalize(payload?.provider) || "unknown";
+      const model = normalize(payload?.provider_model) || "unknown";
+      const modelCalls = normalizeOrFallback(payload?.model_call_count, "0");
+      workspaceAskAiMeta.textContent = [
+        `Question class: ${questionClass}`,
+        `Grounding status: ${groundingStatus}`,
+        `Insufficient context: ${insufficient}`,
+        `Uncertainty note: ${uncertainty}`,
+        `Provider: ${provider} (${model})`,
+        `Model calls: ${modelCalls}`,
+        `Selected context summary:`,
+        contextSummaryText,
+      ].join("\n");
+      workspaceAskAiMeta.classList.remove("muted");
+
+      if (references.length === 0) {
+        workspaceAskAiRefs.textContent = "No supporting project facts were returned.";
+      } else {
+        const lines = references.map((item, index) => {
+          const kind = normalizeOrFallback(item.source_kind, "source");
+          const sourceId = normalize(item.source_id);
+          const evidence = normalize(item.evidence_status) || "unknown";
+          const detail = normalizeOrFallback(item.summary, "No summary");
+          return `${index + 1}. [${kind}]${sourceId ? ` ${sourceId}` : ""} (${evidence}) - ${detail}`;
+        });
+        workspaceAskAiRefs.textContent = lines.join("\n");
+      }
+      workspaceAskAiRefs.classList.remove("muted");
     }
 
     async function fetchJsonOrThrow(url, defaultMessage) {
@@ -2313,6 +2388,7 @@
 
       workspaceAskInFlight = true;
       workspaceAskBtn.disabled = true;
+      workspaceAskAiBtn.disabled = true;
       setWorkspaceStatus(workspaceAskStatus, "Loading selected project context...");
       try {
         const response = await fetch(API_PROJECT_CONTEXT_QUERY_URL(workspaceSelectedProjectId), {
@@ -2330,6 +2406,46 @@
         setWorkspaceStatus(workspaceAskStatus, `Context query failed: ${err?.message || err}`, true);
       } finally {
         workspaceAskInFlight = false;
+        workspaceAskBtn.disabled = false;
+        workspaceAskAiBtn.disabled = false;
+      }
+    }
+
+    async function askWorkspaceProjectWithAI() {
+      const question = normalize(workspaceAskInput.value);
+      if (!workspaceSelectedProjectId) {
+        setWorkspaceStatus(workspaceAskAiStatus, "Select a project first.", true);
+        return;
+      }
+      if (!question) {
+        setWorkspaceStatus(workspaceAskAiStatus, "Enter a project question.", true);
+        return;
+      }
+      if (workspaceAskAiInFlight) {
+        return;
+      }
+
+      workspaceAskAiInFlight = true;
+      workspaceAskAiBtn.disabled = true;
+      workspaceAskBtn.disabled = true;
+      setWorkspaceStatus(workspaceAskAiStatus, "Asking AI over selected project context...");
+      try {
+        const response = await fetch(API_PROJECT_ASK_URL(workspaceSelectedProjectId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        if (!response.ok) {
+          throw new Error(`Unable to ask project AI (HTTP ${response.status})`);
+        }
+        const payload = await response.json();
+        renderWorkspaceAskAiResult(payload);
+        setWorkspaceStatus(workspaceAskAiStatus, "AI answer loaded (reasoning over selected project context only).");
+      } catch (err) {
+        setWorkspaceStatus(workspaceAskAiStatus, `Ask AI failed: ${err?.message || err}`, true);
+      } finally {
+        workspaceAskAiInFlight = false;
+        workspaceAskAiBtn.disabled = false;
         workspaceAskBtn.disabled = false;
       }
     }
@@ -2649,10 +2765,11 @@
       await handleCopyAction(latestGitCommandsText, copyGitCommandsBtn, "Copy Git Commands", gitCopyStatus);
     });
     workspaceAskBtn.addEventListener("click", askWorkspaceProjectQuestion);
+    workspaceAskAiBtn.addEventListener("click", askWorkspaceProjectWithAI);
     workspaceAskInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        askWorkspaceProjectQuestion();
+        askWorkspaceProjectWithAI();
       }
     });
 

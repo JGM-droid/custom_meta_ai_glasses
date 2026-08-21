@@ -532,6 +532,28 @@ Known limitations:
 - Ask This Project shows context-selection output only; no OpenAI answer generation is performed.
 - Investigation evidence relationships remain limited to currently implemented bounded summaries.
 
+### Phase G1 - Implemented (Grounded Project Q&A over E3 Context Pack)
+
+Implemented scope:
+
+- Adds project-scoped grounded Q&A endpoint: `POST /projects/{project_id}/ask`.
+- Uses the E3 deterministic question-aware Context Pack as the only retrieval source for answer generation.
+- Introduces a provider-neutral reasoning boundary for project Q&A with an OpenAI-backed adapter.
+- Returns explicit grounding metadata and compact source references with each answer.
+- Reports insufficient-context outcomes explicitly without mutating canonical memory.
+
+Behavior constraints:
+
+- One ask request performs exactly one provider model call.
+- Project Q&A does not mutate Project, Activity, Checkpoint, Proposal, or Investigation canonical state.
+- Project-scoped isolation is preserved through the existing deterministic retriever boundary.
+- Existing `POST /projects/{project_id}/context/query` behavior remains deterministic and zero-AI.
+
+UI projection scope:
+
+- Project Workspace adds a separate Ask AI action while preserving the original Get Context behavior.
+- Ask AI output is labeled as non-canonical AI reasoning over selected project context.
+
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
 ## Phase B Acceptance Contract
@@ -760,6 +782,9 @@ Question-aware retrieval should apply deterministic question-class contracts wit
 
 ADR-033 - ACCEPTED
 The initial Project Workspace is a read-only projection over authoritative Project Memory and deterministic context retrieval outputs, without AI answer generation.
+
+ADR-034 - ACCEPTED
+Grounded Project Q&A must reason only over the E3 deterministic Context Pack through a provider-neutral boundary, execute one model call per ask request, and never mutate authoritative project memory.
 
 ## Relationship to Other Documents
 

@@ -38,12 +38,17 @@ def test_workspace_uses_project_api_endpoints_contract():
     assert 'const API_PROJECT_DETAIL_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}`;' in source
     assert 'const API_PROJECT_ACTIVITIES_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/activities`;' in source
     assert 'const API_PROJECT_INVESTIGATIONS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/investigation-sessions`;' in source
+    assert 'const API_PROJECT_ASK_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/ask`;' in source
 
 
-def test_workspace_ask_disclaimer_and_no_ai_answer_contract():
+def test_workspace_ask_and_ask_ai_contract():
     source = _dashboard_source()
-    assert 'Selected project context only, not an AI answer.' in source
+    assert '>Get Context<' in source
+    assert '>Ask AI<' in source
+    assert '>AI Answer (Grounded)<' in source
+    assert 'Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.' in source
     assert 'Context loaded for selected project (no AI answer generation).' in source
+    assert 'AI answer loaded (reasoning over selected project context only).' in source
 
 
 def test_workspace_interpretability_fields_render_contract():

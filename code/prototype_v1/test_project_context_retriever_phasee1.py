@@ -9,6 +9,12 @@ from fastapi.testclient import TestClient
 import api
 from investigations.session_store import InvestigationSessionStore
 from projects import ProjectActivityStore, ProjectContextRetriever, ProjectStore
+from projects.project_qa import (
+    ProjectQuestionAnsweringService,
+    ProjectReasoningProviderMissingApiKeyError,
+    ProjectReasoningRequest,
+    ProjectReasoningResponse,
+)
 
 
 class _StaticProvider:
@@ -587,3 +593,186 @@ def test_unknown_phrase_falls_back_safely_and_deterministically(project_context_
     assert first_body["selection"]["detected_question_class"] == "continuity"
     assert first_body["selection"]["fallback_used"] is True
     assert first_body["selection"]["fallback_reason"] is not None
+
+
+class _FakeProjectReasoningProvider:
+    def __init__(self, *, answer: str, insufficient_context: bool = False, uncertainty_note: str | None = None):
+        self.answer = answer
+        self.insufficient_context = insufficient_context
+        self.uncertainty_note = uncertainty_note
+        self.calls: list[ProjectReasoningRequest] = []
+
+    def reason(self, request: ProjectReasoningRequest) -> ProjectReasoningResponse:
+        self.calls.append(request)
+        return ProjectReasoningResponse(
+            answer=self.answer,
+            insufficient_context=self.insufficient_context,
+            uncertainty_note=self.uncertainty_note,
+            grounding_status="insufficient_context" if self.insufficient_context else "grounded",
+            provider="test_provider",
+            provider_model="test-model-1",
+        )
+
+
+def test_project_ask_returns_grounded_answer_and_calls_provider_once(
+    project_context_test_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+        },
+    )
+    _complete_project_owned_investigation(client, monkeypatch, project["project_id"])
+    _create_activity(client, project["project_id"], summary="Capacitor appears swollen during inspection.", occurred_at_utc="2030-01-01T10:00:03Z")
+
+    provider = _FakeProjectReasoningProvider(answer="We left off identifying the capacitor rating and confirming if it is swollen.")
+    service = ProjectQuestionAnsweringService(
+        context_retriever=api._create_project_context_retriever(),
+        reasoning_provider=provider,
+    )
+    monkeypatch.setattr(api, "_create_project_question_answering_service", lambda: service)
+
+    response = client.post(
+        f"/projects/{project['project_id']}/ask",
+        json={"question": "Where did we leave off on the capacitor?"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    assert body["project_id"] == project["project_id"]
+    assert body["question"] == "Where did we leave off on the capacitor?"
+    assert body["question_class"] in {"continuity", "evidence_lookup"}
+    assert body["answer"] == "We left off identifying the capacitor rating and confirming if it is swollen."
+    assert body["grounding_status"] == "grounded"
+    assert body["insufficient_context"] is False
+    assert body["provider"] == "test_provider"
+    assert body["provider_model"] == "test-model-1"
+    assert body["model_call_count"] == 1
+    assert isinstance(body["references"], list)
+
+    assert len(provider.calls) == 1
+    assert provider.calls[0].context_pack.project_id == project["project_id"]
+
+
+def test_project_ask_does_not_mutate_project_and_preserves_project_isolation(
+    project_context_test_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project_a = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "A objective.",
+            "blockers": "A blockers.",
+            "next_action": "A next action.",
+        },
+    )
+    project_b = _create_project(
+        client,
+        name="Project B",
+        checkpoint={
+            "current_objective": "B objective.",
+            "blockers": "B blockers.",
+            "next_action": "B next action.",
+        },
+    )
+
+    _create_activity(client, project_a["project_id"], summary="A only activity", occurred_at_utc="2030-01-01T10:00:03Z")
+    _create_activity(client, project_b["project_id"], summary="B only activity", occurred_at_utc="2030-01-01T10:00:04Z")
+
+    before_a = deepcopy(client.get(f"/projects/{project_a['project_id']}").json())
+    before_b = deepcopy(client.get(f"/projects/{project_b['project_id']}").json())
+
+    provider = _FakeProjectReasoningProvider(answer="Project A remains in progress on its objective.")
+    service = ProjectQuestionAnsweringService(
+        context_retriever=api._create_project_context_retriever(),
+        reasoning_provider=provider,
+    )
+    monkeypatch.setattr(api, "_create_project_question_answering_service", lambda: service)
+
+    response = client.post(
+        f"/projects/{project_a['project_id']}/ask",
+        json={"question": "What is the current status?"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["project_id"] == project_a["project_id"]
+
+    assert len(provider.calls) == 1
+    assert provider.calls[0].context_pack.project_id == project_a["project_id"]
+    assert all(item.project_id == project_a["project_id"] for item in provider.calls[0].context_pack.selected_activities)
+
+    after_a = client.get(f"/projects/{project_a['project_id']}").json()
+    after_b = client.get(f"/projects/{project_b['project_id']}").json()
+    assert after_a == before_a
+    assert after_b == before_b
+
+
+def test_project_ask_reports_insufficient_context_from_provider(
+    project_context_test_context,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+        },
+    )
+
+    provider = _FakeProjectReasoningProvider(
+        answer="I do not have enough context to confirm a completed root cause.",
+        insufficient_context=True,
+        uncertainty_note="No confirmed investigation result with root-cause details in selected context.",
+    )
+    service = ProjectQuestionAnsweringService(
+        context_retriever=api._create_project_context_retriever(),
+        reasoning_provider=provider,
+    )
+    monkeypatch.setattr(api, "_create_project_question_answering_service", lambda: service)
+
+    response = client.post(
+        f"/projects/{project['project_id']}/ask",
+        json={"question": "Did we confirm the exact failed capacitor spec?"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["insufficient_context"] is True
+    assert body["grounding_status"] == "insufficient_context"
+    assert "enough context" in body["answer"].lower()
+    assert "confirmed" in (body["uncertainty_note"] or "").lower()
+
+
+def test_project_ask_returns_503_when_provider_unavailable(project_context_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+        },
+    )
+
+    def _raise_provider_error():
+        raise ProjectReasoningProviderMissingApiKeyError("missing")
+
+    monkeypatch.setattr(api, "_create_project_question_answering_service", _raise_provider_error)
+
+    response = client.post(
+        f"/projects/{project['project_id']}/ask",
+        json={"question": "Where did we leave off?"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["category"] == "project_qa_provider_unavailable"
