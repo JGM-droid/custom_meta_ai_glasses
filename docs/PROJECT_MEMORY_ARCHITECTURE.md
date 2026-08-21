@@ -510,6 +510,28 @@ Behavior constraints:
 - Deep historical evidence remains excluded by default.
 - E1 and E2 API compatibility is preserved through additive query metadata.
 
+### Phase F1 - Implemented (Lightweight Project Workspace / Project Inspector)
+
+Implemented scope:
+
+- Adds a lightweight desktop/web Project Workspace projection in `dashboard.html`.
+- Reuses existing read-only project APIs to render:
+    - My Projects list
+    - Project Inspector sections: Now, Next, History, Investigations / Evidence
+    - Ask This Project using `POST /projects/{project_id}/context/query`
+- Ask This Project displays selected context and compact interpretability metadata; it does not generate AI answers.
+
+Authoritative-memory boundary:
+
+- The Project Workspace is a projection over authoritative Project Memory and retained Investigation records.
+- It does not mutate Project, Activity, Checkpoint, or Proposal state.
+
+Known limitations:
+
+- F1 is read-only and demo-oriented.
+- Ask This Project shows context-selection output only; no OpenAI answer generation is performed.
+- Investigation evidence relationships remain limited to currently implemented bounded summaries.
+
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
 ## Phase B Acceptance Contract
@@ -735,6 +757,9 @@ Question-aware Project context retrieval should begin with deterministic lexical
 
 ADR-032 - ACCEPTED
 Question-aware retrieval should apply deterministic question-class contracts with explicit interpretability metadata before lexical ranking results are selected.
+
+ADR-033 - ACCEPTED
+The initial Project Workspace is a read-only projection over authoritative Project Memory and deterministic context retrieval outputs, without AI answer generation.
 
 ## Relationship to Other Documents
 

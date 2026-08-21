@@ -737,6 +737,273 @@
     .muted {
       color: var(--muted);
     }
+
+    .workspace-shell {
+      background: linear-gradient(145deg, #ffffff 0%, #f8fbff 100%);
+      border: 1px solid #d8e4f3;
+      border-left: 6px solid #1f9d55;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 14px 16px 16px;
+      margin-bottom: 16px;
+    }
+
+    .workspace-shell h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      letter-spacing: 0.02em;
+      color: var(--text);
+    }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    @media (min-width: 980px) {
+      .workspace-grid {
+        grid-template-columns: 0.95fr 1.35fr;
+      }
+    }
+
+    .workspace-pane {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 11px;
+    }
+
+    .workspace-pane h3 {
+      margin: 0 0 8px;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .workspace-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+    }
+
+    .workspace-list-item {
+      border: 1px solid #dbe6f5;
+      border-radius: 10px;
+      padding: 9px;
+      background: #fbfdff;
+      display: grid;
+      gap: 7px;
+    }
+
+    .workspace-list-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 700;
+      color: #102030;
+    }
+
+    .workspace-status-tag {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #eef2f7;
+      color: #334155;
+      white-space: nowrap;
+    }
+
+    .workspace-list-meta {
+      font-size: 0.84rem;
+      color: #425466;
+      line-height: 1.42;
+      white-space: pre-wrap;
+    }
+
+    .workspace-open-btn {
+      border: 1px solid #0f6fff;
+      border-radius: 8px;
+      background: #f4f8ff;
+      color: #0f4fcc;
+      font-weight: 700;
+      font-size: 0.84rem;
+      padding: 6px 10px;
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    .workspace-open-btn[aria-current="true"] {
+      background: #0f6fff;
+      color: #fff;
+    }
+
+    .workspace-open-btn:disabled {
+      opacity: 0.75;
+      cursor: not-allowed;
+    }
+
+    .workspace-status-note {
+      margin-top: 7px;
+      font-size: 0.85rem;
+      color: #425466;
+      min-height: 1.2em;
+    }
+
+    .workspace-status-note.error {
+      color: #b42318;
+    }
+
+    .workspace-block {
+      margin-top: 11px;
+      border-top: 1px solid #e1e8f5;
+      padding-top: 10px;
+    }
+
+    .workspace-block h4 {
+      margin: 0 0 6px;
+      font-size: 0.83rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .workspace-value {
+      font-size: 0.95rem;
+      color: #162534;
+      white-space: pre-wrap;
+      line-height: 1.42;
+    }
+
+    .workspace-history-item,
+    .workspace-investigation-item {
+      border: 1px solid #deebfb;
+      border-radius: 10px;
+      padding: 8px;
+      background: #fcfeff;
+      display: grid;
+      gap: 5px;
+    }
+
+    .workspace-item-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .workspace-chip {
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      padding: 2px 7px;
+      border: 1px solid #c7d2e2;
+      background: #f2f5f9;
+      color: #334155;
+    }
+
+    .workspace-item-time {
+      font-size: 0.76rem;
+      color: #52606d;
+      margin-left: auto;
+    }
+
+    .workspace-item-summary {
+      font-size: 0.91rem;
+      color: #0f1f2e;
+    }
+
+    .workspace-ask-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    @media (min-width: 760px) {
+      .workspace-ask-row {
+        grid-template-columns: 1fr auto;
+      }
+    }
+
+    .workspace-ask-input {
+      width: 100%;
+      border: 1px solid #c8d4e7;
+      border-radius: 9px;
+      padding: 10px;
+      font: inherit;
+      background: #fff;
+      color: #0f1f2e;
+    }
+
+    .workspace-ask-btn {
+      border: 1px solid #0f6fff;
+      border-radius: 9px;
+      padding: 9px 12px;
+      font-size: 0.89rem;
+      font-weight: 700;
+      background: #0f6fff;
+      color: #fff;
+      cursor: pointer;
+      min-width: 140px;
+    }
+
+    .workspace-ask-btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+
+    .workspace-ask-disclaimer {
+      margin-top: 8px;
+      font-size: 0.84rem;
+      color: #52606d;
+      background: #f5f9ff;
+      border: 1px dashed #bfd2ef;
+      border-radius: 8px;
+      padding: 7px 8px;
+    }
+
+    .workspace-why-list {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 3px;
+      font-size: 0.88rem;
+      color: #213547;
+    }
+
+    .workspace-debug details {
+      border: 1px solid #d5e0f0;
+      border-radius: 8px;
+      background: #f8fbff;
+      margin-top: 8px;
+    }
+
+    .workspace-debug summary {
+      cursor: pointer;
+      font-size: 0.82rem;
+      color: #334155;
+      font-weight: 700;
+      padding: 7px 9px;
+      list-style: none;
+    }
+
+    .workspace-debug pre {
+      margin: 0;
+      padding: 8px 9px 10px;
+      font-size: 0.8rem;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: #0f1f2e;
+    }
   </style>
 </head>
 <body>
@@ -875,6 +1142,71 @@
         <input id="uploadInput" class="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
         <button id="analyzeBtn" class="analyze-btn" type="button">Analyze Image</button>
         <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="workspace-shell" id="projectWorkspaceSection">
+      <h2>Project Workspace</h2>
+      <p class="subtle">Read-only project inspector built from authoritative project memory and investigation records.</p>
+
+      <div class="workspace-grid">
+        <article class="workspace-pane">
+          <h3>My Projects</h3>
+          <ul id="workspaceProjectsList" class="workspace-list"></ul>
+          <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
+        </article>
+
+        <article class="workspace-pane">
+          <h3>Project Inspector</h3>
+          <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
+
+          <div class="workspace-block">
+            <h4>Now</h4>
+            <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Next</h4>
+            <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>History</h4>
+            <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Investigations / Evidence</h4>
+            <div id="workspaceInvestigations" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Ask This Project</h4>
+            <div class="workspace-ask-row">
+              <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
+              <button id="workspaceAskBtn" class="workspace-ask-btn" type="button">Get Context</button>
+            </div>
+            <div class="workspace-ask-disclaimer">Selected project context only, not an AI answer.</div>
+            <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>Selected Project Context</h4>
+              <div id="workspaceAskContext" class="workspace-value muted">No context selected yet.</div>
+            </div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>Why This Context?</h4>
+              <div id="workspaceAskWhy" class="workspace-value muted">No retrieval details yet.</div>
+            </div>
+
+            <div class="workspace-debug">
+              <details>
+                <summary>Optional Debug Context Pack</summary>
+                <pre id="workspaceAskDebug">No query pack yet.</pre>
+              </details>
+            </div>
+          </div>
+        </article>
       </div>
     </section>
 
@@ -1046,6 +1378,12 @@
     const API_INVESTIGATIONS_LATEST_URL = `${API_ORIGIN}/investigations/latest`;
     const API_ANALYZE_URL = `${API_ORIGIN}/analyze`;
     const API_DEMO_START_URL = `${API_ORIGIN}/demo/investigations`;
+    const API_PROJECTS_URL = `${API_ORIGIN}/projects`;
+    const API_PROJECT_CONTEXT_QUERY_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/context/query`;
+    const API_PROJECT_DETAIL_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}`;
+    const API_PROJECT_ACTIVITIES_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/activities`;
+    const API_PROJECT_INVESTIGATIONS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/investigation-sessions`;
+    const API_PROJECT_CONTEXT_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/context`;
     const DEMO_MIN_IMAGES = 1;
     const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
@@ -1125,6 +1463,20 @@
     const demoFollowUp = document.getElementById("demoFollowUp");
     const demoError = document.getElementById("demoError");
 
+    const workspaceProjectsList = document.getElementById("workspaceProjectsList");
+    const workspaceProjectsStatus = document.getElementById("workspaceProjectsStatus");
+    const workspaceInspectorStatus = document.getElementById("workspaceInspectorStatus");
+    const workspaceNow = document.getElementById("workspaceNow");
+    const workspaceNext = document.getElementById("workspaceNext");
+    const workspaceHistory = document.getElementById("workspaceHistory");
+    const workspaceInvestigations = document.getElementById("workspaceInvestigations");
+    const workspaceAskInput = document.getElementById("workspaceAskInput");
+    const workspaceAskBtn = document.getElementById("workspaceAskBtn");
+    const workspaceAskStatus = document.getElementById("workspaceAskStatus");
+    const workspaceAskContext = document.getElementById("workspaceAskContext");
+    const workspaceAskWhy = document.getElementById("workspaceAskWhy");
+    const workspaceAskDebug = document.getElementById("workspaceAskDebug");
+
     let activeDemoId = null;
     let demoPollTimer = null;
     let demoStartInFlight = false;
@@ -1132,6 +1484,10 @@
     let demoSelectedImages = [];
     let latestCopilotPromptText = "";
     let latestGitCommandsText = "";
+    let workspaceSelectedProjectId = "";
+    let workspaceProjectsCache = [];
+    let workspaceLoadingToken = 0;
+    let workspaceAskInFlight = false;
 
     const PROGRESS_STAGES = [
       ["validating", "Preparing Investigation"],
@@ -1612,6 +1968,372 @@
       }
     }
 
+    function formatUtcTimestamp(value) {
+      const text = normalize(value);
+      if (!text) return "unknown time";
+      const date = new Date(text);
+      if (Number.isNaN(date.getTime())) return text;
+      return date.toLocaleString();
+    }
+
+    function setWorkspaceStatus(el, message, isError = false) {
+      el.textContent = message;
+      el.classList.toggle("error", Boolean(isError));
+    }
+
+    function workspaceProjectSummaryLine(project) {
+      const now = normalize(project.current_objective) || "No current state set.";
+      const next = normalize(project.next_action) || "No next action set.";
+      return `Now: ${compactText(now, 130)}\nNext: ${compactText(next, 130)}`;
+    }
+
+    function renderWorkspaceProjectsList(projects) {
+      workspaceProjectsList.innerHTML = "";
+      if (!Array.isArray(projects) || projects.length === 0) {
+        workspaceProjectsList.innerHTML = '<li class="workspace-list-item"><div class="workspace-list-meta">No projects found.</div></li>';
+        setWorkspaceStatus(workspaceProjectsStatus, "Create a project to use Project Workspace.");
+        return;
+      }
+
+      for (const project of projects) {
+        const item = document.createElement("li");
+        item.className = "workspace-list-item";
+
+        const title = document.createElement("div");
+        title.className = "workspace-list-title";
+
+        const name = document.createElement("span");
+        name.textContent = normalize(project.name) || "Unnamed project";
+        title.appendChild(name);
+
+        const status = document.createElement("span");
+        status.className = "workspace-status-tag";
+        status.textContent = normalize(project.status) || "unknown";
+        title.appendChild(status);
+
+        const meta = document.createElement("div");
+        meta.className = "workspace-list-meta";
+        meta.textContent = workspaceProjectSummaryLine(project);
+
+        const updated = document.createElement("div");
+        updated.className = "workspace-list-meta";
+        updated.textContent = `Updated: ${formatUtcTimestamp(project.updated_at_utc)}`;
+
+        const openBtn = document.createElement("button");
+        openBtn.type = "button";
+        openBtn.className = "workspace-open-btn";
+        openBtn.textContent = (workspaceSelectedProjectId === project.project_id) ? "Open (Selected)" : "Open";
+        openBtn.setAttribute("aria-current", workspaceSelectedProjectId === project.project_id ? "true" : "false");
+        openBtn.addEventListener("click", () => {
+          openWorkspaceProject(project.project_id);
+        });
+
+        item.appendChild(title);
+        item.appendChild(meta);
+        item.appendChild(updated);
+        item.appendChild(openBtn);
+        workspaceProjectsList.appendChild(item);
+      }
+
+      setWorkspaceStatus(workspaceProjectsStatus, `${projects.length} project(s) loaded.`);
+    }
+
+    function renderWorkspaceHistory(activities) {
+      if (!Array.isArray(activities) || activities.length === 0) {
+        workspaceHistory.textContent = "No project activities yet.";
+        workspaceHistory.classList.remove("muted");
+        return;
+      }
+
+      const sorted = [...activities].sort((a, b) => {
+        const aOccurred = normalize(a.occurred_at_utc);
+        const bOccurred = normalize(b.occurred_at_utc);
+        if (aOccurred !== bOccurred) return aOccurred.localeCompare(bOccurred);
+        const aCreated = normalize(a.created_at_utc);
+        const bCreated = normalize(b.created_at_utc);
+        if (aCreated !== bCreated) return aCreated.localeCompare(bCreated);
+        return normalize(a.activity_id).localeCompare(normalize(b.activity_id));
+      });
+      const recent = sorted.slice(-8);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "workspace-list";
+
+      for (const activity of recent) {
+        const card = document.createElement("article");
+        card.className = "workspace-history-item";
+
+        const head = document.createElement("div");
+        head.className = "workspace-item-head";
+
+        const typeChip = document.createElement("span");
+        typeChip.className = "workspace-chip";
+        typeChip.textContent = normalize(activity.activity_type) || "activity";
+
+        const sourceChip = document.createElement("span");
+        sourceChip.className = "workspace-chip";
+        sourceChip.textContent = normalize(activity.source_type) || "source";
+
+        const confidenceChip = document.createElement("span");
+        confidenceChip.className = "workspace-chip";
+        confidenceChip.textContent = normalize(activity.confirmation_status) || "confirmation";
+
+        const time = document.createElement("span");
+        time.className = "workspace-item-time";
+        time.textContent = formatUtcTimestamp(activity.occurred_at_utc || activity.created_at_utc);
+
+        head.appendChild(typeChip);
+        head.appendChild(sourceChip);
+        head.appendChild(confidenceChip);
+        head.appendChild(time);
+
+        const summary = document.createElement("div");
+        summary.className = "workspace-item-summary";
+        const detailText = normalize(activity.details);
+        summary.textContent = detailText
+          ? `${normalizeOrFallback(activity.summary, "No summary")}\n${compactText(detailText, 220)}`
+          : normalizeOrFallback(activity.summary, "No summary");
+
+        card.appendChild(head);
+        card.appendChild(summary);
+        wrapper.appendChild(card);
+      }
+
+      workspaceHistory.innerHTML = "";
+      workspaceHistory.appendChild(wrapper);
+      workspaceHistory.classList.remove("muted");
+    }
+
+    function renderWorkspaceInvestigations(sessions, contextPack) {
+      if (!Array.isArray(sessions) || sessions.length === 0) {
+        workspaceInvestigations.textContent = "No project-owned investigations yet.";
+        workspaceInvestigations.classList.remove("muted");
+        return;
+      }
+
+      const summaries = new Map();
+      const recentInvestigations = Array.isArray(contextPack?.recent_investigations) ? contextPack.recent_investigations : [];
+      for (const item of recentInvestigations) {
+        summaries.set(item.session_id, item);
+      }
+
+      const sorted = [...sessions].sort((a, b) => {
+        const aUpdated = normalize(a.updated_at_utc);
+        const bUpdated = normalize(b.updated_at_utc);
+        if (aUpdated !== bUpdated) return bUpdated.localeCompare(aUpdated);
+        return normalize(b.session_id).localeCompare(normalize(a.session_id));
+      }).slice(0, 6);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "workspace-list";
+
+      for (const session of sorted) {
+        const card = document.createElement("article");
+        card.className = "workspace-investigation-item";
+
+        const head = document.createElement("div");
+        head.className = "workspace-item-head";
+
+        const statusChip = document.createElement("span");
+        statusChip.className = "workspace-chip";
+        statusChip.textContent = normalize(session.status) || "unknown";
+
+        const time = document.createElement("span");
+        time.className = "workspace-item-time";
+        time.textContent = formatUtcTimestamp(session.updated_at_utc || session.created_at_utc);
+
+        head.appendChild(statusChip);
+        head.appendChild(time);
+
+        const summary = document.createElement("div");
+        summary.className = "workspace-item-summary";
+        const retained = summaries.get(session.session_id);
+        if (retained) {
+          summary.textContent = [
+            `Diagnosis: ${compactText(retained.diagnosis, 220) || "No diagnosis"}`,
+            `Action: ${compactText(retained.required_next_action, 220) || "No next action"}`,
+          ].join("\n");
+        } else {
+          summary.textContent = "No retained diagnosis/action summary in current bounded context.";
+        }
+
+        const sessionInfo = document.createElement("div");
+        sessionInfo.className = "workspace-list-meta";
+        sessionInfo.textContent = `Session: ${normalizeOrFallback(session.session_id, "unknown")}`;
+
+        card.appendChild(head);
+        card.appendChild(summary);
+        card.appendChild(sessionInfo);
+        wrapper.appendChild(card);
+      }
+
+      workspaceInvestigations.innerHTML = "";
+      workspaceInvestigations.appendChild(wrapper);
+      workspaceInvestigations.classList.remove("muted");
+    }
+
+    function resetWorkspaceAskViews() {
+      workspaceAskStatus.textContent = "Ask a question to inspect context selection.";
+      workspaceAskStatus.classList.remove("error");
+      workspaceAskContext.textContent = "No context selected yet.";
+      workspaceAskContext.classList.add("muted");
+      workspaceAskWhy.textContent = "No retrieval details yet.";
+      workspaceAskWhy.classList.add("muted");
+      workspaceAskDebug.textContent = "No query pack yet.";
+    }
+
+    function renderWorkspaceNowNext(projectDetail, contextPack) {
+      const objective = normalize(contextPack?.current_objective) || normalize(projectDetail?.checkpoint?.current_objective) || "No current objective set.";
+      const blockers = normalize(contextPack?.blockers) || normalize(projectDetail?.checkpoint?.blockers);
+      const nextAction = normalize(contextPack?.next_action) || normalize(projectDetail?.checkpoint?.next_action) || "No next action set.";
+
+      workspaceNow.textContent = blockers
+        ? `Current objective: ${objective}\nBlockers: ${blockers}`
+        : `Current objective: ${objective}\nBlockers: none`;
+      workspaceNow.classList.remove("muted");
+
+      workspaceNext.textContent = nextAction;
+      workspaceNext.classList.remove("muted");
+    }
+
+    function renderWorkspaceAskResult(queryPack) {
+      const selection = (queryPack && queryPack.selection && typeof queryPack.selection === "object") ? queryPack.selection : {};
+      const activities = Array.isArray(queryPack?.selected_activities) ? queryPack.selected_activities.length : 0;
+      const investigations = Array.isArray(queryPack?.selected_investigations) ? queryPack.selected_investigations.length : 0;
+
+      workspaceAskContext.textContent = [
+        `Project: ${normalizeOrFallback(queryPack?.project_name, "unknown")}`,
+        `Current objective: ${normalizeOrFallback(queryPack?.current_objective, "not set")}`,
+        `Blockers: ${normalizeOrFallback(queryPack?.blockers, "none")}`,
+        `Next action: ${normalizeOrFallback(queryPack?.next_action, "not set")}`,
+        `Selected activities: ${activities}`,
+        `Selected investigations: ${investigations}`,
+      ].join("\n");
+      workspaceAskContext.classList.remove("muted");
+
+      const whyList = document.createElement("ul");
+      whyList.className = "workspace-why-list";
+      const lines = [
+        `Detected question class: ${normalizeOrFallback(selection.detected_question_class, "unknown")}`,
+        `Categories included: ${(Array.isArray(selection.selected_categories) ? selection.selected_categories.join(", ") : "") || "none"}`,
+        `Categories excluded: ${(Array.isArray(selection.excluded_categories) ? selection.excluded_categories.join(", ") : "") || "none"}`,
+        `Retrieval limits: activities=${normalizeOrFallback(selection.recent_activity_limit, "0")}, investigations=${normalizeOrFallback(selection.recent_investigation_limit, "0")}`,
+        `Fallback used: ${selection.fallback_used ? "yes" : "no"}${selection.fallback_reason ? ` (${selection.fallback_reason})` : ""}`,
+      ];
+      for (const line of lines) {
+        const li = document.createElement("li");
+        li.textContent = line;
+        whyList.appendChild(li);
+      }
+
+      workspaceAskWhy.innerHTML = "";
+      workspaceAskWhy.appendChild(whyList);
+      workspaceAskWhy.classList.remove("muted");
+      workspaceAskDebug.textContent = JSON.stringify(queryPack, null, 2);
+    }
+
+    async function fetchJsonOrThrow(url, defaultMessage) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`${defaultMessage} (HTTP ${response.status})`);
+      }
+      return response.json();
+    }
+
+    async function loadWorkspaceProjects() {
+      setWorkspaceStatus(workspaceProjectsStatus, "Loading projects...");
+      try {
+        const projects = await fetchJsonOrThrow(API_PROJECTS_URL, "Unable to load projects");
+        workspaceProjectsCache = Array.isArray(projects) ? projects : [];
+        renderWorkspaceProjectsList(workspaceProjectsCache);
+
+        if (workspaceProjectsCache.length === 0) {
+          workspaceSelectedProjectId = "";
+          return;
+        }
+        if (!workspaceSelectedProjectId || !workspaceProjectsCache.some((item) => item.project_id === workspaceSelectedProjectId)) {
+          workspaceSelectedProjectId = workspaceProjectsCache[0].project_id;
+        }
+        renderWorkspaceProjectsList(workspaceProjectsCache);
+        await openWorkspaceProject(workspaceSelectedProjectId);
+      } catch (err) {
+        workspaceProjectsCache = [];
+        workspaceProjectsList.innerHTML = "";
+        setWorkspaceStatus(workspaceProjectsStatus, `Failed to load projects: ${err?.message || err}`, true);
+      }
+    }
+
+    async function openWorkspaceProject(projectId) {
+      if (!projectId) return;
+      workspaceSelectedProjectId = projectId;
+      renderWorkspaceProjectsList(workspaceProjectsCache);
+      setWorkspaceStatus(workspaceInspectorStatus, "Loading selected project...");
+
+      workspaceNow.textContent = "Loading...";
+      workspaceNext.textContent = "Loading...";
+      workspaceHistory.textContent = "Loading...";
+      workspaceInvestigations.textContent = "Loading...";
+      [workspaceNow, workspaceNext, workspaceHistory, workspaceInvestigations].forEach((el) => el.classList.remove("muted"));
+      resetWorkspaceAskViews();
+
+      const loadToken = ++workspaceLoadingToken;
+      try {
+        const [projectDetail, activities, sessions, contextPack] = await Promise.all([
+          fetchJsonOrThrow(API_PROJECT_DETAIL_URL(projectId), "Unable to load project detail"),
+          fetchJsonOrThrow(API_PROJECT_ACTIVITIES_URL(projectId), "Unable to load activities"),
+          fetchJsonOrThrow(API_PROJECT_INVESTIGATIONS_URL(projectId), "Unable to load project investigations"),
+          fetchJsonOrThrow(API_PROJECT_CONTEXT_URL(projectId), "Unable to load project context"),
+        ]);
+        if (loadToken !== workspaceLoadingToken) return;
+
+        renderWorkspaceNowNext(projectDetail, contextPack);
+        renderWorkspaceHistory(activities);
+        renderWorkspaceInvestigations(sessions, contextPack);
+        const selectedName = normalize(projectDetail?.name) || normalize(projectId);
+        setWorkspaceStatus(workspaceInspectorStatus, `Showing ${selectedName}.`);
+      } catch (err) {
+        if (loadToken !== workspaceLoadingToken) return;
+        setWorkspaceStatus(workspaceInspectorStatus, `Failed to load project inspector: ${err?.message || err}`, true);
+      }
+    }
+
+    async function askWorkspaceProjectQuestion() {
+      const question = normalize(workspaceAskInput.value);
+      if (!workspaceSelectedProjectId) {
+        setWorkspaceStatus(workspaceAskStatus, "Select a project first.", true);
+        return;
+      }
+      if (!question) {
+        setWorkspaceStatus(workspaceAskStatus, "Enter a project question.", true);
+        return;
+      }
+      if (workspaceAskInFlight) {
+        return;
+      }
+
+      workspaceAskInFlight = true;
+      workspaceAskBtn.disabled = true;
+      setWorkspaceStatus(workspaceAskStatus, "Loading selected project context...");
+      try {
+        const response = await fetch(API_PROJECT_CONTEXT_QUERY_URL(workspaceSelectedProjectId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question }),
+        });
+        if (!response.ok) {
+          throw new Error(`Unable to retrieve project context (HTTP ${response.status})`);
+        }
+        const queryPack = await response.json();
+        renderWorkspaceAskResult(queryPack);
+        setWorkspaceStatus(workspaceAskStatus, "Context loaded for selected project (no AI answer generation).");
+      } catch (err) {
+        setWorkspaceStatus(workspaceAskStatus, `Context query failed: ${err?.message || err}`, true);
+      } finally {
+        workspaceAskInFlight = false;
+        workspaceAskBtn.disabled = false;
+      }
+    }
+
     function resetDemoView() {
       stopDemoPolling();
       activeDemoId = null;
@@ -1926,12 +2648,22 @@
     copyGitCommandsBtn.addEventListener("click", async () => {
       await handleCopyAction(latestGitCommandsText, copyGitCommandsBtn, "Copy Git Commands", gitCopyStatus);
     });
+    workspaceAskBtn.addEventListener("click", askWorkspaceProjectQuestion);
+    workspaceAskInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        askWorkspaceProjectQuestion();
+      }
+    });
 
     resetDemoView();
+    resetWorkspaceAskViews();
     fetchLatest();
     fetchRetainedLatestInvestigation();
+    loadWorkspaceProjects();
     setInterval(fetchLatest, POLL_MS);
     setInterval(fetchRetainedLatestInvestigation, POLL_MS);
+    setInterval(loadWorkspaceProjects, POLL_MS * 2);
   </script>
 </body>
 </html>
