@@ -483,6 +483,33 @@ Known limitations:
 - The query path does not yet generate answers or call OpenAI.
 - Historical evidence/proposal expansion remains intentionally excluded by default.
 
+### Phase E3 - Implemented (Retrieval Contracts + Interpretable Context Packs)
+
+Implemented scope:
+
+- Adds a deterministic question-classification layer before E2 lexical ranking.
+- Initial deterministic question classes:
+    - `continuity`
+    - `status`
+    - `next_action`
+    - `evidence_lookup`
+- Each class applies an explicit retrieval contract with required, optional, and excluded-by-default categories.
+- Query Context Packs now include interpretability metadata:
+    - detected question class
+    - retrieval contract identifier
+    - required/optional/excluded categories
+    - selected categories
+    - per-category inclusion/exclusion reasons
+    - limits applied
+    - fallback usage and reason
+
+Behavior constraints:
+
+- Classification and retrieval remain deterministic and perform zero OpenAI/model calls.
+- Retrieval remains project-scoped, bounded, and read-only.
+- Deep historical evidence remains excluded by default.
+- E1 and E2 API compatibility is preserved through additive query metadata.
+
 Later phases may include richer evidence, provenance, selective retrieval, possible semantic retrieval, dashboarding, voice/project switching, automatic project suggestions, guided walkthroughs, and potential storage upgrades if justified.
 
 ## Phase B Acceptance Contract
@@ -705,6 +732,9 @@ Project context for model-facing use must be assembled through a deterministic, 
 
 ADR-031 - ACCEPTED
 Question-aware Project context retrieval should begin with deterministic lexical ranking and bounded fallback before any semantic retrieval is introduced.
+
+ADR-032 - ACCEPTED
+Question-aware retrieval should apply deterministic question-class contracts with explicit interpretability metadata before lexical ranking results are selected.
 
 ## Relationship to Other Documents
 

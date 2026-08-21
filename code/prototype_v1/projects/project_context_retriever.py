@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 import re
 
@@ -28,6 +29,11 @@ from .project_store import ProjectNotFound, ProjectStore, ProjectStoreError
 
 DEFAULT_RECENT_ACTIVITY_LIMIT = 5
 DEFAULT_RECENT_INVESTIGATION_LIMIT = 3
+QUESTION_CLASS_CONTINUITY = "continuity"
+QUESTION_CLASS_STATUS = "status"
+QUESTION_CLASS_NEXT_ACTION = "next_action"
+QUESTION_CLASS_EVIDENCE_LOOKUP = "evidence_lookup"
+RETRIEVAL_CONTRACT_ID = "e3_deterministic_contract_v1"
 _STOPWORDS = {
     "about",
     "after",
@@ -55,6 +61,111 @@ _STOPWORDS = {
     "which",
     "with",
 }
+
+_CLASSIFICATION_TERMS = {
+    QUESTION_CLASS_CONTINUITY: {
+        "continue",
+        "continuity",
+        "leave",
+        "left",
+        "resume",
+        "resuming",
+        "off",
+        "paused",
+        "stopped",
+        "pick",
+        "pickup",
+        "context",
+    },
+    QUESTION_CLASS_STATUS: {
+        "status",
+        "progress",
+        "completed",
+        "complete",
+        "done",
+        "finished",
+        "shipped",
+        "state",
+    },
+    QUESTION_CLASS_NEXT_ACTION: {
+        "next",
+        "action",
+        "should",
+        "todo",
+        "prioritize",
+        "priority",
+        "proceed",
+        "now",
+        "step",
+        "steps",
+    },
+    QUESTION_CLASS_EVIDENCE_LOOKUP: {
+        "determine",
+        "determined",
+        "find",
+        "found",
+        "evidence",
+        "observed",
+        "observation",
+        "why",
+        "root",
+        "cause",
+        "about",
+    },
+}
+
+
+@dataclass(frozen=True)
+class _RetrievalContract:
+    question_class: str
+    required_categories: tuple[str, ...]
+    optional_categories: tuple[str, ...]
+    excluded_categories: tuple[str, ...]
+    activity_limit: int
+    investigation_limit: int
+
+
+_CONTRACTS: dict[str, _RetrievalContract] = {
+    QUESTION_CLASS_CONTINUITY: _RetrievalContract(
+        question_class=QUESTION_CLASS_CONTINUITY,
+        required_categories=("project_identity", "checkpoint", "blockers", "next_action"),
+        optional_categories=("recent_activities",),
+        excluded_categories=("recent_investigations", "deep_historical_evidence"),
+        activity_limit=2,
+        investigation_limit=0,
+    ),
+    QUESTION_CLASS_STATUS: _RetrievalContract(
+        question_class=QUESTION_CLASS_STATUS,
+        required_categories=("project_identity", "checkpoint"),
+        optional_categories=("recent_activities",),
+        excluded_categories=("recent_investigations", "deep_historical_evidence"),
+        activity_limit=3,
+        investigation_limit=0,
+    ),
+    QUESTION_CLASS_NEXT_ACTION: _RetrievalContract(
+        question_class=QUESTION_CLASS_NEXT_ACTION,
+        required_categories=("project_identity", "current_objective", "blockers", "next_action"),
+        optional_categories=("recent_activities",),
+        excluded_categories=("recent_investigations", "deep_historical_evidence"),
+        activity_limit=2,
+        investigation_limit=0,
+    ),
+    QUESTION_CLASS_EVIDENCE_LOOKUP: _RetrievalContract(
+        question_class=QUESTION_CLASS_EVIDENCE_LOOKUP,
+        required_categories=("project_identity", "checkpoint", "recent_activities", "recent_investigations"),
+        optional_categories=("deeper_evidence_later_phase",),
+        excluded_categories=("deep_historical_evidence",),
+        activity_limit=DEFAULT_RECENT_ACTIVITY_LIMIT,
+        investigation_limit=DEFAULT_RECENT_INVESTIGATION_LIMIT,
+    ),
+}
+
+_QUESTION_CLASS_PRIORITY = (
+    QUESTION_CLASS_NEXT_ACTION,
+    QUESTION_CLASS_STATUS,
+    QUESTION_CLASS_CONTINUITY,
+    QUESTION_CLASS_EVIDENCE_LOOKUP,
+)
 
 
 class ProjectContextRetrieverError(RuntimeError):
@@ -115,6 +226,8 @@ class ProjectContextRetriever:
             raise ProjectContextRetrieverError("Project context is unavailable.")
 
         question_terms = self._extract_terms(normalized_question)
+        question_class = self._classify_question(normalized_question, question_terms)
+        contract = _CONTRACTS[question_class]
         checkpoint_terms = self._extract_terms(
             " ".join(
                 part
@@ -131,8 +244,34 @@ class ProjectContextRetriever:
         )
         fallback_used = len(question_terms.intersection(checkpoint_terms)) == 0
 
-        selected_activities = self._rank_activities(base_context.recent_activities, question_terms, fallback_used=fallback_used)
-        selected_investigations = self._rank_investigations(base_context.recent_investigations, question_terms, fallback_used=fallback_used)
+        selected_activities = self._rank_activities(
+            base_context.recent_activities,
+            question_terms,
+            fallback_used=fallback_used,
+            limit=contract.activity_limit,
+        )
+        selected_investigations = self._rank_investigations(
+            base_context.recent_investigations,
+            question_terms,
+            fallback_used=fallback_used,
+            limit=contract.investigation_limit,
+        )
+
+        if "recent_activities" not in contract.required_categories and "recent_activities" not in contract.optional_categories:
+            selected_activities = []
+
+        if "recent_investigations" not in contract.required_categories and "recent_investigations" not in contract.optional_categories:
+            selected_investigations = []
+
+        if question_class == QUESTION_CLASS_NEXT_ACTION and fallback_used:
+            selected_activities = []
+
+        fallback_reason = None
+        if fallback_used:
+            fallback_reason = (
+                "No lexical overlap with checkpoint hot-context terms; "
+                "used deterministic bounded fallback within the selected contract."
+            )
 
         matched_terms = sorted(
             question_terms.intersection(
@@ -141,6 +280,38 @@ class ProjectContextRetriever:
                 .union(*(self._extract_terms(item.diagnosis + " " + item.required_next_action) for item in base_context.recent_investigations))
             )
         )
+
+        selected_categories: list[str] = ["project_identity", "checkpoint"]
+        if base_context.current_objective:
+            selected_categories.append("current_objective")
+        if base_context.blockers:
+            selected_categories.append("blockers")
+        if base_context.next_action:
+            selected_categories.append("next_action")
+        if selected_activities:
+            selected_categories.append("recent_activities")
+        if selected_investigations:
+            selected_categories.append("recent_investigations")
+
+        category_inclusion_reasons = {
+            "project_identity": "Required in all contracts to enforce explicit project namespace and continuity.",
+            "checkpoint": "Required checkpoint context anchors deterministic retrieval.",
+            "current_objective": "Included from checkpoint hot context for continuity and next-step clarity.",
+            "blockers": "Included from checkpoint hot context to preserve constraint visibility.",
+            "next_action": "Included from checkpoint hot context to preserve immediate action guidance.",
+            "recent_activities": (
+                "Included by contract for bounded supporting evidence and recency-ordered relevance."
+                if selected_activities
+                else "Not included because the contract excluded it or no useful fallback-safe support was selected."
+            ),
+            "recent_investigations": (
+                "Included by contract for bounded investigation evidence summaries."
+                if selected_investigations
+                else "Not included because the contract excludes it by default for this question class."
+            ),
+            "deep_historical_evidence": "Excluded by default in E3 contracts to keep retrieval bounded and deterministic.",
+            "deeper_evidence_later_phase": "Optional placeholder for a later phase; not retrieved in E3.",
+        }
 
         return ProjectContextQueryPack(
             schema_version=PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION,
@@ -155,14 +326,54 @@ class ProjectContextRetriever:
             next_action=base_context.next_action,
             selection=ProjectContextSelectionMetadata(
                 strategy="deterministic_keyword_overlap_recency",
+                detected_question_class=question_class,
+                retrieval_contract=RETRIEVAL_CONTRACT_ID,
                 matched_terms=matched_terms,
-                recent_activity_limit=self.recent_activity_limit,
-                recent_investigation_limit=self.recent_investigation_limit,
+                required_categories=list(contract.required_categories),
+                optional_categories=list(contract.optional_categories),
+                excluded_categories=list(contract.excluded_categories),
+                selected_categories=selected_categories,
+                category_inclusion_reasons=category_inclusion_reasons,
+                recent_activity_limit=contract.activity_limit,
+                recent_investigation_limit=contract.investigation_limit,
                 fallback_used=fallback_used,
+                fallback_reason=fallback_reason,
             ),
             selected_activities=selected_activities,
             selected_investigations=selected_investigations,
         )
+
+    def _classify_question(self, question: str, question_terms: set[str]) -> str:
+        lowered_question = question.lower()
+
+        if "should i" in lowered_question and "next" in lowered_question:
+            return QUESTION_CLASS_NEXT_ACTION
+        if "what should i do next" in lowered_question:
+            return QUESTION_CLASS_NEXT_ACTION
+        if "where did we leave off" in lowered_question:
+            return QUESTION_CLASS_CONTINUITY
+
+        scores: dict[str, int] = {}
+        for question_class, class_terms in _CLASSIFICATION_TERMS.items():
+            scores[question_class] = len(question_terms.intersection(class_terms))
+
+        if "about" in lowered_question and (
+            "determine" in lowered_question
+            or "determined" in lowered_question
+            or "find" in lowered_question
+            or "found" in lowered_question
+        ):
+            return QUESTION_CLASS_EVIDENCE_LOOKUP
+
+        best_score = max(scores.values()) if scores else 0
+        if best_score <= 0:
+            return QUESTION_CLASS_CONTINUITY
+
+        best_classes = sorted(
+            [question_class for question_class, score in scores.items() if score == best_score],
+            key=lambda item: _QUESTION_CLASS_PRIORITY.index(item),
+        )
+        return best_classes[0]
 
     def _recent_investigations(self, sessions) -> list[ProjectInvestigationSummary]:
         summaries: list[ProjectInvestigationSummary] = []
@@ -214,13 +425,16 @@ class ProjectContextRetriever:
         question_terms: set[str],
         *,
         fallback_used: bool,
+        limit: int,
     ) -> list[ProjectActivity]:
+        if limit <= 0:
+            return []
         ranked = sorted(
             activities,
             key=lambda item: self._activity_rank_key(item, question_terms, fallback_used=fallback_used),
             reverse=True,
         )
-        return ranked[: self.recent_activity_limit]
+        return ranked[:limit]
 
     def _rank_investigations(
         self,
@@ -228,13 +442,16 @@ class ProjectContextRetriever:
         question_terms: set[str],
         *,
         fallback_used: bool,
+        limit: int,
     ) -> list[ProjectInvestigationSummary]:
+        if limit <= 0:
+            return []
         ranked = sorted(
             investigations,
             key=lambda item: self._investigation_rank_key(item, question_terms, fallback_used=fallback_used),
             reverse=True,
         )
-        return ranked[: self.recent_investigation_limit]
+        return ranked[:limit]
 
     def _activity_rank_key(
         self,

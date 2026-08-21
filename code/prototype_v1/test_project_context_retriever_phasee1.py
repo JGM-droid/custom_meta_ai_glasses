@@ -372,8 +372,15 @@ def test_question_aware_context_ranks_capacitor_items_above_unrelated_items(
     assert body["project_id"] == project_a["project_id"]
     assert body["question"] == "What did we find about the capacitor?"
     assert body["selection"]["strategy"] == "deterministic_keyword_overlap_recency"
+    assert body["selection"]["detected_question_class"] == "evidence_lookup"
+    assert body["selection"]["retrieval_contract"] == "e3_deterministic_contract_v1"
     assert body["selection"]["fallback_used"] is False
     assert "capacitor" in body["selection"]["matched_terms"]
+    assert "recent_activities" in body["selection"]["required_categories"]
+    assert "recent_investigations" in body["selection"]["required_categories"]
+    assert "deep_historical_evidence" in body["selection"]["excluded_categories"]
+    assert "recent_activities" in body["selection"]["selected_categories"]
+    assert "recent_investigations" in body["selection"]["selected_categories"]
     assert body["current_objective"] == "Diagnose the AC failure."
     assert body["blockers"] == "Need capacitor rating."
     assert body["next_action"] == "Identify the capacitor rating."
@@ -408,12 +415,16 @@ def test_question_aware_context_falls_back_to_checkpoint_and_recent_context_when
     assert response.status_code == 200
     body = response.json()
 
+    assert body["selection"]["detected_question_class"] == "continuity"
     assert body["selection"]["fallback_used"] is True
+    assert body["selection"]["fallback_reason"] is not None
+    assert body["selection"]["recent_activity_limit"] == 2
+    assert body["selection"]["recent_investigation_limit"] == 0
     assert body["current_objective"] == "Diagnose the AC failure."
     assert body["blockers"] == "Need capacitor rating."
     assert body["next_action"] == "Identify the capacitor rating."
-    assert len(body["selected_activities"]) == 3
-    assert len(body["selected_investigations"]) == 1
+    assert len(body["selected_activities"]) == 2
+    assert len(body["selected_investigations"]) == 0
 
 
 def test_question_aware_context_is_deterministic_and_restart_stable(project_context_test_context, monkeypatch: pytest.MonkeyPatch):
@@ -479,3 +490,100 @@ def test_question_aware_context_retrieval_makes_zero_openai_calls(project_contex
     )
     assert response.status_code == 200
     assert calls["openai"] == 0
+
+
+def test_question_classes_map_to_expected_contracts(project_context_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+            "discoveries_summary": "Capacitor may be swollen.",
+            "completed_summary": "Verified thermostat and breaker.",
+        },
+    )
+    _complete_project_owned_investigation(client, monkeypatch, project["project_id"])
+    _create_activity(client, project["project_id"], summary="Capacitor appears swollen during inspection.", occurred_at_utc="2030-01-01T10:00:03Z")
+
+    cases = [
+        ("Where did we leave off?", "continuity"),
+        ("What have we completed?", "status"),
+        ("What should I do next?", "next_action"),
+        ("What did we determine about the capacitor?", "evidence_lookup"),
+    ]
+
+    for question, expected_question_class in cases:
+        response = client.post(
+            f"/projects/{project['project_id']}/context/query",
+            json={"question": question},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["selection"]["detected_question_class"] == expected_question_class
+        assert body["selection"]["retrieval_contract"] == "e3_deterministic_contract_v1"
+
+
+def test_question_contracts_are_interpretable_and_exclusions_are_explicit(project_context_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+        },
+    )
+    _complete_project_owned_investigation(client, monkeypatch, project["project_id"])
+    _create_activity(client, project["project_id"], summary="Breaker reset and power stable.", occurred_at_utc="2030-01-01T10:00:01Z")
+
+    response = client.post(
+        f"/projects/{project['project_id']}/context/query",
+        json={"question": "What have we completed?"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+
+    selection = body["selection"]
+    assert selection["detected_question_class"] == "status"
+    assert "project_identity" in selection["required_categories"]
+    assert "checkpoint" in selection["required_categories"]
+    assert "recent_activities" in selection["optional_categories"]
+    assert "recent_investigations" in selection["excluded_categories"]
+    assert "deep_historical_evidence" in selection["excluded_categories"]
+    assert "project_identity" in selection["selected_categories"]
+    assert "checkpoint" in selection["selected_categories"]
+    assert isinstance(selection["category_inclusion_reasons"], dict)
+    assert "recent_investigations" in selection["category_inclusion_reasons"]
+    assert selection["recent_activity_limit"] == 3
+    assert selection["recent_investigation_limit"] == 0
+
+
+def test_unknown_phrase_falls_back_safely_and_deterministically(project_context_test_context, monkeypatch: pytest.MonkeyPatch):
+    client, _project_store, _activity_store, _session_store, _projects_root = project_context_test_context
+    project = _create_project(
+        client,
+        name="Project A",
+        checkpoint={
+            "current_objective": "Diagnose the AC failure.",
+            "blockers": "Need capacitor rating.",
+            "next_action": "Identify the capacitor rating.",
+        },
+    )
+    _complete_project_owned_investigation(client, monkeypatch, project["project_id"])
+
+    payload = {"question": "Give me a quick pulse check with odd phrasing xyzzy"}
+    first = client.post(f"/projects/{project['project_id']}/context/query", json=payload)
+    second = client.post(f"/projects/{project['project_id']}/context/query", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_body = first.json()
+    second_body = second.json()
+    assert first_body == second_body
+    assert first_body["selection"]["detected_question_class"] == "continuity"
+    assert first_body["selection"]["fallback_used"] is True
+    assert first_body["selection"]["fallback_reason"] is not None

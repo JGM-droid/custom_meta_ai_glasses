@@ -640,10 +640,18 @@ class ProjectContextSelectionMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     strategy: str = Field(..., min_length=1, max_length=64)
+    detected_question_class: str = Field(..., min_length=1, max_length=64)
+    retrieval_contract: str = Field(..., min_length=1, max_length=128)
     matched_terms: list[str] = Field(default_factory=list)
-    recent_activity_limit: int = Field(..., ge=1)
-    recent_investigation_limit: int = Field(..., ge=1)
+    required_categories: list[str] = Field(default_factory=list)
+    optional_categories: list[str] = Field(default_factory=list)
+    excluded_categories: list[str] = Field(default_factory=list)
+    selected_categories: list[str] = Field(default_factory=list)
+    category_inclusion_reasons: dict[str, str] = Field(default_factory=dict)
+    recent_activity_limit: int = Field(..., ge=0)
+    recent_investigation_limit: int = Field(..., ge=0)
     fallback_used: bool = False
+    fallback_reason: str | None = None
 
     @field_validator("strategy")
     @classmethod
@@ -651,6 +659,14 @@ class ProjectContextSelectionMetadata(BaseModel):
         text = value.strip()
         if not text:
             raise ValueError("strategy is required.")
+        return text
+
+    @field_validator("detected_question_class", "retrieval_contract")
+    @classmethod
+    def _normalize_required_text_fields(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("Field is required.")
         return text
 
     @field_validator("matched_terms")
@@ -665,6 +681,41 @@ class ProjectContextSelectionMetadata(BaseModel):
             seen.add(text)
             normalized.append(text)
         return normalized
+
+    @field_validator("required_categories", "optional_categories", "excluded_categories", "selected_categories")
+    @classmethod
+    def _normalize_categories(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip().lower()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("category_inclusion_reasons")
+    @classmethod
+    def _normalize_category_inclusion_reasons(cls, value: dict[str, str]) -> dict[str, str]:
+        normalized: dict[str, str] = {}
+        for category, reason in value.items():
+            key = str(category or "").strip().lower()
+            text = str(reason or "").strip()
+            if not key or not text:
+                continue
+            normalized[key] = text
+        return normalized
+
+    @field_validator("fallback_reason")
+    @classmethod
+    def _normalize_fallback_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        return text
 
 
 class ProjectContextQueryPack(BaseModel):
