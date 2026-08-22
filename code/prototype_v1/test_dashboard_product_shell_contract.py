@@ -44,7 +44,7 @@ def test_project_list_and_create_controls_live_in_sidebar_contract():
     sidebar_html = source[sidebar_start:sidebar_end]
 
     for marker in [
-        '<h3>My Projects</h3>',
+        '<h3>Projects</h3>',
         'id="workspaceCreateProjectBtn"',
         'id="workspaceCreateProjectForm"',
         'id="workspaceProjectsList"',
@@ -60,13 +60,46 @@ def test_project_list_and_create_controls_live_in_sidebar_contract():
 
 def test_selected_project_can_be_opened_and_highlighted_contract():
     source = _dashboard_source()
-    # Reuses the exact existing open/highlight wiring (Open / Open (Selected),
-    # aria-current) - Slice 1 does not touch this mechanism, only adds a
-    # drawer-close side effect on mobile after opening.
-    assert 'openBtn.textContent = (workspaceSelectedProjectId === project.project_id) ? "Open (Selected)" : "Open";' in source
-    assert 'openBtn.setAttribute("aria-current", workspaceSelectedProjectId === project.project_id ? "true" : "false");' in source
+    # Redesign (desktop product shell): a Project row is the project name
+    # only - no separate "Open"/"Open (Selected)" button. The whole row is
+    # the click target, and the selected Project gets a subtle highlight via
+    # a "selected" class rather than button text/label changes.
+    assert 'button.className = "sidebar-project-row" + (isSelected ? " selected" : "");' in source
+    assert 'button.setAttribute("aria-current", isSelected ? "true" : "false");' in source
     assert "openWorkspaceProject(project.project_id, { forceReset: true });" in source
-    assert "closeProjectsDrawer();" in source
+    # Presentation-readiness redesign: the old off-canvas drawer's
+    # close-on-select side effect is replaced by the phone list/detail nav
+    # (see test_dashboard_phone_navigation_contract.py) - selecting a
+    # Project always enters the phone detail view (a no-op at desktop
+    # width), it never "closes a drawer".
+    assert "enterPhoneProjectDetail();" in source
+    assert "closeProjectsDrawer()" not in source
+    assert '"Open (Selected)"' not in source
+    assert 'class="workspace-open-btn"' not in source
+
+
+def test_sidebar_project_row_is_compact_name_and_goal_only_contract():
+    # Reference-matched redesign: a sidebar row is name + a single-line goal
+    # preview (matching the attached design reference's compact project
+    # cards) - it must still never carry a status tag, a Now/Next summary
+    # line, a raw "Updated: ..." timestamp, or a separate "Open" button.
+    source = _dashboard_source()
+    render_fn_start = source.index("function renderWorkspaceProjectsList(projects) {")
+    render_fn_end = source.index("\n    }", render_fn_start)
+    render_fn_body = source[render_fn_start:render_fn_end]
+    assert "sidebar-project-row-goal" in render_fn_body
+    assert "compactText(project.goal, 60)" in render_fn_body
+    for banned in [
+        "workspace-status-tag",
+        "workspace-list-title",
+        "workspace-list-meta",
+        "Updated:",
+        "workspaceProjectSummaryLine",
+        "project.status",
+        "project.updated_at_utc",
+    ]:
+        assert banned not in render_fn_body
+    assert "sidebar-project-row" in render_fn_body
 
 
 def test_project_workspace_is_center_content_not_a_separate_section_contract():
@@ -90,10 +123,16 @@ def test_home_no_project_state_exists_contract():
     assert '<section id="workspaceHomeState" class="workspace-home">' in source
     assert ">What are you working on?<" in source
     assert 'id="homeCreateProjectBtn"' in source
-    assert 'id="homeOpenProjectsBtn"' in source
+    # Presentation-readiness redesign: "Open Projects" (a drawer-opening
+    # button) is retired - the sidebar is always reachable on desktop, and
+    # on phone .workspace-home itself is hidden in favor of the sidebar
+    # acting as the phone home screen (see
+    # test_dashboard_phone_navigation_contract.py).
+    assert 'id="homeOpenProjectsBtn"' not in source
     # Reuses the exact existing Create Project entry point rather than a
-    # second/duplicate creation flow.
-    assert "showCreateProjectForm();" in source
+    # second/duplicate creation flow (no drawer-opening wrapper needed now
+    # that the sidebar is always reachable on desktop and hidden on phone).
+    assert 'homeCreateProjectBtn.addEventListener("click", showCreateProjectForm);' in source
 
     # Home and the Project Workspace are mutually exclusive, driven by the
     # same workspaceProjectsCache state already maintained elsewhere - no new
@@ -102,25 +141,6 @@ def test_home_no_project_state_exists_contract():
     assert "const hasProjects = workspaceProjectsCache.length > 0;" in source
     assert "workspaceHomeState.hidden = hasProjects;" in source
     assert "projectWorkspaceSectionEl.hidden = !hasProjects;" in source
-
-
-def test_mobile_drawer_and_toggle_exist_contract():
-    source = _dashboard_source()
-    assert 'id="projectsDrawerToggle" class="drawer-toggle"' in source
-    assert 'id="projectsDrawerCloseBtn" class="drawer-close-btn"' in source
-    assert 'id="projectsDrawerBackdrop" class="drawer-backdrop"' in source
-    assert "function openProjectsDrawer() {" in source
-    assert "function closeProjectsDrawer() {" in source
-    assert 'projectsDrawerToggle.addEventListener("click", openProjectsDrawer);' in source
-    assert 'projectsDrawerCloseBtn.addEventListener("click", closeProjectsDrawer);' in source
-    assert 'projectsDrawerBackdrop.addEventListener("click", closeProjectsDrawer);' in source
-
-    # Desktop-only vs. mobile-only visibility is a pure CSS media-query
-    # concern - no JS branches on screen width / device type.
-    assert "@media (max-width: 899px)" in source
-    assert ".drawer-toggle {" in source
-    for banned in ["navigator.userAgent", "matchMedia", "innerWidth <"]:
-        assert banned not in source
 
 
 def test_no_duplicate_mobile_state_or_endpoints_contract():

@@ -6,40 +6,65 @@
   <title>Persistent AI Project Assistant</title>
   <style>
     :root {
-      --bg: #f4f6f8;
-      --panel: #ffffff;
-      --text: #1f2933;
-      --muted: #52606d;
-      --line: #d9e2ec;
-      --ok: #1f9d55;
-      --warn: #d9822b;
-      --accent: #0f6fff;
-      --shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+      /* ----------------------------------------------------------------
+         Approved visual direction: dark graphite product shell. This is
+         the authoritative palette - written as literal static values (not
+         behind prefers-color-scheme or any runtime toggle) so the theme
+         is deterministic on every load. See
+         test_dashboard_dark_theme_lock_contract.py, which pins these
+         exact values so a future edit can't silently drift the palette.
+         ---------------------------------------------------------------- */
+      --app-bg: #17181b;
+      --surface: #1e2024;
+      --surface-raised: #24262b;
+      --surface-quiet: #1a1c20;
+      --surface-sunken: #131417;
+      --border-hairline: rgba(255, 255, 255, 0.08);
+      --border-hairline-strong: rgba(255, 255, 255, 0.14);
+      --ink: #ececee;
+      --ink-quiet: #a1a1aa;
+      --ink-faint: #6f6f78;
+      --accent: #8ea1ff;
+      --accent-strong: #a6b6ff;
+      --accent-ink: #11131c;
+      --accent-quiet: rgba(142, 161, 255, 0.14);
+      --danger: #ff9b9b;
+      --danger-quiet: rgba(255, 155, 155, 0.14);
+      --danger-border: rgba(255, 155, 155, 0.35);
+      --success: #7fd9ac;
+      --success-quiet: rgba(127, 217, 172, 0.14);
+      --success-border: rgba(127, 217, 172, 0.35);
+      --warn: #f0bd7e;
+      --focus-ring: rgba(142, 161, 255, 0.55);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
     }
 
     * { box-sizing: border-box; }
 
     body {
       margin: 0;
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background:
-        radial-gradient(circle at 10% 10%, rgba(15, 111, 255, 0.08), transparent 40%),
-        radial-gradient(circle at 90% 5%, rgba(31, 157, 85, 0.07), transparent 35%),
-        var(--bg);
-      color: var(--text);
-      line-height: 1.45;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--app-bg);
+      color: var(--ink);
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
     }
 
     .wrap {
-      max-width: 1050px;
-      margin: 28px auto;
-      padding: 0 18px;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
     }
 
-    /* Product Shell: persistent desktop sidebar / mobile drawer wrapping the
-       existing Projects list+create content, alongside the existing .wrap
-       main content column. Below PRODUCT_SHELL_BREAKPOINT the sidebar
-       becomes an off-canvas drawer; the same DOM/JS/state drives both. */
+    /* Product shell: a persistent desktop sidebar next to the main content
+       column. At phone width (see the phone-nav media query near the end of
+       this stylesheet) the sidebar becomes its own full-screen "Projects"
+       list, and selecting a Project swaps to a full-screen detail view via
+       the .phone-nav-detail class - a real two-screen navigation flow, not
+       a scaled-down desktop layout or an off-canvas overlay drawer. */
     .app-shell {
       display: flex;
       align-items: flex-start;
@@ -56,65 +81,190 @@
       width: 260px;
       box-sizing: border-box;
       padding: 20px 14px;
-      background: var(--panel);
-      border-right: 1px solid var(--line);
+      background: var(--surface-quiet);
+      border-right: 1px solid var(--border-hairline);
       min-height: 100vh;
       position: sticky;
       top: 0;
       align-self: flex-start;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .sidebar-brand {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 2px 6px 20px;
+      color: var(--ink);
+    }
+
+    .sidebar-brand-mark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-size: 0.85rem;
+      font-weight: 700;
+      flex: none;
+    }
+
+    .sidebar-brand-text {
+      min-width: 0;
+    }
+
+    .sidebar-brand-title {
+      font-size: 0.86rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .sidebar-brand-tagline {
+      margin-top: 2px;
+      font-size: 0.76rem;
+      color: var(--ink-faint);
+      line-height: 1.3;
+    }
+
+    .sidebar-new-project-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      width: 100%;
+      text-align: center;
+      border: 0;
+      background: var(--accent);
+      color: var(--accent-ink);
+      border-radius: var(--radius-md);
+      padding: 11px 12px;
+      font-size: 0.89rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 20px;
+      transition: background 120ms ease;
+    }
+
+    .sidebar-new-project-btn:hover {
+      background: var(--accent-strong);
     }
 
     .projects-sidebar-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 10px;
+      padding: 0 6px;
+      margin-bottom: 4px;
     }
 
-    .projects-sidebar-head h2 {
+    .projects-sidebar-head h3 {
       margin: 0;
-      font-size: 1.05rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
     }
 
-    .drawer-close-btn {
-      display: none;
+    .sidebar-project-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+      text-align: left;
       border: 0;
+      border-left: 2px solid transparent;
       background: transparent;
-      font-size: 1.1rem;
-      line-height: 1;
+      color: var(--ink);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 8px 10px 8px 8px;
+      font-size: 0.86rem;
+      font-family: inherit;
       cursor: pointer;
-      color: var(--muted);
-      padding: 4px 6px;
+      transition: background 120ms ease, border-color 120ms ease;
     }
 
-    .drawer-toggle {
-      display: none;
-      position: fixed;
-      top: 12px;
-      left: 12px;
-      z-index: 60;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      color: var(--text);
-      border-radius: 10px;
-      padding: 8px 12px;
-      font-size: 0.9rem;
-      font-weight: 700;
-      box-shadow: var(--shadow);
-      cursor: pointer;
+    .sidebar-project-row:hover {
+      background: var(--surface-quiet);
     }
 
+    .sidebar-project-row.selected {
+      background: var(--accent-quiet);
+      border-left-color: var(--accent);
+    }
+
+    .sidebar-project-row-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      background: var(--surface-quiet);
+      font-size: 0.82rem;
+      flex: none;
+      margin-top: 1px;
+    }
+
+    .sidebar-project-row.selected .sidebar-project-row-icon {
+      background: var(--surface);
+    }
+
+    .sidebar-project-row-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .sidebar-project-row-name {
+      min-width: 0;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sidebar-project-row-goal {
+      min-width: 0;
+      margin-top: 1px;
+      font-size: 0.78rem;
+      color: var(--ink-faint);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .sidebar-project-empty {
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      color: var(--ink-faint);
+      list-style: none;
+    }
+
+    /* Legacy off-canvas mobile drawer chrome - retired in favor of the
+       phone list/detail flow above, but the selectors are kept (hidden) so
+       nothing errors if referenced from an older cached page load. */
+    .drawer-close-btn,
+    .drawer-toggle,
     .drawer-backdrop {
       display: none;
     }
 
+    .phone-back-btn {
+      display: none;
+    }
+
     .workspace-home {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      box-shadow: var(--shadow);
-      padding: 22px;
-      margin-bottom: 16px;
+      padding: 15vh 0 0;
+      text-align: center;
     }
 
     .workspace-home h2 {
@@ -129,97 +279,127 @@
       margin-bottom: 4px;
     }
 
-    .project-header-bar h2 {
-      margin: 0;
-    }
-
     .project-state-badge {
-      font-size: 0.76rem;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      padding: 3px 9px;
+      font-size: 0.74rem;
+      font-weight: 600;
+      padding: 3px 10px;
       border-radius: 999px;
-      border: 1px solid #cbd5e1;
-      background: #eef2f7;
-      color: #334155;
+      border: 0;
+      background: var(--accent-quiet);
+      color: var(--accent-strong);
     }
 
     .workspace-group-label {
       margin: 18px 0 6px;
-      font-size: 0.82rem;
-      letter-spacing: 0.08em;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
+      color: var(--ink-faint);
+      font-weight: 600;
     }
 
+    /* Tablet: still a persistent sidebar, just narrower content. Real
+       phone-width navigation (list <-> detail) starts at 720px - see below. */
     @media (max-width: 899px) {
+      .wrap {
+        padding: 32px 20px 56px;
+      }
+    }
+
+    /* Phone: the sidebar and the main content column become two separate
+       full-screen views instead of a scaled-down desktop layout. The
+       sidebar (brand + New Project + Projects list) *is* the phone home
+       screen - .workspace-home (the desktop empty state) is redundant here
+       and hidden. Selecting a Project, or creating one, adds
+       .phone-nav-detail to .app-shell to swap to the detail view; the
+       "< Projects" back control (in the project header) removes it. This
+       is a pure view-state class over the exact same
+       workspaceSelectedProjectId/workspaceProjectsCache data already
+       fetched for desktop - no second data path. */
+    @media (max-width: 720px) {
       .app-shell {
         display: block;
       }
 
       .projects-sidebar {
-        position: fixed;
-        top: 0;
-        /* Closed by default: -320px fully hides it regardless of the
-           actual rendered width (capped at max-width: 320px below), and
-           avoids animating a percentage-based transform. */
-        left: -320px;
-        bottom: 0;
-        width: 82vw;
-        max-width: 320px;
+        position: static;
+        width: 100%;
         min-height: 100vh;
-        z-index: 55;
-        box-shadow: var(--shadow);
-        transition: left 200ms ease;
-        overflow-y: auto;
+        border-right: 0;
+        padding: 20px 18px 32px;
       }
 
-      .projects-sidebar.open {
-        left: 0;
-      }
-
-      .drawer-close-btn {
-        display: inline-block;
-      }
-
-      .drawer-toggle {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .drawer-backdrop.open {
-        display: block;
-        position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.45);
-        z-index: 50;
+      .workspace-home {
+        display: none;
       }
 
       .app-main {
-        padding-top: 46px;
+        display: none;
+      }
+
+      .app-shell.phone-nav-detail .projects-sidebar {
+        display: none;
+      }
+
+      .app-shell.phone-nav-detail .app-main {
+        display: block;
+      }
+
+      .phone-back-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 0;
+        background: transparent;
+        color: var(--ink-quiet);
+        font-size: 0.88rem;
+        font-weight: 600;
+        padding: 8px 0;
+        margin: 0 0 4px -2px;
+        cursor: pointer;
+        width: 100%;
+      }
+
+      .project-header-bar {
+        margin-bottom: 2px;
+      }
+
+      .sidebar-project-row {
+        padding: 13px 12px;
+        font-size: 0.98rem;
+      }
+
+      .sidebar-new-project-btn {
+        padding: 14px 14px;
+        font-size: 0.95rem;
+      }
+
+      .wrap {
+        padding: 22px 18px 48px;
+      }
+
+      .workspace-composer .workspace-ask-row {
+        flex-wrap: wrap;
+      }
+
+      .workspace-continuity {
+        grid-template-columns: 1fr;
       }
     }
 
     .hero {
-      background: linear-gradient(120deg, #0f6fff 0%, #0f4fcc 100%);
-      color: #fff;
-      border-radius: 16px;
-      box-shadow: var(--shadow);
-      padding: 20px 22px;
-      margin-bottom: 16px;
+      padding: 0;
+      margin-bottom: 8px;
     }
 
     .investigation-demo {
-      background: linear-gradient(145deg, #0b1220 0%, #111b2f 100%);
-      color: #e8edf7;
-      border-radius: 16px;
-      box-shadow: var(--shadow);
-      padding: 14px 16px 16px;
+      background: var(--surface-sunken);
+      color: var(--ink);
+      border-radius: var(--radius-lg);
+      box-shadow: none;
+      padding: 16px 18px 18px;
       margin-bottom: 16px;
-      border: 1px solid rgba(148, 163, 184, 0.22);
+      border: 1px solid var(--border-hairline);
     }
 
     .investigation-demo h2 {
@@ -230,7 +410,7 @@
 
     .investigation-demo .subtle {
       margin: 6px 0 0;
-      color: rgba(232, 237, 247, 0.78);
+      color: var(--ink-quiet);
       font-size: 0.9rem;
     }
 
@@ -249,35 +429,36 @@
       gap: 8px;
       padding: 7px 11px;
       border-radius: 999px;
-      background: rgba(148, 163, 184, 0.2);
+      background: var(--surface);
       font-size: 0.85rem;
-      font-weight: 700;
+      font-weight: 600;
       white-space: nowrap;
-      border: 1px solid rgba(148, 163, 184, 0.28);
+      border: 1px solid var(--border-hairline-strong);
+      color: var(--ink-quiet);
     }
 
     .demo-state-pill.idle {
-      background: rgba(148, 163, 184, 0.2);
-      border-color: rgba(148, 163, 184, 0.35);
-      color: #d7dee8;
+      background: var(--surface);
+      border-color: var(--border-hairline-strong);
+      color: var(--ink-quiet);
     }
 
     .demo-state-pill.running {
-      background: rgba(59, 130, 246, 0.2);
-      border-color: rgba(59, 130, 246, 0.38);
-      color: #cfe2ff;
+      background: var(--accent-quiet);
+      border-color: var(--accent);
+      color: var(--accent-strong);
     }
 
     .demo-state-pill.completed {
-      background: rgba(22, 163, 74, 0.2);
-      border-color: rgba(22, 163, 74, 0.38);
-      color: #ccf7da;
+      background: var(--success-quiet);
+      border-color: var(--success-border);
+      color: var(--success);
     }
 
     .demo-state-pill.failed {
-      background: rgba(220, 38, 38, 0.18);
-      border-color: rgba(239, 68, 68, 0.4);
-      color: #ffd1d1;
+      background: var(--danger-quiet);
+      border-color: var(--danger-border);
+      color: var(--danger);
     }
 
     .demo-shell {
@@ -311,7 +492,7 @@
       font-size: 0.82rem;
       letter-spacing: 0.07em;
       text-transform: uppercase;
-      color: rgba(232, 237, 247, 0.72);
+      color: var(--ink-faint);
       font-weight: 700;
     }
 
@@ -319,10 +500,10 @@
     .demo-textarea,
     .demo-select {
       width: 100%;
-      border-radius: 10px;
-      border: 1px solid rgba(148, 163, 184, 0.28);
-      background: rgba(255, 255, 255, 0.93);
-      color: #102030;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-hairline-strong);
+      background: var(--surface);
+      color: var(--ink);
       padding: 10px 12px;
       font: inherit;
     }
@@ -333,7 +514,7 @@
     .demo-btn:focus-visible,
     .demo-remove-btn:focus-visible,
     .analyze-btn:focus-visible {
-      outline: 2px solid #7cb7ff;
+      outline: 2px solid var(--focus-ring);
       outline-offset: 2px;
     }
 
@@ -370,30 +551,30 @@
     }
 
     .demo-btn.primary {
-      color: #061120;
-      background: linear-gradient(120deg, #8fd3ff 0%, #ffffff 100%);
+      color: var(--accent-ink);
+      background: var(--accent);
     }
 
     .demo-btn.secondary {
-      color: #e8edf7;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(148, 163, 184, 0.22);
+      color: var(--ink);
+      background: transparent;
+      border: 1px solid var(--border-hairline-strong);
     }
 
     .demo-btn.is-running {
-      color: #0f223f;
-      background: linear-gradient(120deg, #d5e8ff 0%, #b7d7ff 100%);
+      color: var(--accent-ink);
+      background: var(--accent-strong);
     }
 
     .demo-status {
       font-size: 0.88rem;
       min-height: 1.2em;
-      color: rgba(232, 237, 247, 0.85);
+      color: var(--ink-quiet);
     }
 
-    .demo-status.ok { color: #a9f0c0; }
-    .demo-status.warn { color: #ffd39a; }
-    .demo-status.err { color: #ffb8b8; }
+    .demo-status.ok { color: var(--success); }
+    .demo-status.warn { color: var(--warn); }
+    .demo-status.err { color: var(--danger); }
 
     .demo-selected {
       margin-top: 4px;
@@ -405,13 +586,13 @@
       font-size: 0.8rem;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      color: rgba(232, 237, 247, 0.74);
+      color: var(--ink-faint);
       font-weight: 700;
     }
 
     .demo-selected-empty {
       font-size: 0.88rem;
-      color: rgba(232, 237, 247, 0.68);
+      color: var(--ink-faint);
       padding: 6px 8px;
       border-radius: 8px;
       border: 1px dashed rgba(148, 163, 184, 0.25);
@@ -443,7 +624,7 @@
       width: 1.55rem;
       min-width: 1.55rem;
       font-size: 0.85rem;
-      color: rgba(206, 227, 255, 0.95);
+      color: var(--accent-strong);
       font-weight: 700;
     }
 
@@ -460,14 +641,14 @@
       text-overflow: ellipsis;
       white-space: nowrap;
       font-size: 0.9rem;
-      color: #f5f9ff;
+      color: var(--ink);
       min-width: 0;
     }
 
     .demo-remove-btn {
-      border: 1px solid rgba(248, 113, 113, 0.55);
-      color: #ffd5d5;
-      background: rgba(127, 29, 29, 0.34);
+      border: 1px solid var(--danger-border);
+      color: var(--danger);
+      background: var(--danger-quiet);
       border-radius: 7px;
       padding: 4px 8px;
       font-size: 0.78rem;
@@ -511,19 +692,19 @@
       font-size: 0.95rem;
       line-height: 1.2;
       padding-top: 1px;
-      color: rgba(232, 237, 247, 0.9);
+      color: var(--ink-quiet);
     }
 
     .demo-progress-title {
       font-size: 0.86rem;
       font-weight: 700;
-      color: #f8fbff;
+      color: var(--ink);
       margin-bottom: 2px;
     }
 
     .demo-progress-message {
       white-space: pre-wrap;
-      color: rgba(231, 240, 255, 0.82);
+      color: var(--ink-quiet);
       font-size: 0.79rem;
     }
 
@@ -541,16 +722,16 @@
     }
 
     .demo-result-card {
-      border-radius: 12px;
+      border-radius: var(--radius-sm);
       padding: 10px;
-      background: rgba(255, 255, 255, 0.92);
-      color: #1f2933;
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--ink);
+      border: 1px solid var(--border-hairline);
       min-height: auto;
     }
 
     .demo-result-card .label {
-      color: var(--muted);
+      color: var(--ink-quiet);
     }
 
     .demo-result-card .value {
@@ -566,7 +747,7 @@
       font-size: 0.82rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--ink-quiet);
       font-weight: 700;
     }
 
@@ -578,21 +759,19 @@
     }
 
     .glasses-view {
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-      border: 1px solid #cdd9ee;
-      border-left: 6px solid var(--accent);
-      border-radius: 16px;
-      box-shadow: var(--shadow);
+      background: var(--surface-sunken);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-lg);
+      box-shadow: none;
       padding: 16px 18px;
       margin-bottom: 16px;
     }
 
     .latest-result {
-      background: linear-gradient(145deg, #ffffff 0%, #f5f9ff 100%);
-      border: 1px solid #d8e4f3;
-      border-left: 6px solid #0f6fff;
-      border-radius: 16px;
-      box-shadow: var(--shadow);
+      background: var(--surface-sunken);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-lg);
+      box-shadow: none;
       padding: 14px 16px 16px;
       margin-bottom: 16px;
     }
@@ -601,12 +780,12 @@
       margin: 0;
       font-size: 1.05rem;
       letter-spacing: 0.02em;
-      color: var(--text);
+      color: var(--ink);
     }
 
     .latest-result .subtle {
       margin: 6px 0 0;
-      color: var(--muted);
+      color: var(--ink-quiet);
       font-size: 0.9rem;
     }
 
@@ -632,22 +811,26 @@
     }
 
     .advanced-debug details {
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #fbfdff;
-      box-shadow: var(--shadow);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      background: var(--surface-sunken);
+      box-shadow: none;
       overflow: hidden;
     }
 
     .advanced-debug summary {
       cursor: pointer;
       list-style: none;
-      font-weight: 700;
-      font-size: 0.94rem;
+      font-weight: 600;
+      font-size: 0.88rem;
       padding: 11px 14px;
-      color: var(--text);
-      background: linear-gradient(120deg, #f8fbff 0%, #f2f7ff 100%);
-      border-bottom: 1px solid #dce7f5;
+      color: var(--ink-quiet);
+      background: transparent;
+      border-bottom: 1px solid transparent;
+    }
+
+    .advanced-debug details[open] summary {
+      border-bottom-color: var(--border-hairline);
     }
 
     .advanced-debug summary::-webkit-details-marker {
@@ -658,7 +841,7 @@
       content: "\25B8";
       display: inline-block;
       margin-right: 8px;
-      color: var(--accent);
+      color: var(--ink-faint);
       transition: transform 120ms ease;
     }
 
@@ -667,7 +850,7 @@
     }
 
     .advanced-debug summary:focus-visible {
-      outline: 2px solid #7cb7ff;
+      outline: 2px solid var(--focus-ring);
       outline-offset: -2px;
     }
 
@@ -675,15 +858,16 @@
       display: grid;
       gap: 12px;
       padding: 12px;
-      background: #f7fbff;
+      background: transparent;
     }
 
     .advanced-group h3 {
       margin: 0 0 7px;
-      font-size: 0.82rem;
-      letter-spacing: 0.08em;
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--ink-faint);
+      font-weight: 600;
     }
 
     .advanced-grid {
@@ -711,7 +895,7 @@
     .glasses-view h2 {
       margin: 0 0 10px;
       font-size: 1rem;
-      color: var(--text);
+      color: var(--ink);
       letter-spacing: 0.02em;
     }
 
@@ -728,9 +912,9 @@
     }
 
     .glasses-item {
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-sm);
       padding: 10px 12px;
     }
 
@@ -779,27 +963,28 @@
       gap: 8px;
       padding: 8px 12px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.18);
+      background: var(--surface);
+      border: 1px solid var(--border-hairline-strong);
       font-size: 0.9rem;
       font-weight: 600;
+      color: var(--ink-quiet);
     }
 
     .status-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #fff;
-      box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+      background: var(--ink-faint);
     }
 
     .status-pill.connected .status-dot {
-      background: #9ff2bf;
-      box-shadow: 0 0 0 6px rgba(159, 242, 191, 0.18);
+      background: var(--success);
+      box-shadow: 0 0 0 4px rgba(31, 157, 85, 0.16);
     }
 
     .status-pill.waiting .status-dot {
-      background: #ffd19d;
-      box-shadow: 0 0 0 6px rgba(255, 209, 157, 0.2);
+      background: var(--warn);
+      box-shadow: 0 0 0 4px rgba(201, 121, 31, 0.16);
     }
 
     .meta {
@@ -816,19 +1001,19 @@
     }
 
     .file-input {
-      color: #fff;
+      color: var(--ink);
       font-size: 0.9rem;
       max-width: 100%;
     }
 
     .analyze-btn {
       border: 0;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 8px 14px;
       font-size: 0.9rem;
-      font-weight: 700;
-      color: #0f4fcc;
-      background: #fff;
+      font-weight: 600;
+      color: var(--accent-ink);
+      background: var(--accent);
       cursor: pointer;
     }
 
@@ -844,15 +1029,15 @@
     }
 
     .upload-status.uploading {
-      color: #ffe6bf;
+      color: var(--warn);
     }
 
     .upload-status.success {
-      color: #b6ffd0;
+      color: var(--success);
     }
 
     .upload-status.error {
-      color: #ffd1d1;
+      color: var(--danger);
     }
 
     .grid {
@@ -868,8 +1053,8 @@
     }
 
     .card {
-      background: var(--panel);
-      border: 1px solid var(--line);
+      background: var(--surface);
+      border: 1px solid var(--border-hairline);
       border-radius: 12px;
       padding: 14px 14px 12px;
       box-shadow: var(--shadow);
@@ -882,7 +1067,7 @@
       font-size: 0.8rem;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--ink-quiet);
       font-weight: 700;
     }
 
@@ -895,29 +1080,26 @@
     .value.mono {
       font-family: "Consolas", "Courier New", monospace;
       font-size: 0.95rem;
-      background: #f9fbfd;
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      background: var(--surface-sunken);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-sm);
       padding: 10px;
     }
 
     .muted {
-      color: var(--muted);
+      color: var(--ink-quiet);
     }
 
     .workspace-shell {
-      background: linear-gradient(145deg, #ffffff 0%, #f8fbff 100%);
-      border: 1px solid #d8e4f3;
-      border-left: 6px solid #1f9d55;
-      border-radius: 16px;
-      box-shadow: var(--shadow);
-      padding: 14px 16px 16px;
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
       margin-bottom: 16px;
-      /* Selected-Project layout is Now/Next/Capture-Ask/Suggested-Next-Steps/
-         History in that visual order (Now=1 ... Investigations=6), driven by
-         the inline `order` on each direct child below - not by physically
-         relocating each block's markup, which keeps this restructuring a
-         pure layout/order change over the exact same DOM/JS/state. */
+      /* Composer -> Continuity -> Recent -> Project Details, in that visual
+         order (order: 0..3 on each direct child below) - not by physically
+         relocating each block's markup, which keeps this a pure
+         layout/order change over the exact same DOM/JS/state. */
       display: flex;
       flex-direction: column;
     }
@@ -926,36 +1108,7 @@
       margin: 0;
       font-size: 1.05rem;
       letter-spacing: 0.02em;
-      color: var(--text);
-    }
-
-    .workspace-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 12px;
-      margin-top: 10px;
-    }
-
-    @media (min-width: 980px) {
-      .workspace-grid {
-        grid-template-columns: 0.95fr 1.35fr;
-      }
-    }
-
-    .workspace-pane {
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 11px;
-    }
-
-    .workspace-pane h3 {
-      margin: 0 0 8px;
-      font-size: 0.82rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-weight: 700;
+      color: var(--ink);
     }
 
     .workspace-list {
@@ -963,89 +1116,36 @@
       margin: 0;
       padding: 0;
       display: grid;
-      gap: 8px;
+      gap: 2px;
+      min-width: 0;
     }
 
-    .workspace-list-item {
-      border: 1px solid #dbe6f5;
-      border-radius: 10px;
-      padding: 9px;
-      background: #fbfdff;
-      display: grid;
-      gap: 7px;
-    }
-
-    .workspace-list-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      font-weight: 700;
-      color: #102030;
-    }
-
-    .workspace-status-tag {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.07em;
-      padding: 3px 8px;
-      border-radius: 999px;
-      border: 1px solid #cbd5e1;
-      background: #eef2f7;
-      color: #334155;
-      white-space: nowrap;
+    .workspace-list > li {
+      min-width: 0;
     }
 
     .workspace-list-meta {
       font-size: 0.84rem;
-      color: #425466;
+      color: var(--ink-quiet);
       line-height: 1.42;
       white-space: pre-wrap;
-    }
-
-    .workspace-open-btn {
-      border: 1px solid #0f6fff;
-      border-radius: 8px;
-      background: #f4f8ff;
-      color: #0f4fcc;
-      font-weight: 700;
-      font-size: 0.84rem;
-      padding: 6px 10px;
-      cursor: pointer;
-      width: fit-content;
-    }
-
-    .workspace-open-btn[aria-current="true"] {
-      background: #0f6fff;
-      color: #fff;
-    }
-
-    .workspace-open-btn:disabled {
-      opacity: 0.75;
-      cursor: not-allowed;
     }
 
     .workspace-status-note {
       margin-top: 7px;
       font-size: 0.85rem;
-      color: #425466;
+      color: var(--ink-quiet);
       min-height: 1.2em;
-    }
-
-    .workspace-project-explainer {
-      margin: 4px 0 10px;
-      font-size: 0.88rem;
-      color: var(--muted);
     }
 
     .section-lead-note {
       margin: 0 0 12px;
       font-size: 0.92rem;
-      color: var(--muted);
+      color: var(--ink-quiet);
     }
 
     .workspace-status-note.error {
-      color: #b42318;
+      color: var(--danger);
     }
 
     .workspace-create-project {
@@ -1059,10 +1159,10 @@
     }
 
     .workspace-form-label {
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: #425466;
-      margin: 6px 0 2px;
+      font-size: 0.79rem;
+      font-weight: 600;
+      color: var(--ink-faint);
+      margin: 10px 0 3px;
     }
 
     .workspace-form-label:first-child {
@@ -1070,56 +1170,81 @@
     }
 
     .workspace-block {
-      margin-top: 11px;
-      border-top: 1px solid #e1e8f5;
-      padding-top: 10px;
+      margin-top: 16px;
+      border-top: 1px solid var(--border-hairline);
+      padding-top: 14px;
     }
 
     .workspace-block h4 {
-      margin: 0 0 6px;
-      font-size: 0.83rem;
-      letter-spacing: 0.08em;
+      margin: 0 0 7px;
+      font-size: 0.78rem;
+      letter-spacing: 0.03em;
       text-transform: uppercase;
-      color: var(--muted);
+      color: var(--ink-faint);
+      font-weight: 600;
     }
 
     .workspace-value {
       font-size: 0.95rem;
-      color: #162534;
+      color: var(--ink);
       white-space: pre-wrap;
-      line-height: 1.42;
+      line-height: 1.48;
     }
 
+    /* Recent is a chronological timeline, not a stack of bordered cards:
+       each entry is a row separated by a hairline divider, not its own
+       boxed surface. workspace-investigation-item (used inside the
+       secondary Project Details area, not Recent) keeps a light card
+       treatment since it sits in a denser, already-secondary context. */
     .workspace-history-item,
-    .workspace-investigation-item,
     .workspace-proposal-item {
-      border: 1px solid #deebfb;
-      border-radius: 10px;
-      padding: 8px;
-      background: #fcfeff;
+      border: 0;
+      border-bottom: 1px solid var(--border-hairline);
+      border-radius: 0;
+      padding: 12px 2px 14px;
+      background: transparent;
+      display: grid;
+      gap: 5px;
+    }
+
+    .workspace-list > .workspace-history-item:last-child,
+    .workspace-list > .workspace-proposal-item:last-child {
+      border-bottom: 0;
+    }
+
+    .workspace-investigation-item {
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-sm);
+      padding: 9px 10px;
+      background: var(--surface-quiet);
       display: grid;
       gap: 5px;
     }
 
     .workspace-proposal-item[data-status="pending"] {
-      border-color: #f3c969;
-      background: #fffaf0;
+      border-left: 2px solid var(--accent);
+      padding-left: 12px;
     }
 
     .workspace-propose-btn {
-      border: 1px solid #0f6fff;
-      border-radius: 8px;
-      background: #f4f8ff;
-      color: #0f4fcc;
-      font-weight: 700;
+      border: 1px solid var(--border-hairline-strong);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--ink-quiet);
+      font-weight: 600;
       font-size: 0.78rem;
-      padding: 4px 8px;
+      padding: 4px 9px;
       cursor: pointer;
       width: fit-content;
     }
 
+    .workspace-propose-btn:hover {
+      color: var(--ink);
+      border-color: var(--border-hairline-strong);
+    }
+
     .workspace-propose-btn:disabled {
-      opacity: 0.7;
+      opacity: 0.6;
       cursor: not-allowed;
     }
 
@@ -1132,49 +1257,75 @@
 
     .workspace-chip {
       font-size: 0.72rem;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
+      letter-spacing: 0.03em;
       border-radius: 999px;
-      padding: 2px 7px;
-      border: 1px solid #c7d2e2;
-      background: #f2f5f9;
-      color: #334155;
+      padding: 2px 8px;
+      border: 1px solid var(--border-hairline-strong);
+      background: transparent;
+      color: var(--ink-quiet);
     }
 
     .workspace-item-time {
       font-size: 0.76rem;
-      color: #52606d;
+      color: var(--ink-faint);
       margin-left: auto;
     }
 
     .workspace-item-summary {
-      font-size: 0.91rem;
-      color: #0f1f2e;
+      font-size: 0.92rem;
+      color: var(--ink);
     }
 
     .workspace-captured-label {
-      font-size: 0.76rem;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: #0f4fcc;
+      font-size: 0.74rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      color: var(--ink-faint);
+    }
+
+    /* Small leading icon per Recent-timeline entry type, matching the
+       reference's icon-led activity rows - a pure CSS ::before so no
+       render-function/DOM changes were needed to add it. */
+    .workspace-history-item .workspace-captured-label::before {
+      content: "📝 ";
+    }
+
+    .workspace-proposal-item[data-status="pending"] .workspace-captured-label::before {
+      content: "💡 ";
+    }
+
+    .workspace-proposal-item[data-status="applied"] .workspace-captured-label::before {
+      content: "✅ ";
+    }
+
+    .workspace-proposal-item[data-status="rejected"] .workspace-captured-label::before {
+      content: "— ";
+    }
+
+    .workspace-proposal-item[data-status="pending"] .workspace-captured-label {
+      color: var(--accent-strong);
     }
 
     .workspace-provenance-line {
       font-size: 0.8rem;
-      color: #52606d;
+      color: var(--ink-faint);
     }
 
     .workspace-details-disclosure {
       margin-top: 4px;
       font-size: 0.8rem;
-      color: #52606d;
+      color: var(--ink-faint);
     }
 
     .workspace-details-disclosure summary {
       cursor: pointer;
-      color: #0f4fcc;
+      color: var(--ink-quiet);
       font-weight: 600;
+      list-style: none;
+    }
+
+    .workspace-details-disclosure summary::-webkit-details-marker {
+      display: none;
     }
 
     .workspace-details-disclosure div {
@@ -1183,62 +1334,76 @@
 
     .workspace-confirm-note {
       font-size: 0.84rem;
-      color: #52606d;
+      color: var(--ink-faint);
       font-style: italic;
     }
 
     .workspace-ask-row {
-      display: grid;
-      grid-template-columns: 1fr;
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
     }
 
-    @media (min-width: 760px) {
-      .workspace-ask-row {
-        grid-template-columns: 1fr auto;
-      }
+    .workspace-ask-input {
+      flex: 1;
+      min-width: 0;
+      width: 100%;
+      border: 1px solid var(--border-hairline-strong);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font: inherit;
+      background: var(--surface);
+      color: var(--ink);
     }
 
-    .workspace-ask-input {
-      width: 100%;
-      border: 1px solid #c8d4e7;
-      border-radius: 9px;
-      padding: 10px;
-      font: inherit;
-      background: #fff;
-      color: #0f1f2e;
+    .workspace-ask-input::placeholder {
+      color: var(--ink-faint);
+    }
+
+    .workspace-ask-input:focus-visible {
+      outline: 2px solid var(--focus-ring);
+      outline-offset: 1px;
     }
 
     .workspace-ask-btn {
-      border: 1px solid #0f6fff;
-      border-radius: 9px;
-      padding: 9px 12px;
-      font-size: 0.89rem;
-      font-weight: 700;
-      background: #0f6fff;
-      color: #fff;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      padding: 9px 14px;
+      font-size: 0.87rem;
+      font-weight: 600;
+      background: var(--accent);
+      color: var(--accent-ink);
       cursor: pointer;
-      min-width: 140px;
+    }
+
+    .workspace-ask-btn:hover {
+      background: var(--accent-strong);
     }
 
     .workspace-ask-btn:disabled {
-      opacity: 0.7;
+      opacity: 0.55;
       cursor: not-allowed;
     }
 
     .workspace-ask-btn.secondary {
-      background: #ffffff;
-      color: #0f4fcc;
+      background: transparent;
+      color: var(--ink-quiet);
+      border-color: var(--border-hairline-strong);
+    }
+
+    .workspace-ask-btn.secondary:hover {
+      color: var(--ink);
+      background: var(--surface-raised);
     }
 
     .workspace-ask-disclaimer {
       margin-top: 8px;
-      font-size: 0.84rem;
-      color: #52606d;
-      background: #f5f9ff;
-      border: 1px dashed #bfd2ef;
-      border-radius: 8px;
-      padding: 7px 8px;
+      font-size: 0.82rem;
+      color: var(--ink-faint);
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
     }
 
     .workspace-why-list {
@@ -1247,21 +1412,21 @@
       display: grid;
       gap: 3px;
       font-size: 0.88rem;
-      color: #213547;
+      color: var(--ink-quiet);
     }
 
     .workspace-debug details {
-      border: 1px solid #d5e0f0;
-      border-radius: 8px;
-      background: #f8fbff;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-sm);
+      background: var(--surface-quiet);
       margin-top: 8px;
     }
 
     .workspace-debug summary {
       cursor: pointer;
-      font-size: 0.82rem;
-      color: #334155;
-      font-weight: 700;
+      font-size: 0.8rem;
+      color: var(--ink-faint);
+      font-weight: 600;
       padding: 7px 9px;
       list-style: none;
     }
@@ -1272,23 +1437,315 @@
       font-size: 0.8rem;
       overflow: auto;
       white-space: pre-wrap;
-      color: #0f1f2e;
+      color: var(--ink-quiet);
+    }
+
+    /* ---------------------------------------------------------------
+       Composer-centered Project workspace: sidebar navigation, a calm
+       Home state, and a Project view built around Composer -> Continuity
+       -> Recent -> Project Details (progressive disclosure).
+       --------------------------------------------------------------- */
+
+    .workspace-home .hero {
+      padding: 0 0 32px;
+    }
+
+    .workspace-home .hero h1 {
+      font-size: 1.7rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .workspace-home .hero .sub {
+      color: var(--ink-quiet);
+      opacity: 1;
+    }
+
+    .workspace-home h2 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+
+    .workspace-home .subtle {
+      color: var(--ink-quiet);
+      margin-bottom: 22px;
+    }
+
+    .workspace-home .demo-actions {
+      justify-content: center;
+    }
+
+    .workspace-home-recent {
+      margin-top: 48px;
+      text-align: left;
+    }
+
+    .workspace-home-recent h3 {
+      margin: 0 0 8px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+
+    .project-header-bar h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+
+    .workspace-project-goal {
+      margin: 4px 0 0;
+      font-size: 0.94rem;
+      color: var(--ink-quiet);
+    }
+
+    .workspace-composer {
+      margin: 22px 0 26px;
+    }
+
+    .workspace-composer .workspace-ask-row {
+      background: var(--surface-raised);
+      border: 1px solid var(--border-hairline-strong);
+      border-radius: var(--radius-lg);
+      padding: 14px 14px 14px 18px;
+      align-items: center;
+      transition: border-color 120ms ease;
+    }
+
+    .workspace-composer .workspace-ask-row:focus-within {
+      border-color: var(--accent);
+    }
+
+    .workspace-composer .workspace-ask-input {
+      border: 0;
+      background: transparent;
+      font-size: 1.02rem;
+      padding: 6px 4px;
+    }
+
+    .workspace-composer .workspace-ask-input:focus-visible {
+      outline: none;
+    }
+
+    .composer-label {
+      font-size: 0.76rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      margin-bottom: 3px;
+    }
+
+    .composer-subtitle {
+      margin: 0 0 12px;
+      font-size: 0.86rem;
+      color: var(--ink-quiet);
+    }
+
+    .composer-icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      flex: none;
+      border-radius: 999px;
+      border: 1px solid var(--border-hairline-strong);
+      background: var(--surface);
+      color: var(--ink-quiet);
+      font-size: 1rem;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .composer-icon-btn:hover {
+      color: var(--ink);
+      background: var(--surface-quiet);
+    }
+
+    .composer-icon-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .composer-icon-btn:disabled:hover {
+      color: var(--ink-quiet);
+      background: var(--surface);
+    }
+
+    .composer-icon-btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+    }
+
+    .composer-icon-btn.primary:hover {
+      background: var(--accent-strong);
+      color: var(--accent-ink);
+    }
+
+    .workspace-composer-actions {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .composer-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--border-hairline-strong);
+      background: var(--surface);
+      color: var(--ink-quiet);
+      border-radius: 999px;
+      padding: 7px 13px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .composer-chip:hover {
+      color: var(--ink);
+      background: var(--surface-quiet);
+    }
+
+    .composer-chip:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .workspace-continuity {
+      display: grid;
+      gap: 16px;
+      margin-bottom: 22px;
+    }
+
+    @media (min-width: 640px) {
+      .workspace-continuity {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .workspace-continuity .workspace-block {
+      margin-top: 0;
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      background: var(--surface);
+    }
+
+    .workspace-continuity .workspace-block h4 {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      text-transform: none;
+      letter-spacing: 0.01em;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--ink-faint);
+      margin-bottom: 8px;
+    }
+
+    .workspace-continuity .workspace-block h4::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--ink-faint);
+      flex: none;
+    }
+
+    .workspace-continuity .workspace-block:first-child h4::before {
+      background: var(--success);
+    }
+
+    .workspace-continuity .workspace-block:last-child h4::before {
+      background: var(--warn);
+    }
+
+    .workspace-continuity .workspace-value {
+      color: var(--ink);
+    }
+
+    .workspace-recent {
+      margin-top: 6px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .workspace-recent > h3 {
+      margin: 0 0 10px;
+      font-size: 0.98rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .workspace-recent-subhead {
+      margin: 20px 0 4px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+    }
+
+    .project-details {
+      margin-top: 26px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .project-details > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--ink-quiet);
+      list-style: none;
+    }
+
+    .project-details > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .project-details > summary::before {
+      content: "▸ ";
+    }
+
+    .project-details[open] > summary::before {
+      content: "▾ ";
+    }
+
+    .project-details > summary:hover {
+      color: var(--ink);
+    }
+
+    .project-details-body {
+      margin-top: 14px;
     }
   </style>
 </head>
 <body>
   <div class="app-shell">
-    <button id="projectsDrawerToggle" class="drawer-toggle" type="button" aria-label="Open Projects" aria-expanded="false">☰ Projects</button>
-    <div id="projectsDrawerBackdrop" class="drawer-backdrop"></div>
-
     <aside id="projectsSidebar" class="projects-sidebar">
-      <div class="projects-sidebar-head">
-        <h3>My Projects</h3>
-        <button id="projectsDrawerCloseBtn" class="drawer-close-btn" type="button" aria-label="Close Projects">✕</button>
+      <div class="sidebar-brand">
+        <span class="sidebar-brand-mark">✦</span>
+        <span class="sidebar-brand-text">
+          <span class="sidebar-brand-title">Persistent AI<br>Project Assistant</span>
+          <span class="sidebar-brand-tagline">Your projects, always in context.</span>
+        </span>
       </div>
-      <p class="workspace-project-explainer">A Project keeps the current state, next action, evidence, and history for one ongoing piece of work.</p>
       <div class="workspace-create-project">
-        <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
+        <button id="workspaceCreateProjectBtn" class="sidebar-new-project-btn" type="button" aria-expanded="false">+ New Project</button>
         <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
           <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
           <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
@@ -1309,6 +1766,9 @@
           <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
         </form>
       </div>
+      <div class="projects-sidebar-head">
+        <h3>Projects</h3>
+      </div>
       <ul id="workspaceProjectsList" class="workspace-list"></ul>
       <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
     </aside>
@@ -1321,32 +1781,62 @@
         </section>
 
         <h2>What are you working on?</h2>
-        <p class="subtle">Select a Project from the sidebar, or create a new one to get started.</p>
+        <p class="subtle">Create a Project to get started.</p>
         <div class="demo-actions">
           <button id="homeCreateProjectBtn" class="workspace-ask-btn" type="button">+ New Project</button>
-          <button id="homeOpenProjectsBtn" class="workspace-ask-btn secondary drawer-toggle" style="position: static; box-shadow: none;" type="button">Open Projects</button>
         </div>
       </section>
 
       <section class="workspace-shell" id="projectWorkspaceSection" hidden>
         <div class="project-header-bar">
+          <button id="phoneBackToProjectsBtn" class="phone-back-btn" type="button" aria-label="Back to Projects">‹ Projects</button>
           <h2 id="workspaceProjectHeaderName">Project</h2>
           <span id="workspaceProjectHeaderState" class="project-state-badge">Viewing</span>
         </div>
+        <p id="workspaceProjectHeaderGoal" class="workspace-project-goal"></p>
         <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
 
-          <div class="workspace-block" style="order: 1;">
-            <h4>Now</h4>
-            <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
+          <div class="workspace-composer" style="order: 0;">
+            <div class="composer-label">Capture / Ask</div>
+            <p class="composer-subtitle">Add context, capture evidence, or ask for help.</p>
+            <div class="workspace-ask-row">
+              <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="What are you working on?" maxlength="1000">
+              <button id="workspaceComposerMicBtn" class="composer-icon-btn" type="button" aria-label="Voice input - not yet available" title="Voice input - coming soon" disabled>🎤</button>
+              <button id="workspaceAskAiBtn" class="composer-icon-btn primary" type="button" aria-label="Ask AI" title="Ask AI">➤</button>
+            </div>
+            <div class="workspace-composer-actions">
+              <button id="workspaceOpenInvestigationBtn" class="composer-chip" type="button">📷 Start Investigation</button>
+              <button id="workspaceAskBtn" class="composer-chip" type="button">💬 Get Context</button>
+              <button id="workspaceAddNoteBtn" class="composer-chip" type="button">📝 Add Note</button>
+            </div>
+            <div class="workspace-ask-disclaimer">Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context. Add Note captures the text above as a reported update.</div>
+            <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
+            <div id="workspaceAskAiStatus" class="workspace-status-note">Ask AI to receive a grounded answer (non-canonical).</div>
+            <div id="workspaceAddNoteStatus" class="workspace-status-note"></div>
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>AI Answer (Grounded)</h4>
+              <div id="workspaceAskAiAnswer" class="workspace-value muted">No AI answer yet.</div>
+              <div id="workspaceAskAiMeta" class="workspace-value muted" style="margin-top: 6px;">No AI grounding metadata yet.</div>
+              <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
+            </div>
           </div>
 
-          <div class="workspace-block" style="order: 2;">
-            <h4>Next</h4>
-            <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
+          <div class="workspace-continuity" style="order: 1;">
+            <div class="workspace-block">
+              <h4>Where you left off</h4>
+              <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
+            </div>
+
+            <div class="workspace-block">
+              <h4>Next</h4>
+              <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
+            </div>
           </div>
 
-          <div class="workspace-block" style="order: 8;">
-            <h4>Suggested Next Steps</h4>
+          <section class="workspace-recent" style="order: 2;">
+            <h3>Recent</h3>
+
+            <h4 class="workspace-recent-subhead">Suggested Next Steps</h4>
             <div class="workspace-ask-disclaimer">Review a suggested next step before adding it to this project.</div>
 
             <form id="workspaceProposalForm" class="workspace-create-project-form" style="display: none; margin-top: 8px;">
@@ -1366,38 +1856,22 @@
 
             <div id="workspaceCheckpointProposals" class="workspace-value muted" style="margin-top: 8px;">No project selected.</div>
             <div id="workspaceCheckpointProposalsStatus" class="workspace-status-note" aria-live="polite"></div>
-          </div>
 
-          <div class="workspace-block" style="order: 9;">
-            <h4>History</h4>
+            <h4 class="workspace-recent-subhead">History</h4>
             <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
-          </div>
+          </section>
 
-          <div class="workspace-block" style="order: 10;">
+          <details class="project-details" id="projectDetailsDisclosure" style="order: 3;">
+            <summary>Project Details</summary>
+            <div class="project-details-body">
+
+          <div class="workspace-block">
             <h4>Investigations / Evidence</h4>
             <div id="workspaceInvestigations" class="workspace-value muted">No project selected.</div>
           </div>
 
-          <div class="workspace-block" id="workspaceAskThisProjectBlock" style="order: 7;">
+          <div class="workspace-block" id="workspaceAskThisProjectBlock">
             <h4>Ask This Project</h4>
-            <div class="workspace-ask-row">
-              <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
-              <div class="demo-actions" style="margin: 0;">
-                <button id="workspaceAskBtn" class="workspace-ask-btn secondary" type="button">Get Context</button>
-                <button id="workspaceAskAiBtn" class="workspace-ask-btn" type="button">Ask AI</button>
-              </div>
-            </div>
-            <div class="workspace-ask-disclaimer">Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.</div>
-            <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
-            <div id="workspaceAskAiStatus" class="workspace-status-note">Ask AI to receive a grounded answer (non-canonical).</div>
-
-            <div class="workspace-block" style="margin-top: 8px;">
-              <h4>AI Answer (Grounded)</h4>
-              <div id="workspaceAskAiAnswer" class="workspace-value muted">No AI answer yet.</div>
-              <div id="workspaceAskAiMeta" class="workspace-value muted" style="margin-top: 6px;">No AI grounding metadata yet.</div>
-              <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
-            </div>
-
             <div class="workspace-block" style="margin-top: 8px;">
               <h4>Selected Project Context</h4>
               <div id="workspaceAskContext" class="workspace-value muted">No context selected yet.</div>
@@ -1463,7 +1937,7 @@
         </div>
 
         <div class="demo-pane">
-          <div class="label" style="color: rgba(232, 237, 247, 0.78);">Progress Timeline</div>
+          <div class="label" style="color: var(--ink-quiet);">Progress Timeline</div>
           <div id="demoProgress" class="demo-progress">
             <div class="demo-progress-item pending">
               <div class="demo-progress-icon">○</div>
@@ -1488,13 +1962,13 @@
         </article>
       </div>
 
-      <div class="demo-pane" style="margin-top: 10px; background: #fff; border-color: #d8e4f3; color: var(--text);">
+      <div class="demo-pane" style="margin-top: 10px; background: var(--surface); border-color: var(--border-hairline-strong); color: var(--ink);">
         <div class="demo-actions" style="justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <div class="label" style="margin-bottom: 0;">Copilot Prompt</div>
           <button id="copyCopilotPromptBtn" class="demo-btn primary" type="button" aria-label="Copy Copilot Prompt" disabled>Copy Copilot Prompt</button>
         </div>
         <div id="copilotPromptEmpty" class="value muted">Run an investigation to generate a Copilot prompt.</div>
-        <textarea id="copilotPromptText" class="demo-textarea" readonly style="display: none; min-height: 220px; font-family: Consolas, 'Courier New', monospace; background: #f8fbff;"></textarea>
+        <textarea id="copilotPromptText" class="demo-textarea" readonly style="display: none; min-height: 220px; font-family: Consolas, 'Courier New', monospace; background: var(--surface-sunken);"></textarea>
         <div id="copilotPromptCopyStatus" class="meta" aria-live="polite" style="margin-top: 6px;"></div>
       </div>
 
@@ -1521,13 +1995,16 @@
       <article id="gitRecommendationCard" class="demo-result-card" data-empty="true" style="margin-top: 10px;">
         <h3 class="demo-section-heading">Git Recommendation</h3>
         <div id="gitRecommendationReason" class="value"></div>
-        <textarea id="gitCommandsText" class="demo-textarea" readonly style="min-height: 120px; margin-top: 8px; font-family: Consolas, 'Courier New', monospace; background: #f8fbff;"></textarea>
+        <textarea id="gitCommandsText" class="demo-textarea" readonly style="min-height: 120px; margin-top: 8px; font-family: Consolas, 'Courier New', monospace; background: var(--surface-sunken);"></textarea>
         <div class="demo-actions" style="margin-top: 8px;">
           <button id="copyGitCommandsBtn" class="demo-btn secondary" type="button" aria-label="Copy Git Commands">Copy Git Commands</button>
           <div id="gitCopyStatus" class="meta" aria-live="polite"></div>
         </div>
       </article>
     </section>
+
+            </div>
+          </details>
       </section>
 
     <section class="glasses-view">
@@ -1820,16 +2297,16 @@
     const demoFollowUp = document.getElementById("demoFollowUp");
     const demoError = document.getElementById("demoError");
 
-    const projectsSidebar = document.getElementById("projectsSidebar");
-    const projectsDrawerToggle = document.getElementById("projectsDrawerToggle");
-    const projectsDrawerCloseBtn = document.getElementById("projectsDrawerCloseBtn");
-    const projectsDrawerBackdrop = document.getElementById("projectsDrawerBackdrop");
+    const appShellEl = document.querySelector(".app-shell");
     const workspaceHomeState = document.getElementById("workspaceHomeState");
     const projectWorkspaceSectionEl = document.getElementById("projectWorkspaceSection");
     const homeCreateProjectBtn = document.getElementById("homeCreateProjectBtn");
-    const homeOpenProjectsBtn = document.getElementById("homeOpenProjectsBtn");
+    const phoneBackToProjectsBtn = document.getElementById("phoneBackToProjectsBtn");
     const workspaceProjectHeaderName = document.getElementById("workspaceProjectHeaderName");
     const workspaceProjectHeaderState = document.getElementById("workspaceProjectHeaderState");
+    const workspaceProjectHeaderGoal = document.getElementById("workspaceProjectHeaderGoal");
+    const workspaceOpenInvestigationBtn = document.getElementById("workspaceOpenInvestigationBtn");
+    const projectDetailsDisclosure = document.getElementById("projectDetailsDisclosure");
     const workspaceProjectsList = document.getElementById("workspaceProjectsList");
     const workspaceProjectsStatus = document.getElementById("workspaceProjectsStatus");
     const workspaceCreateProjectBtn = document.getElementById("workspaceCreateProjectBtn");
@@ -1866,6 +2343,8 @@
     const workspaceAskContext = document.getElementById("workspaceAskContext");
     const workspaceAskWhy = document.getElementById("workspaceAskWhy");
     const workspaceAskDebug = document.getElementById("workspaceAskDebug");
+    const workspaceAddNoteBtn = document.getElementById("workspaceAddNoteBtn");
+    const workspaceAddNoteStatus = document.getElementById("workspaceAddNoteStatus");
 
     let activeDemoId = null;
     let demoPollTimer = null;
@@ -1885,6 +2364,7 @@
     let workspaceAskViewsProjectId = "";
     let workspaceAskInFlight = false;
     let workspaceAskAiInFlight = false;
+    let workspaceAddNoteInFlight = false;
     let workspaceCreateProjectInFlight = false;
     // Canonical Project detail last loaded for the open Project. Used as the
     // source of both "current value" comparisons and expected_project_revision
@@ -2422,62 +2902,59 @@
       el.classList.toggle("error", Boolean(isError));
     }
 
-    function workspaceProjectSummaryLine(project) {
-      const now = normalize(project.current_objective) || "No current state set.";
-      const next = normalize(project.next_action) || "No next action set.";
-      return `Now: ${compactText(now, 130)}\nNext: ${compactText(next, 130)}`;
-    }
-
     function renderWorkspaceProjectsList(projects) {
       workspaceProjectsList.innerHTML = "";
       if (!Array.isArray(projects) || projects.length === 0) {
-        workspaceProjectsList.innerHTML = '<li class="workspace-list-item"><div class="workspace-list-meta">No projects found.</div></li>';
-        setWorkspaceStatus(workspaceProjectsStatus, "Create a project to use Project Workspace.");
+        workspaceProjectsList.innerHTML = '<li class="sidebar-project-empty">No projects yet.</li>';
+        setWorkspaceStatus(workspaceProjectsStatus, "");
         return;
       }
 
       for (const project of projects) {
+        const isSelected = workspaceSelectedProjectId === project.project_id;
         const item = document.createElement("li");
-        item.className = "workspace-list-item";
 
-        const title = document.createElement("div");
-        title.className = "workspace-list-title";
+        // A Project row is name + a one-line goal preview, not a full
+        // Now/Next dashboard card, and never a separate "Open" button - the
+        // whole row is the click target. The selected Project gets a subtle
+        // left accent bar + tint rather than a bold/underlined treatment.
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "sidebar-project-row" + (isSelected ? " selected" : "");
+        button.setAttribute("aria-current", isSelected ? "true" : "false");
 
-        const name = document.createElement("span");
-        name.textContent = normalize(project.name) || "Unnamed project";
-        title.appendChild(name);
+        const projectName = normalize(project.name) || "Unnamed project";
+        const icon = document.createElement("span");
+        icon.className = "sidebar-project-row-icon";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = projectName.charAt(0).toUpperCase() || "?";
 
-        const status = document.createElement("span");
-        status.className = "workspace-status-tag";
-        status.textContent = normalize(project.status) || "unknown";
-        title.appendChild(status);
+        const text = document.createElement("span");
+        text.className = "sidebar-project-row-text";
+        const nameEl = document.createElement("span");
+        nameEl.className = "sidebar-project-row-name";
+        nameEl.textContent = projectName;
+        text.appendChild(nameEl);
+        const goalText = compactText(project.goal, 60);
+        if (goalText) {
+          const goalEl = document.createElement("span");
+          goalEl.className = "sidebar-project-row-goal";
+          goalEl.textContent = goalText;
+          text.appendChild(goalEl);
+        }
 
-        const meta = document.createElement("div");
-        meta.className = "workspace-list-meta";
-        meta.textContent = workspaceProjectSummaryLine(project);
-
-        const updated = document.createElement("div");
-        updated.className = "workspace-list-meta";
-        updated.textContent = `Updated: ${formatUtcTimestamp(project.updated_at_utc)}`;
-
-        const openBtn = document.createElement("button");
-        openBtn.type = "button";
-        openBtn.className = "workspace-open-btn";
-        openBtn.textContent = (workspaceSelectedProjectId === project.project_id) ? "Open (Selected)" : "Open";
-        openBtn.setAttribute("aria-current", workspaceSelectedProjectId === project.project_id ? "true" : "false");
-        openBtn.addEventListener("click", () => {
+        button.appendChild(icon);
+        button.appendChild(text);
+        button.addEventListener("click", () => {
           openWorkspaceProject(project.project_id, { forceReset: true });
-          closeProjectsDrawer();
+          enterPhoneProjectDetail();
         });
 
-        item.appendChild(title);
-        item.appendChild(meta);
-        item.appendChild(updated);
-        item.appendChild(openBtn);
+        item.appendChild(button);
         workspaceProjectsList.appendChild(item);
       }
 
-      setWorkspaceStatus(workspaceProjectsStatus, `${projects.length} project(s) loaded.`);
+      setWorkspaceStatus(workspaceProjectsStatus, "");
     }
 
     function renderDemoProjectOptions() {
@@ -3197,6 +3674,7 @@
         // clear the previously selected project's Ask/context views correctly.
         workspaceSelectedProjectId = created.project_id;
         await loadWorkspaceProjects();
+        enterPhoneProjectDetail();
       } catch (err) {
         setWorkspaceStatus(workspaceCreateProjectStatus, err?.message || "Unable to create project.", true);
       } finally {
@@ -3218,16 +3696,18 @@
       projectWorkspaceSectionEl.hidden = !hasProjects;
     }
 
-    function openProjectsDrawer() {
-      projectsSidebar.classList.add("open");
-      projectsDrawerBackdrop.classList.add("open");
-      projectsDrawerToggle.setAttribute("aria-expanded", "true");
+    // Phone navigation: at phone width the sidebar (Projects list) and the
+    // main content column (Home or the selected Project) are two separate
+    // full-screen views - see the phone-nav media query in <style> - rather
+    // than an off-canvas overlay drawer over a scaled-down desktop layout.
+    // This only toggles a class; it is a no-op at desktop width and does not
+    // touch workspaceSelectedProjectId or any fetched data.
+    function enterPhoneProjectDetail() {
+      appShellEl.classList.add("phone-nav-detail");
     }
 
-    function closeProjectsDrawer() {
-      projectsSidebar.classList.remove("open");
-      projectsDrawerBackdrop.classList.remove("open");
-      projectsDrawerToggle.setAttribute("aria-expanded", "false");
+    function showPhoneProjectList() {
+      appShellEl.classList.remove("phone-nav-detail");
     }
 
     async function loadWorkspaceProjects() {
@@ -3310,6 +3790,7 @@
         // when capture ownership is actually wired up.
         workspaceProjectHeaderName.textContent = selectedName;
         workspaceProjectHeaderState.textContent = "Viewing";
+        workspaceProjectHeaderGoal.textContent = normalize(projectDetail?.goal);
         setWorkspaceStatus(workspaceInspectorStatus, `Showing ${selectedName}.`);
       } catch (err) {
         if (loadToken !== workspaceLoadingToken) return;
@@ -3392,6 +3873,55 @@
         workspaceAskAiInFlight = false;
         workspaceAskAiBtn.disabled = false;
         workspaceAskBtn.disabled = false;
+      }
+    }
+
+    // Reuses the existing generic POST /projects/{id}/activities endpoint -
+    // the same Project Activity creation path the D2 investigation
+    // projection already uses internally - with source_type "user" and
+    // confirmation_status "reported", exactly matching the "Reported by
+    // user" trust-model language already established for user-authored
+    // Activities elsewhere in this file (see humanSourceLabel). No new
+    // backend capability, no fabricated note-taking feature.
+    async function submitComposerNote() {
+      const noteText = normalize(workspaceAskInput.value);
+      if (!workspaceSelectedProjectId) {
+        setWorkspaceStatus(workspaceAddNoteStatus, "Select a project first.", true);
+        return;
+      }
+      if (!noteText) {
+        setWorkspaceStatus(workspaceAddNoteStatus, "Type what you want to note first.", true);
+        return;
+      }
+      if (workspaceAddNoteInFlight) {
+        return;
+      }
+
+      workspaceAddNoteInFlight = true;
+      workspaceAddNoteBtn.disabled = true;
+      setWorkspaceStatus(workspaceAddNoteStatus, "Saving note...");
+      try {
+        const response = await fetch(API_PROJECT_ACTIVITIES_URL(workspaceSelectedProjectId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            activity_type: "note",
+            source_type: "user",
+            confirmation_status: "reported",
+            summary: compactText(noteText, 500),
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(await parseErrorResponseMessage(response, "Unable to save this note."));
+        }
+        workspaceAskInput.value = "";
+        setWorkspaceStatus(workspaceAddNoteStatus, "Note captured.");
+        await openWorkspaceProject(workspaceSelectedProjectId);
+      } catch (err) {
+        setWorkspaceStatus(workspaceAddNoteStatus, err?.message || "Unable to save this note.", true);
+      } finally {
+        workspaceAddNoteInFlight = false;
+        workspaceAddNoteBtn.disabled = false;
       }
     }
 
@@ -3715,25 +4245,24 @@
     });
     workspaceAskBtn.addEventListener("click", askWorkspaceProjectQuestion);
     workspaceAskAiBtn.addEventListener("click", askWorkspaceProjectWithAI);
+    workspaceAddNoteBtn.addEventListener("click", submitComposerNote);
     workspaceAskInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         askWorkspaceProjectWithAI();
       }
     });
-    projectsDrawerToggle.addEventListener("click", openProjectsDrawer);
-    projectsDrawerCloseBtn.addEventListener("click", closeProjectsDrawer);
-    projectsDrawerBackdrop.addEventListener("click", closeProjectsDrawer);
-    homeOpenProjectsBtn.addEventListener("click", openProjectsDrawer);
-    homeCreateProjectBtn.addEventListener("click", () => {
-      openProjectsDrawer();
-      showCreateProjectForm();
-    });
+    phoneBackToProjectsBtn.addEventListener("click", showPhoneProjectList);
+    homeCreateProjectBtn.addEventListener("click", showCreateProjectForm);
     workspaceCreateProjectBtn.addEventListener("click", showCreateProjectForm);
     workspaceCreateProjectCancelBtn.addEventListener("click", () => hideCreateProjectForm());
     workspaceCreateProjectForm.addEventListener("submit", submitCreateWorkspaceProject);
     workspaceProposalCancelBtn.addEventListener("click", () => hideProposalForm());
     workspaceProposalForm.addEventListener("submit", submitCreateCheckpointProposal);
+    workspaceOpenInvestigationBtn.addEventListener("click", () => {
+      projectDetailsDisclosure.open = true;
+      document.getElementById("demoImages").closest("section.investigation-demo").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
 
     resetDemoView();
     resetWorkspaceAskViews();

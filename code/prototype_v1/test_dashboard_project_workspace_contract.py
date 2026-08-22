@@ -19,15 +19,19 @@ def test_project_workspace_section_exists_contract():
     # heading among panes.
     source = _dashboard_source()
     assert 'id="projectWorkspaceSection"' in source
-    assert '>My Projects<' in source
+    assert '>Projects<' in source
     assert 'id="workspaceProjectHeaderName"' in source
     assert 'id="workspaceProjectHeaderState"' in source
 
 
 def test_project_inspector_labels_exist_contract():
+    # Redesign (desktop product shell): the "Now" continuity block is
+    # labeled "Where you left off" in plain sentence case (not the raw
+    # backend word "Now", and not shouted in uppercase) - see the
+    # composer/continuity contract in test_dashboard_product_shell_contract.py.
     source = _dashboard_source()
     for label in [
-        '>Now<',
+        '>Where you left off<',
         '>Next<',
         '>History<',
         '>Investigations / Evidence<',
@@ -48,9 +52,13 @@ def test_workspace_uses_project_api_endpoints_contract():
 
 
 def test_workspace_ask_and_ask_ai_contract():
+    # Reference-matched redesign: Get Context is a labeled composer chip;
+    # Ask AI is the composer's icon-only primary send button (aria-labeled
+    # "Ask AI" for accessibility, matching the reference's send-button
+    # treatment) rather than a second full-text button competing with it.
     source = _dashboard_source()
-    assert '>Get Context<' in source
-    assert '>Ask AI<' in source
+    assert 'id="workspaceAskBtn" class="composer-chip" type="button">💬 Get Context<' in source
+    assert 'id="workspaceAskAiBtn" class="composer-icon-btn primary" type="button" aria-label="Ask AI"' in source
     assert '>AI Answer (Grounded)<' in source
     assert 'Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.' in source
     assert 'Context loaded for selected project (no AI answer generation).' in source
@@ -108,7 +116,7 @@ def test_create_project_form_exists_with_required_and_optional_fields_contract()
     source = _dashboard_source()
 
     assert 'id="workspaceCreateProjectBtn"' in source
-    assert '>Create Project<' in source
+    assert '>+ New Project<' in source
     assert 'id="workspaceCreateProjectForm"' in source
     # Hidden until the user opts in; this is not a redesign of the read-only
     # inspector default view.

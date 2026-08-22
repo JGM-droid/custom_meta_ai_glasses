@@ -111,16 +111,24 @@ def test_project_workspace_is_first_functional_section_contract():
     assert source.count('id="workspaceProjectsList"') == 1
 
 
-def test_project_explainer_copy_exists_near_my_projects_contract():
+def test_sidebar_is_minimal_project_navigator_contract():
+    # Desktop product-shell redesign: the sidebar is a compact project
+    # navigator, not an explainer panel - a brand area, a single "+ New
+    # Project" action, a "Projects" heading, and the project list itself.
+    # No explanatory copy sits between the heading and the list.
     source = _dashboard_source()
-    my_projects_index = source.index("<h3>My Projects</h3>")
-    explainer_index = source.index(
-        "A Project keeps the current state, next action, evidence, and history for one ongoing piece of work."
-    )
-    projects_list_index = source.index('id="workspaceProjectsList"')
-    # The explanatory sentence must sit between the heading and the list it
-    # explains, in plain language (no LLM/architecture jargon).
-    assert my_projects_index < explainer_index < projects_list_index
+    aside_start = source.index('<aside id="projectsSidebar" class="projects-sidebar">')
+    aside_end = source.index("</aside>")
+    sidebar_html = source[aside_start:aside_end]
+
+    brand_index = sidebar_html.index('<div class="sidebar-brand">')
+    new_project_index = sidebar_html.index('id="workspaceCreateProjectBtn"')
+    heading_index = sidebar_html.index("<h3>Projects</h3>")
+    list_index = sidebar_html.index('id="workspaceProjectsList"')
+    assert brand_index < new_project_index < heading_index < list_index
+
+    assert "workspace-project-explainer" not in sidebar_html
+    assert "A Project keeps the current state" not in sidebar_html
 
 
 def test_investigation_cluster_is_nested_inside_project_workspace_contract():
