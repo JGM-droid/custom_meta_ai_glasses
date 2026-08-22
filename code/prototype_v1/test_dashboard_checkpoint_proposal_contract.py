@@ -10,38 +10,101 @@ def _dashboard_source() -> str:
     return DASHBOARD_PATH.read_text(encoding="utf-8")
 
 
-# Narrow regression coverage for the Human-Reviewed Checkpoint Proposal UI
-# slice: exposing the existing, already-tested Phase C2 Checkpoint Proposal
-# backend (see test_checkpoint_proposals_phasec2.py) through the Project
-# Workspace, without changing that backend contract in any way.
+# Narrow regression coverage for two combined slices in the Project Workspace:
+#
+# 1. The Human-Reviewed Checkpoint Proposal UI itself, exposing the existing,
+#    already-tested Phase C2 Checkpoint Proposal backend
+#    (see test_checkpoint_proposals_phasec2.py) without changing that backend
+#    contract in any way.
+# 2. The market-facing terminology slice on top of it: "Captured" /
+#    "Suggested Next Step" / "Confirm & Add" / "Dismiss" / "Confirmed & Added"
+#    replace raw backend words (ai/inferred/result/apply/reject/proposal) in
+#    the primary UI, while the backend endpoints, statuses, and fields those
+#    words describe are completely unchanged.
 #
 # These tests do not re-prove Phase C2 store/API behavior itself (revision
 # conflicts, state transitions, cross-project reference rejection, etc.);
 # they prove the dashboard wires the existing endpoints correctly and keeps
 # the "AI/Activity-derived information must not silently mutate canonical
-# Project Memory" rule visible in the UI code path.
+# Project Memory" rule true - and visible in honest, non-technical language -
+# in the UI code path.
 
 
-def test_checkpoint_updates_section_exists_and_is_visually_separated_contract():
+def test_checkpoint_updates_section_is_now_suggested_next_steps_contract():
     source = _dashboard_source()
-    assert ">Checkpoint Updates<" in source
+    assert ">Suggested Next Steps<" in source
+    assert ">Checkpoint Updates<" not in source
     # Must be adjacent to Now/Next so canonical vs proposed state can be
     # compared directly, and must carry an explicit non-canonical disclaimer -
     # the same established pattern already used for Ask AI vs Get Context.
-    assert "Proposed changes shown here are NOT canonical. Now/Next above only change when you explicitly click Apply on a pending proposal." in source
+    assert "Review a suggested next step before adding it to this project." in source
     assert 'id="workspaceCheckpointProposals"' in source
     assert 'id="workspaceCheckpointProposalsStatus"' in source
 
 
-def test_propose_as_next_action_affordance_on_history_activities_contract():
+def test_history_activity_cards_use_captured_presentation_contract():
     source = _dashboard_source()
-    assert 'proposeBtn.textContent = "Propose as Next Action";' in source
+    history_fn_start = source.index("function renderWorkspaceHistory(activities) {")
+    history_fn_end = source.index("\n    function extractSuggestedNextAction", history_fn_start)
+    history_fn_body = source[history_fn_start:history_fn_end]
+
+    # "Captured" is the primary label on every History card, regardless of
+    # source - it must never be conflated with "confirmed".
+    assert 'capturedLabel.textContent = "Captured";' in history_fn_body
+    assert "capturedLabel.className = \"workspace-captured-label\";" in history_fn_body
+    assert "card.appendChild(capturedLabel);" in history_fn_body
+
+
+def test_history_raw_provenance_labels_moved_to_details_disclosure_contract():
+    source = _dashboard_source()
+    history_fn_start = source.index("function renderWorkspaceHistory(activities) {")
+    history_fn_end = source.index("\n    function extractSuggestedNextAction", history_fn_start)
+    history_fn_body = source[history_fn_start:history_fn_end]
+
+    # Raw ai/inferred/result-style words must not be assigned to the primary
+    # label/summary elements - only into the collapsed Details disclosure.
+    assert 'typeChip.textContent = normalize(activity.activity_type)' not in history_fn_body
+    assert 'sourceChip.textContent = normalize(activity.source_type)' not in history_fn_body
+    assert 'confidenceChip.textContent = normalize(activity.confirmation_status)' not in history_fn_body
+
+    details_index = history_fn_body.index('details.className = "workspace-details-disclosure";')
+    detail_fields_index = history_fn_body.index("`Type: ${normalizeOrFallback(activity.activity_type")
+    assert detail_fields_index > details_index
+    assert "`Source: ${normalizeOrFallback(activity.source_type" in history_fn_body
+    assert "`Status: ${normalizeOrFallback(activity.confirmation_status" in history_fn_body
+    assert 'detailsSummary.textContent = "Details";' in history_fn_body
+
+    # Human-readable provenance line uses the source_type -> plain-language
+    # mapping, not the raw backend word.
+    assert "provenanceLine.textContent = `${humanSourceLabel(activity.source_type)} · ${formatShortDate(occurredAt)}`;" in history_fn_body
+
+
+def test_human_source_label_never_returns_raw_backend_words_contract():
+    source = _dashboard_source()
+    fn_start = source.index("function humanSourceLabel(sourceType) {")
+    fn_end = source.index("\n    }", fn_start)
+    fn_body = source[fn_start:fn_end]
+
+    assert 'if (value === "ai") return "From Investigation";' in fn_body
+    assert 'if (value === "user") return "Reported by user";' in fn_body
+    assert 'if (value === "system") return "System note";' in fn_body
+    # None of the return values are the raw enum words themselves.
+    for raw_word in ['return "ai"', 'return "inferred"', 'return "result"']:
+        assert raw_word not in fn_body
+
+
+def test_suggest_as_next_step_affordance_on_history_activities_contract():
+    source = _dashboard_source()
+    assert 'proposeBtn.textContent = "Suggest as Next Step";' in source
     assert 'proposeBtn.className = "workspace-propose-btn";' in source
     # Wired from renderWorkspaceHistory's per-activity loop, not a separate
-    # freestanding "create proposal" entry point - Phase 3 scope only.
+    # freestanding entry point - Phase 3 scope only.
     assert "proposeBtn.addEventListener(\"click\", () => {" in source
     assert "showProposalForm({" in source
     assert "sourceActivityId: activity.activity_id," in source
+    # The raw Activity UUID must not be the primary thing shown when the
+    # draft opens - a human source label is used instead.
+    assert "sourceLabel: humanActivityReferenceLabel(activity)," in source
 
 
 def test_propose_prefill_reuses_existing_activity_text_no_model_call_contract():
@@ -59,6 +122,16 @@ def test_propose_prefill_reuses_existing_activity_text_no_model_call_contract():
     # preview - the user must be able to review and change it before create.
     assert 'id="workspaceProposalNextAction" class="workspace-ask-input" rows="3" maxlength="1000" placeholder="What should happen next?" required></textarea>' in source
     assert "workspaceProposalNextAction.value = suggestedNextAction;" in source
+
+
+def test_showproposalform_does_not_surface_raw_activity_uuid_contract():
+    source = _dashboard_source()
+    fn_start = source.index("function showProposalForm({")
+    fn_end = source.index("\n    function hideProposalForm", fn_start)
+    fn_body = source[fn_start:fn_end]
+
+    assert "`Based on: ${sourceLabel" in fn_body
+    assert "Source: Activity ${sourceActivityId}" not in fn_body
 
 
 def test_create_proposal_preserves_source_activity_id_and_reuses_existing_endpoint_contract():
@@ -84,7 +157,7 @@ def test_create_proposal_does_not_client_side_mutate_checkpoint_contract():
     creation_fn_end = source.index("\n    }\n", creation_fn_start)
     creation_fn_body = source[creation_fn_start:creation_fn_end]
 
-    # Creating a proposal must never assign into the canonical Now/Next DOM
+    # Creating a suggestion must never assign into the canonical Now/Next DOM
     # directly (no optimistic fake mutation) - the only path back to Now/Next
     # is a real re-fetch of the Project via refreshProjectAndProposals, which
     # renders whatever the server actually returns.
@@ -93,20 +166,36 @@ def test_create_proposal_does_not_client_side_mutate_checkpoint_contract():
     assert "await refreshProjectAndProposals(projectId);" in creation_fn_body
 
 
-def test_pending_proposal_rendering_shows_current_vs_proposed_and_provenance_contract():
+def test_pending_suggestion_shows_current_and_suggested_values_and_confirm_note_contract():
     source = _dashboard_source()
-    assert "function renderCheckpointProposals(proposals) {" in source
-    # Current vs proposed comparison, not just the proposed value alone.
-    assert "const currentCheckpoint = (workspaceOpenProjectDetail && workspaceOpenProjectDetail.checkpoint) || {};" in source
-    assert "current: ${compactText(currentValue, 160)} -> proposed:" in source
-    # Status is rendered explicitly (pending/applied/rejected), not inferred.
-    assert 'statusChip.className = `workspace-chip status-${normalize(proposal.status) || "pending"}`;' in source
-    # Source Activity provenance is shown when present.
-    assert "Source Activity: ${sourceIds.join(\", \")}" in source
-    # Apply/Reject are only offered while a proposal is actually pending -
-    # applied/rejected proposals are terminal per the existing backend
-    # contract and must not offer actions that would 409.
-    assert 'if (proposal.status === "pending") {' in source
+    fn_start = source.index("function renderCheckpointProposals(proposals) {")
+    fn_end = source.index("\n    async function refreshProjectAndProposals", fn_start)
+    fn_body = source[fn_start:fn_end]
+
+    assert "const currentCheckpoint = (workspaceOpenProjectDetail && workspaceOpenProjectDetail.checkpoint) || {};" in fn_body
+
+    # Pending headline and required minimum wording per the approved slice.
+    assert 'headline.textContent = "Suggested Next Step";' in fn_body
+    assert "`Current next step: ${normalizeOrFallback(currentCheckpoint.next_action" in fn_body
+    assert 'confirmNote.textContent = "Nothing changes until you confirm.";' in fn_body
+    assert 'confirmNote.className = "workspace-confirm-note";' in fn_body
+
+    # "Based on: <human label>" provenance, not a raw source_activity_id/UUID
+    # in the primary card body.
+    assert "`Based on: ${humanActivityReferenceLabel(sourceActivity)}`" in fn_body
+
+    # Status is used only to select which branch renders (still internally
+    # "pending"/"applied"/"rejected", matching the backend contract exactly)
+    # - it is not itself displayed as the primary word.
+    assert 'if (proposal.status === "pending") {' in fn_body
+    assert 'headline.textContent = "Confirmed & Added";' in fn_body
+    assert 'headline.textContent = "Dismissed";' in fn_body
+
+    # Full technical provenance (raw status, reason, source Activity ids,
+    # proposal id) remains available, just behind a Details disclosure.
+    assert 'details.className = "workspace-details-disclosure";' in fn_body
+    assert "`Status: ${normalizeOrFallback(proposal.status" in fn_body
+    assert "`Source Activity: ${sourceIds.join" in fn_body
 
 
 def test_apply_wiring_refreshes_canonical_now_next_contract():
@@ -114,6 +203,7 @@ def test_apply_wiring_refreshes_canonical_now_next_contract():
     assert 'const API_PROJECT_CHECKPOINT_PROPOSAL_APPLY_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/apply`;' in source
     assert "async function applyCheckpointProposal(proposalId) {" in source
     assert "applyBtn.addEventListener(\"click\", () => applyCheckpointProposal(proposal.proposal_id));" in source
+    assert 'applyBtn.textContent = "Confirm & Add";' in source
 
     apply_fn_start = source.index("async function applyCheckpointProposal(proposalId) {")
     apply_fn_end = source.index("\n    async function rejectCheckpointProposal", apply_fn_start)
@@ -125,6 +215,8 @@ def test_apply_wiring_refreshes_canonical_now_next_contract():
     # Canonical state (which repaints Now/Next via renderWorkspaceNowNext) is
     # re-fetched from the server after every attempt, success or failure.
     assert "await refreshProjectAndProposals(projectId);" in apply_fn_body
+    # Required minimum customer-facing success wording.
+    assert "Confirmed & Added. This is now part of your project." in apply_fn_body
 
 
 def test_apply_conflict_handling_is_explicit_and_non_destructive_contract():
@@ -137,7 +229,10 @@ def test_apply_conflict_handling_is_explicit_and_non_destructive_contract():
     # handled explicitly with a concise, human-readable message - not treated
     # like a generic error, and never retried/rebased automatically.
     assert 'if (response.status === 409) {' in apply_fn_body
-    assert "Canonical Project state has changed since this proposal was created. Nothing was overwritten; refreshed below." in apply_fn_body
+    assert (
+        "This project changed after this suggestion was created. "
+        "Nothing was overwritten. Review the latest project state before confirming."
+    ) in apply_fn_body
     # Still refreshes canonical state afterward so the UI reflects the real
     # (unchanged-by-this-attempt) revision/status rather than going stale.
     assert apply_fn_body.count("await refreshProjectAndProposals(projectId);") == 1
@@ -148,6 +243,7 @@ def test_reject_wiring_leaves_checkpoint_unchanged_contract():
     assert 'const API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/reject`;' in source
     assert "async function rejectCheckpointProposal(proposalId) {" in source
     assert "rejectBtn.addEventListener(\"click\", () => rejectCheckpointProposal(proposal.proposal_id));" in source
+    assert 'rejectBtn.textContent = "Dismiss";' in source
 
     reject_fn_start = source.index("async function rejectCheckpointProposal(proposalId) {")
     reject_fn_end = source.index("\n    function renderWorkspaceAskResult", reject_fn_start)
@@ -155,7 +251,7 @@ def test_reject_wiring_leaves_checkpoint_unchanged_contract():
 
     assert 'method: "POST"' in reject_fn_body
     assert "workspaceNext.textContent =" not in reject_fn_body
-    assert "Proposal rejected. Checkpoint unchanged." in reject_fn_body
+    assert "Dismissed. This suggestion was not added to your project." in reject_fn_body
     assert "await refreshProjectAndProposals(projectId);" in reject_fn_body
 
 
@@ -164,7 +260,7 @@ def test_checkpoint_proposals_load_within_same_isolation_guarded_fetch_as_histor
     # Proposals must be fetched inside openWorkspaceProject's existing
     # Promise.all + loadToken staleness guard, exactly like
     # activities/sessions/contextPack already are - this is what prevents a
-    # rapid project switch from painting Project A's proposals into an
+    # rapid project switch from painting Project A's suggestions into an
     # Inspector that has since moved on to Project B.
     open_fn_start = source.index("async function openWorkspaceProject(projectId, { forceReset = false } = {}) {")
     open_fn_end = source.index("\n    async function askWorkspaceProjectQuestion", open_fn_start)
@@ -174,6 +270,10 @@ def test_checkpoint_proposals_load_within_same_isolation_guarded_fetch_as_histor
     assert "fetchJsonOrThrow(API_PROJECT_CHECKPOINT_PROPOSALS_URL(projectId), \"Unable to load checkpoint proposals\")," in open_fn_body
     assert "if (loadToken !== workspaceLoadingToken) return;" in open_fn_body
     assert "renderCheckpointProposals(workspaceProposalsCache);" in open_fn_body
+    # Activities are cached too so a "Based on: ..." source label can be
+    # resolved after a later Confirm & Add / Dismiss refresh without an
+    # extra fetch (Activities don't change on those actions).
+    assert "workspaceActivitiesCache = Array.isArray(activities) ? activities : [];" in open_fn_body
 
 
 def test_project_switch_clears_but_background_poll_preserves_proposal_draft_contract():
@@ -212,3 +312,15 @@ def test_refresh_after_proposal_action_is_project_scoped_contract():
     assert "if (projectId !== workspaceSelectedProjectId) return;" in refresh_fn_body
     assert "workspaceOpenProjectDetail = projectDetail;" in refresh_fn_body
     assert "renderWorkspaceNowNext(projectDetail, null);" in refresh_fn_body
+
+
+def test_no_apply_reject_wording_remains_in_primary_ui_contract():
+    source = _dashboard_source()
+    # The old customer-facing button labels/status wording must be fully
+    # gone; the backend endpoint names/functions/URLs (which legitimately
+    # still say "apply"/"reject" internally) are exempt and checked
+    # separately above.
+    assert '>Apply<' not in source
+    assert '>Reject<' not in source
+    assert "applyBtn.textContent = \"Apply\";" not in source
+    assert "rejectBtn.textContent = \"Reject\";" not in source

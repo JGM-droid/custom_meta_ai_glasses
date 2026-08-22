@@ -612,6 +612,18 @@ A read-only product audit found that, despite the architecture correctly treatin
 - The Investigation/glasses cluster is unchanged internally and not removed; it is preceded by a short note framing it as evidence capture that can be linked to a Project, and is now positioned below Project Workspace.
 - No API, store, schema, Activity projection, context retrieval, Ask AI, proposal, revision, polling, isolation, or provider behavior was touched. This is a DOM-order and copy change only.
 
+### Presentation Addendum 2 - Implemented (Market-Facing Provenance/Trust Terminology)
+
+The Checkpoint Proposal Review UI (see the Phase C2 Addendum above) and History Activity cards used raw backend words - `pending`/`applied`/`rejected`, `ai`/`user`/`system`, `inferred` - as the primary thing a user saw. This addendum translates that presentation into plain, non-technical language while leaving every backend concept it describes completely unchanged:
+
+- History Activity cards now lead with "Captured" (never implying "confirmed"), followed by a human provenance line ("From Investigation · Aug 21" / "Reported by user · Aug 21" / "System note · Aug 21"). Raw `activity_type`/`source_type`/`confirmation_status` values, the full timestamp, and the Activity UUID remain available in a per-card "Details" disclosure.
+- "Checkpoint Updates" is now titled "Suggested Next Steps"; a pending Checkpoint Proposal is presented as "Suggested Next Step" with the suggested text, a human "Based on: Investigation from Aug 21" source line (no raw UUID in the primary view), the current canonical `next_action` for comparison, and the note "Nothing changes until you confirm."
+- The Apply action is labeled "Confirm & Add" in the UI; on success the card and status message read "Confirmed & Added. This is now part of your project." The Reject action is labeled "Dismiss"; on success it reads "Dismissed. This suggestion was not added to your project."
+- A stale-revision Apply attempt (still the existing `revision_conflict`/HTTP 409 backend response) is shown as "This project changed after this suggestion was created. Nothing was overwritten. Review the latest project state before confirming."
+- The backend Checkpoint Proposal API, its endpoints (`create`/`list`/`get`/`apply`/`reject`), status enum values (`pending`/`applied`/`rejected`), revision semantics, Activity schema, and D1/D2 projection are entirely unchanged - only `dashboard.html`'s presentation of them changed. Internal JS function/variable names (`applyCheckpointProposal`, `rejectCheckpointProposal`, `workspaceProposalsCache`, etc.) intentionally still say apply/reject/proposal, matching the backend concepts they call.
+
+No new ADR: this does not introduce a new architectural decision - it is the UI expressing the provenance/authority rules already established by ADR-010, ADR-021, and ADR-029 in language a non-technical user can trust, not changing what is or isn't canonical.
+
 ## Phase B Acceptance Contract
 
 Proof scenario:

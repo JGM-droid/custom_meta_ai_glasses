@@ -932,31 +932,6 @@
       background: #fffaf0;
     }
 
-    .workspace-chip.status-pending {
-      border-color: #d3a325;
-      background: #fff3d6;
-      color: #7a5b05;
-    }
-
-    .workspace-chip.status-applied {
-      border-color: #2f9e57;
-      background: #e6f6ec;
-      color: #1c6b39;
-    }
-
-    .workspace-chip.status-rejected {
-      border-color: #c7cdd6;
-      background: #eef1f5;
-      color: #52606d;
-    }
-
-    .workspace-proposal-diff {
-      font-size: 0.88rem;
-      color: #0f1f2e;
-      display: grid;
-      gap: 2px;
-    }
-
     .workspace-propose-btn {
       border: 1px solid #0f6fff;
       border-radius: 8px;
@@ -1001,6 +976,41 @@
     .workspace-item-summary {
       font-size: 0.91rem;
       color: #0f1f2e;
+    }
+
+    .workspace-captured-label {
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #0f4fcc;
+    }
+
+    .workspace-provenance-line {
+      font-size: 0.8rem;
+      color: #52606d;
+    }
+
+    .workspace-details-disclosure {
+      margin-top: 4px;
+      font-size: 0.8rem;
+      color: #52606d;
+    }
+
+    .workspace-details-disclosure summary {
+      cursor: pointer;
+      color: #0f4fcc;
+      font-weight: 600;
+    }
+
+    .workspace-details-disclosure div {
+      margin-top: 4px;
+    }
+
+    .workspace-confirm-note {
+      font-size: 0.84rem;
+      color: #52606d;
+      font-style: italic;
     }
 
     .workspace-ask-row {
@@ -1148,19 +1158,19 @@
           </div>
 
           <div class="workspace-block">
-            <h4>Checkpoint Updates</h4>
-            <div class="workspace-ask-disclaimer">Proposed changes shown here are NOT canonical. Now/Next above only change when you explicitly click Apply on a pending proposal.</div>
+            <h4>Suggested Next Steps</h4>
+            <div class="workspace-ask-disclaimer">Review a suggested next step before adding it to this project.</div>
 
             <form id="workspaceProposalForm" class="workspace-create-project-form" style="display: none; margin-top: 8px;">
               <div id="workspaceProposalSourceNote" class="workspace-status-note"></div>
-              <label class="workspace-form-label" for="workspaceProposalNextAction">Proposed next action</label>
+              <label class="workspace-form-label" for="workspaceProposalNextAction">Suggested next step</label>
               <textarea id="workspaceProposalNextAction" class="workspace-ask-input" rows="3" maxlength="1000" placeholder="What should happen next?" required></textarea>
 
-              <label class="workspace-form-label" for="workspaceProposalReason">Reason</label>
+              <label class="workspace-form-label" for="workspaceProposalReason">Why this step</label>
               <input id="workspaceProposalReason" class="workspace-ask-input" type="text" maxlength="1000" placeholder="Why this update?" required>
 
               <div class="demo-actions" style="margin-top: 8px;">
-                <button id="workspaceProposalSubmitBtn" class="workspace-ask-btn" type="submit">Create Proposal</button>
+                <button id="workspaceProposalSubmitBtn" class="workspace-ask-btn" type="submit">Suggest Next Step</button>
                 <button id="workspaceProposalCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
               </div>
               <div id="workspaceProposalFormStatus" class="workspace-status-note" aria-live="polite"></div>
@@ -1686,6 +1696,10 @@
     // Now/Next section itself is currently showing.
     let workspaceOpenProjectDetail = null;
     let workspaceProposalsCache = [];
+    // Last-loaded Activities for the open Project, reused (not refetched) to
+    // resolve a Suggested Next Step's "Based on: ..." source label after an
+    // Apply/Dismiss refresh - Activities don't change on those actions.
+    let workspaceActivitiesCache = [];
     let workspaceProposalSourceActivityId = null;
     let workspaceProposalSubmitInFlight = false;
     let workspaceProposalActionInFlight = new Set();
@@ -2177,6 +2191,36 @@
       return date.toLocaleString();
     }
 
+    function formatShortDate(value) {
+      const text = normalize(value);
+      if (!text) return "unknown date";
+      const date = new Date(text);
+      if (Number.isNaN(date.getTime())) return text;
+      return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    // Human-facing provenance label. Never surfaces the raw backend
+    // source_type value ("ai"/"user"/"system") as the primary word a user
+    // sees - see the "Captured" presentation in renderWorkspaceHistory.
+    function humanSourceLabel(sourceType) {
+      const value = normalize(sourceType).toLowerCase();
+      if (value === "ai") return "From Investigation";
+      if (value === "user") return "Reported by user";
+      if (value === "system") return "System note";
+      return "Captured";
+    }
+
+    // Short "Based on: ..." phrase for a Suggested Next Step's source
+    // Activity - same source_type mapping as humanSourceLabel, phrased for
+    // the "Investigation from Aug 21" reading used on proposal cards.
+    function humanActivityReferenceLabel(activity) {
+      if (!activity) return null;
+      const value = normalize(activity.source_type).toLowerCase();
+      const kind = value === "ai" ? "Investigation" : value === "user" ? "Your note" : "Activity";
+      const occurredAt = activity.occurred_at_utc || activity.created_at_utc;
+      return `${kind} from ${formatShortDate(occurredAt)}`;
+    }
+
     function setWorkspaceStatus(el, message, isError = false) {
       el.textContent = message;
       el.classList.toggle("error", Boolean(isError));
@@ -2287,29 +2331,14 @@
         const card = document.createElement("article");
         card.className = "workspace-history-item";
 
-        const head = document.createElement("div");
-        head.className = "workspace-item-head";
-
-        const typeChip = document.createElement("span");
-        typeChip.className = "workspace-chip";
-        typeChip.textContent = normalize(activity.activity_type) || "activity";
-
-        const sourceChip = document.createElement("span");
-        sourceChip.className = "workspace-chip";
-        sourceChip.textContent = normalize(activity.source_type) || "source";
-
-        const confidenceChip = document.createElement("span");
-        confidenceChip.className = "workspace-chip";
-        confidenceChip.textContent = normalize(activity.confirmation_status) || "confirmation";
-
-        const time = document.createElement("span");
-        time.className = "workspace-item-time";
-        time.textContent = formatUtcTimestamp(activity.occurred_at_utc || activity.created_at_utc);
-
-        head.appendChild(typeChip);
-        head.appendChild(sourceChip);
-        head.appendChild(confidenceChip);
-        head.appendChild(time);
+        // "Captured" is the primary, always-true label for every Activity
+        // regardless of source - it must never be read as "confirmed".
+        // Raw backend provenance (activity_type/source_type/
+        // confirmation_status) still exists and is still shown, just moved
+        // into the Details disclosure below rather than the main label.
+        const capturedLabel = document.createElement("div");
+        capturedLabel.className = "workspace-captured-label";
+        capturedLabel.textContent = "Captured";
 
         const summary = document.createElement("div");
         summary.className = "workspace-item-summary";
@@ -2318,20 +2347,43 @@
           ? `${normalizeOrFallback(activity.summary, "No summary")}\n${compactText(detailText, 220)}`
           : normalizeOrFallback(activity.summary, "No summary");
 
+        const provenanceLine = document.createElement("div");
+        provenanceLine.className = "workspace-provenance-line";
+        const occurredAt = activity.occurred_at_utc || activity.created_at_utc;
+        provenanceLine.textContent = `${humanSourceLabel(activity.source_type)} · ${formatShortDate(occurredAt)}`;
+
+        const details = document.createElement("details");
+        details.className = "workspace-details-disclosure";
+        const detailsSummary = document.createElement("summary");
+        detailsSummary.textContent = "Details";
+        const detailsBody = document.createElement("div");
+        detailsBody.textContent = [
+          `Type: ${normalizeOrFallback(activity.activity_type, "activity")}`,
+          `Source: ${normalizeOrFallback(activity.source_type, "unknown")}`,
+          `Status: ${normalizeOrFallback(activity.confirmation_status, "unknown")}`,
+          `Recorded: ${formatUtcTimestamp(occurredAt)}`,
+          `Activity ID: ${normalizeOrFallback(activity.activity_id, "unknown")}`,
+        ].join(" · ");
+        details.appendChild(detailsSummary);
+        details.appendChild(detailsBody);
+
         const proposeBtn = document.createElement("button");
         proposeBtn.type = "button";
         proposeBtn.className = "workspace-propose-btn";
-        proposeBtn.textContent = "Propose as Next Action";
+        proposeBtn.textContent = "Suggest as Next Step";
         proposeBtn.addEventListener("click", () => {
           showProposalForm({
             sourceActivityId: activity.activity_id,
+            sourceLabel: humanActivityReferenceLabel(activity),
             suggestedNextAction: extractSuggestedNextAction(activity),
-            suggestedReason: `Promote finding from ${normalizeOrFallback(activity.activity_type, "activity")} activity (${formatUtcTimestamp(activity.occurred_at_utc || activity.created_at_utc)}).`,
+            suggestedReason: `Based on what was captured on ${formatShortDate(occurredAt)}.`,
           });
         });
 
-        card.appendChild(head);
+        card.appendChild(capturedLabel);
         card.appendChild(summary);
+        card.appendChild(provenanceLine);
+        card.appendChild(details);
         card.appendChild(proposeBtn);
         wrapper.appendChild(card);
       }
@@ -2457,11 +2509,14 @@
       workspaceNext.classList.remove("muted");
     }
 
-    function showProposalForm({ sourceActivityId = null, suggestedNextAction = "", suggestedReason = "" } = {}) {
+    function showProposalForm({ sourceActivityId = null, sourceLabel = null, suggestedNextAction = "", suggestedReason = "" } = {}) {
       workspaceProposalSourceActivityId = sourceActivityId;
+      // Human-readable label only in the primary UI - the raw Activity UUID
+      // stays out of view here (it's still visible in each card's Details
+      // disclosure once the suggestion is saved).
       workspaceProposalSourceNote.textContent = sourceActivityId
-        ? `Source: Activity ${sourceActivityId}`
-        : "No source Activity linked.";
+        ? `Based on: ${sourceLabel || "a captured Activity"}`
+        : "";
       workspaceProposalNextAction.value = suggestedNextAction;
       workspaceProposalReason.value = suggestedReason;
       setWorkspaceStatus(workspaceProposalFormStatus, "");
@@ -2480,16 +2535,21 @@
       }
     }
 
+    function _activityById(activityId) {
+      if (!activityId) return null;
+      return workspaceActivitiesCache.find((item) => item.activity_id === activityId) || null;
+    }
+
     function renderCheckpointProposals(proposals) {
       const list = Array.isArray(proposals) ? proposals : [];
       if (list.length === 0) {
-        workspaceCheckpointProposals.textContent = "No checkpoint proposals yet.";
+        workspaceCheckpointProposals.textContent = "No suggested next steps yet.";
         workspaceCheckpointProposals.classList.add("muted");
         return;
       }
 
-      // Pending proposals need review first; resolved ones are kept visible
-      // (bounded) so Apply/Reject outcomes are still legible afterward.
+      // Pending suggestions need review first; resolved ones are kept
+      // visible (bounded) so Confirm & Add / Dismiss outcomes stay legible.
       const pending = list.filter((item) => item.status === "pending");
       const resolved = list
         .filter((item) => item.status !== "pending")
@@ -2506,47 +2566,88 @@
         card.className = "workspace-proposal-item";
         card.dataset.status = proposal.status;
 
-        const head = document.createElement("div");
-        head.className = "workspace-item-head";
-
-        const statusChip = document.createElement("span");
-        statusChip.className = `workspace-chip status-${normalize(proposal.status) || "pending"}`;
-        statusChip.textContent = normalizeOrFallback(proposal.status, "pending");
-        head.appendChild(statusChip);
-
-        const time = document.createElement("span");
-        time.className = "workspace-item-time";
-        time.textContent = formatUtcTimestamp(proposal.created_at_utc);
-        head.appendChild(time);
-        card.appendChild(head);
-
         const patch = (proposal.proposed_checkpoint_patch && typeof proposal.proposed_checkpoint_patch === "object")
           ? proposal.proposed_checkpoint_patch
           : {};
-        const diff = document.createElement("div");
-        diff.className = "workspace-proposal-diff";
-        for (const [field, proposedValue] of Object.entries(patch)) {
-          if (proposedValue === null || proposedValue === undefined || proposedValue === "") continue;
-          const label = field.replace(/_/g, " ");
-          const currentValue = normalizeOrFallback(currentCheckpoint[field], "not set");
-          const line = document.createElement("div");
-          line.textContent = `${label} - current: ${compactText(currentValue, 160)} -> proposed: ${compactText(String(proposedValue), 160)}`;
-          diff.appendChild(line);
+        const hasNextAction = typeof patch.next_action === "string" && patch.next_action.trim() !== "";
+        const suggestedText = hasNextAction
+          ? patch.next_action.trim()
+          : (Object.values(patch).find((value) => typeof value === "string" && value.trim() !== "") || "No suggested change.");
+
+        const headline = document.createElement("div");
+        headline.className = "workspace-captured-label";
+
+        const body = document.createElement("div");
+        body.className = "workspace-item-summary";
+        body.textContent = suggestedText;
+
+        card.appendChild(headline);
+        card.appendChild(body);
+
+        if (proposal.status === "pending") {
+          headline.textContent = "Suggested Next Step";
+
+          const sourceActivity = _activityById((proposal.source_activity_ids || [])[0]);
+          if (sourceActivity) {
+            const basedOnLine = document.createElement("div");
+            basedOnLine.className = "workspace-provenance-line";
+            basedOnLine.textContent = `Based on: ${humanActivityReferenceLabel(sourceActivity)}`;
+            card.appendChild(basedOnLine);
+          }
+
+          if (hasNextAction) {
+            const currentLine = document.createElement("div");
+            currentLine.className = "workspace-item-summary";
+            currentLine.textContent = `Current next step: ${normalizeOrFallback(currentCheckpoint.next_action, "not set")}`;
+            card.appendChild(currentLine);
+          } else {
+            // Fallback only reachable for non-next_action patches created
+            // directly via the API - this UI only ever suggests next_action.
+            for (const [field, proposedValue] of Object.entries(patch)) {
+              if (proposedValue === null || proposedValue === undefined || proposedValue === "") continue;
+              const label = field.replace(/_/g, " ");
+              const currentValue = normalizeOrFallback(currentCheckpoint[field], "not set");
+              const line = document.createElement("div");
+              line.className = "workspace-item-summary";
+              line.textContent = `Current ${label}: ${compactText(currentValue, 160)}`;
+              card.appendChild(line);
+            }
+          }
+
+          const confirmNote = document.createElement("div");
+          confirmNote.className = "workspace-confirm-note";
+          confirmNote.textContent = "Nothing changes until you confirm.";
+          card.appendChild(confirmNote);
+        } else if (proposal.status === "applied") {
+          headline.textContent = "Confirmed & Added";
+          const confirmedNote = document.createElement("div");
+          confirmedNote.className = "workspace-item-summary";
+          confirmedNote.textContent = "This is now part of your project.";
+          card.appendChild(confirmedNote);
+        } else {
+          headline.textContent = "Dismissed";
+          const dismissedNote = document.createElement("div");
+          dismissedNote.className = "workspace-item-summary";
+          dismissedNote.textContent = "This suggestion was not added to your project.";
+          card.appendChild(dismissedNote);
         }
-        card.appendChild(diff);
 
-        const reasonLine = document.createElement("div");
-        reasonLine.className = "workspace-item-summary";
-        reasonLine.textContent = `Reason: ${normalizeOrFallback(proposal.reason, "No reason given")}`;
-        card.appendChild(reasonLine);
-
+        const details = document.createElement("details");
+        details.className = "workspace-details-disclosure";
+        const detailsSummary = document.createElement("summary");
+        detailsSummary.textContent = "Details";
+        const detailsBody = document.createElement("div");
         const sourceIds = Array.isArray(proposal.source_activity_ids) ? proposal.source_activity_ids : [];
-        if (sourceIds.length > 0) {
-          const sourceLine = document.createElement("div");
-          sourceLine.className = "workspace-list-meta";
-          sourceLine.textContent = `Source Activity: ${sourceIds.join(", ")}`;
-          card.appendChild(sourceLine);
-        }
+        detailsBody.textContent = [
+          `Status: ${normalizeOrFallback(proposal.status, "pending")}`,
+          `Reason: ${normalizeOrFallback(proposal.reason, "No reason given")}`,
+          `Created: ${formatUtcTimestamp(proposal.created_at_utc)}`,
+          sourceIds.length > 0 ? `Source Activity: ${sourceIds.join(", ")}` : null,
+          `Proposal ID: ${normalizeOrFallback(proposal.proposal_id, "unknown")}`,
+        ].filter(Boolean).join(" · ");
+        details.appendChild(detailsSummary);
+        details.appendChild(detailsBody);
+        card.appendChild(details);
 
         if (proposal.status === "pending") {
           const actions = document.createElement("div");
@@ -2556,14 +2657,14 @@
           const applyBtn = document.createElement("button");
           applyBtn.type = "button";
           applyBtn.className = "workspace-ask-btn";
-          applyBtn.textContent = "Apply";
+          applyBtn.textContent = "Confirm & Add";
           applyBtn.disabled = workspaceProposalActionInFlight.has(proposal.proposal_id);
           applyBtn.addEventListener("click", () => applyCheckpointProposal(proposal.proposal_id));
 
           const rejectBtn = document.createElement("button");
           rejectBtn.type = "button";
           rejectBtn.className = "workspace-ask-btn secondary";
-          rejectBtn.textContent = "Reject";
+          rejectBtn.textContent = "Dismiss";
           rejectBtn.disabled = workspaceProposalActionInFlight.has(proposal.proposal_id);
           rejectBtn.addEventListener("click", () => rejectCheckpointProposal(proposal.proposal_id));
 
@@ -2612,7 +2713,7 @@
       const nextAction = normalize(workspaceProposalNextAction.value);
       const reason = normalize(workspaceProposalReason.value);
       if (!nextAction) {
-        setWorkspaceStatus(workspaceProposalFormStatus, "Proposed next action is required.", true);
+        setWorkspaceStatus(workspaceProposalFormStatus, "A suggested next step is required.", true);
         workspaceProposalNextAction.focus();
         return;
       }
@@ -2637,25 +2738,27 @@
       workspaceProposalSubmitInFlight = true;
       workspaceProposalSubmitBtn.disabled = true;
       workspaceProposalCancelBtn.disabled = true;
-      setWorkspaceStatus(workspaceProposalFormStatus, "Creating proposal...");
+      setWorkspaceStatus(workspaceProposalFormStatus, "Saving your suggestion...");
 
       try {
+        // Still the existing create-proposal endpoint underneath - only the
+        // displayed wording changes here.
         const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSALS_URL(projectId), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
         if (!response.ok) {
-          const message = await parseErrorResponseMessage(response, `Unable to create proposal (HTTP ${response.status}).`);
+          const message = await parseErrorResponseMessage(response, `Unable to save this suggestion (HTTP ${response.status}).`);
           throw new Error(message);
         }
         hideProposalForm();
-        // Creating a proposal never mutates the canonical checkpoint - this
-        // refresh only picks up the new pending proposal itself; Now/Next are
-        // expected to come back unchanged.
+        // Creating a suggestion never mutates the canonical checkpoint - this
+        // refresh only picks up the new pending suggestion itself; Now/Next
+        // are expected to come back unchanged.
         await refreshProjectAndProposals(projectId);
       } catch (err) {
-        setWorkspaceStatus(workspaceProposalFormStatus, err?.message || "Unable to create proposal.", true);
+        setWorkspaceStatus(workspaceProposalFormStatus, err?.message || "Unable to save this suggestion.", true);
       } finally {
         workspaceProposalSubmitInFlight = false;
         workspaceProposalSubmitBtn.disabled = false;
@@ -2669,26 +2772,28 @@
 
       workspaceProposalActionInFlight.add(proposalId);
       renderCheckpointProposals(workspaceProposalsCache);
-      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Applying proposal...");
+      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Adding to your project...");
 
       try {
+        // Still the existing Apply endpoint and existing revision-conflict
+        // behavior underneath - only the displayed wording changes here.
         const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSAL_APPLY_URL(projectId, proposalId), { method: "POST" });
         if (!response.ok) {
-          const message = await parseErrorResponseMessage(response, `Unable to apply proposal (HTTP ${response.status}).`);
           if (response.status === 409) {
             setWorkspaceStatus(
               workspaceCheckpointProposalsStatus,
-              `Not applied: ${message} Canonical Project state has changed since this proposal was created. Nothing was overwritten; refreshed below.`,
+              "This project changed after this suggestion was created. Nothing was overwritten. Review the latest project state before confirming.",
               true,
             );
           } else {
-            setWorkspaceStatus(workspaceCheckpointProposalsStatus, `Not applied: ${message}`, true);
+            const message = await parseErrorResponseMessage(response, `Unable to add this suggestion (HTTP ${response.status}).`);
+            setWorkspaceStatus(workspaceCheckpointProposalsStatus, `Not added: ${message}`, true);
           }
         } else {
-          setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Proposal applied. Now/Next updated.");
+          setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Confirmed & Added. This is now part of your project.");
         }
       } catch (err) {
-        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to apply proposal.", true);
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to add this suggestion.", true);
       } finally {
         workspaceProposalActionInFlight.delete(proposalId);
         // Always refresh canonical state + proposals after an attempt,
@@ -2703,17 +2808,19 @@
 
       workspaceProposalActionInFlight.add(proposalId);
       renderCheckpointProposals(workspaceProposalsCache);
-      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Rejecting proposal...");
+      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Dismissing...");
 
       try {
+        // Still the existing Reject endpoint underneath - only the displayed
+        // wording changes here.
         const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL(projectId, proposalId), { method: "POST" });
         if (!response.ok) {
-          const message = await parseErrorResponseMessage(response, `Unable to reject proposal (HTTP ${response.status}).`);
+          const message = await parseErrorResponseMessage(response, `Unable to dismiss this suggestion (HTTP ${response.status}).`);
           throw new Error(message);
         }
-        setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Proposal rejected. Checkpoint unchanged.");
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Dismissed. This suggestion was not added to your project.");
       } catch (err) {
-        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to reject proposal.", true);
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to dismiss this suggestion.", true);
       } finally {
         workspaceProposalActionInFlight.delete(proposalId);
         await refreshProjectAndProposals(projectId);
@@ -2969,6 +3076,7 @@
 
         workspaceOpenProjectDetail = projectDetail;
         workspaceProposalsCache = Array.isArray(proposals) ? proposals : [];
+        workspaceActivitiesCache = Array.isArray(activities) ? activities : [];
         renderWorkspaceNowNext(projectDetail, contextPack);
         renderWorkspaceHistory(activities);
         renderWorkspaceInvestigations(sessions, contextPack);
