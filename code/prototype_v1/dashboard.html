@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Glasses Live Analysis Dashboard</title>
+  <title>Persistent AI Project Assistant</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -858,6 +858,18 @@
       min-height: 1.2em;
     }
 
+    .workspace-project-explainer {
+      margin: 4px 0 10px;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+
+    .section-lead-note {
+      margin: 0 0 12px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
     .workspace-status-note.error {
       color: #b42318;
     }
@@ -1082,6 +1094,135 @@
 </head>
 <body>
   <main class="wrap">
+    <section class="hero">
+      <h1>Persistent AI Project Assistant</h1>
+      <p class="sub">Keep durable project state, evidence, history, and next actions across work sessions.</p>
+    </section>
+
+    <section class="workspace-shell" id="projectWorkspaceSection">
+      <h2>Project Workspace</h2>
+      <p class="subtle">Project inspector built from authoritative project memory and investigation records. Create a Project here; existing Projects are inspected read-only.</p>
+
+      <div class="workspace-grid">
+        <article class="workspace-pane">
+          <h3>My Projects</h3>
+          <p class="workspace-project-explainer">A Project keeps the current state, next action, evidence, and history for one ongoing piece of work.</p>
+          <div class="workspace-create-project">
+            <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
+            <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
+              <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
+              <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
+
+              <label class="workspace-form-label" for="workspaceCreateProjectGoal">Goal</label>
+              <input id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>
+
+              <label class="workspace-form-label" for="workspaceCreateProjectObjective">Current objective (optional)</label>
+              <input id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400" placeholder="e.g. Diagnose intermittent Wi-Fi drop">
+
+              <label class="workspace-form-label" for="workspaceCreateProjectNextAction">Next action (optional)</label>
+              <input id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000" placeholder="e.g. Capture router logs during next drop">
+
+              <div class="demo-actions" style="margin-top: 8px;">
+                <button id="workspaceCreateProjectSubmitBtn" class="workspace-ask-btn" type="submit">Create</button>
+                <button id="workspaceCreateProjectCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
+              </div>
+              <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
+            </form>
+          </div>
+          <ul id="workspaceProjectsList" class="workspace-list"></ul>
+          <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
+        </article>
+
+        <article class="workspace-pane">
+          <h3>Project Inspector</h3>
+          <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
+
+          <div class="workspace-block">
+            <h4>Now</h4>
+            <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Next</h4>
+            <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Checkpoint Updates</h4>
+            <div class="workspace-ask-disclaimer">Proposed changes shown here are NOT canonical. Now/Next above only change when you explicitly click Apply on a pending proposal.</div>
+
+            <form id="workspaceProposalForm" class="workspace-create-project-form" style="display: none; margin-top: 8px;">
+              <div id="workspaceProposalSourceNote" class="workspace-status-note"></div>
+              <label class="workspace-form-label" for="workspaceProposalNextAction">Proposed next action</label>
+              <textarea id="workspaceProposalNextAction" class="workspace-ask-input" rows="3" maxlength="1000" placeholder="What should happen next?" required></textarea>
+
+              <label class="workspace-form-label" for="workspaceProposalReason">Reason</label>
+              <input id="workspaceProposalReason" class="workspace-ask-input" type="text" maxlength="1000" placeholder="Why this update?" required>
+
+              <div class="demo-actions" style="margin-top: 8px;">
+                <button id="workspaceProposalSubmitBtn" class="workspace-ask-btn" type="submit">Create Proposal</button>
+                <button id="workspaceProposalCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
+              </div>
+              <div id="workspaceProposalFormStatus" class="workspace-status-note" aria-live="polite"></div>
+            </form>
+
+            <div id="workspaceCheckpointProposals" class="workspace-value muted" style="margin-top: 8px;">No project selected.</div>
+            <div id="workspaceCheckpointProposalsStatus" class="workspace-status-note" aria-live="polite"></div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>History</h4>
+            <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Investigations / Evidence</h4>
+            <div id="workspaceInvestigations" class="workspace-value muted">No project selected.</div>
+          </div>
+
+          <div class="workspace-block">
+            <h4>Ask This Project</h4>
+            <div class="workspace-ask-row">
+              <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
+              <div class="demo-actions" style="margin: 0;">
+                <button id="workspaceAskBtn" class="workspace-ask-btn secondary" type="button">Get Context</button>
+                <button id="workspaceAskAiBtn" class="workspace-ask-btn" type="button">Ask AI</button>
+              </div>
+            </div>
+            <div class="workspace-ask-disclaimer">Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.</div>
+            <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
+            <div id="workspaceAskAiStatus" class="workspace-status-note">Ask AI to receive a grounded answer (non-canonical).</div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>AI Answer (Grounded)</h4>
+              <div id="workspaceAskAiAnswer" class="workspace-value muted">No AI answer yet.</div>
+              <div id="workspaceAskAiMeta" class="workspace-value muted" style="margin-top: 6px;">No AI grounding metadata yet.</div>
+              <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
+            </div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>Selected Project Context</h4>
+              <div id="workspaceAskContext" class="workspace-value muted">No context selected yet.</div>
+            </div>
+
+            <div class="workspace-block" style="margin-top: 8px;">
+              <h4>Why This Context?</h4>
+              <div id="workspaceAskWhy" class="workspace-value muted">No retrieval details yet.</div>
+            </div>
+
+            <div class="workspace-debug">
+              <details>
+                <summary>Optional Debug Context Pack</summary>
+                <pre id="workspaceAskDebug">No query pack yet.</pre>
+              </details>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <p class="section-lead-note">Evidence and Investigations below can be captured on their own or linked to a Project above.</p>
+
     <section class="investigation-demo">
       <div class="demo-topline">
         <div>
@@ -1222,127 +1363,6 @@
         <input id="uploadInput" class="file-input" type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp">
         <button id="analyzeBtn" class="analyze-btn" type="button">Analyze Image</button>
         <div id="uploadStatus" class="upload-status" aria-live="polite"></div>
-      </div>
-    </section>
-
-    <section class="workspace-shell" id="projectWorkspaceSection">
-      <h2>Project Workspace</h2>
-      <p class="subtle">Project inspector built from authoritative project memory and investigation records. Create a Project here; existing Projects are inspected read-only.</p>
-
-      <div class="workspace-grid">
-        <article class="workspace-pane">
-          <h3>My Projects</h3>
-          <div class="workspace-create-project">
-            <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
-            <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
-              <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
-              <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
-
-              <label class="workspace-form-label" for="workspaceCreateProjectGoal">Goal</label>
-              <input id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>
-
-              <label class="workspace-form-label" for="workspaceCreateProjectObjective">Current objective (optional)</label>
-              <input id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400" placeholder="e.g. Diagnose intermittent Wi-Fi drop">
-
-              <label class="workspace-form-label" for="workspaceCreateProjectNextAction">Next action (optional)</label>
-              <input id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000" placeholder="e.g. Capture router logs during next drop">
-
-              <div class="demo-actions" style="margin-top: 8px;">
-                <button id="workspaceCreateProjectSubmitBtn" class="workspace-ask-btn" type="submit">Create</button>
-                <button id="workspaceCreateProjectCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
-              </div>
-              <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
-            </form>
-          </div>
-          <ul id="workspaceProjectsList" class="workspace-list"></ul>
-          <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
-        </article>
-
-        <article class="workspace-pane">
-          <h3>Project Inspector</h3>
-          <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
-
-          <div class="workspace-block">
-            <h4>Now</h4>
-            <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
-          </div>
-
-          <div class="workspace-block">
-            <h4>Next</h4>
-            <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
-          </div>
-
-          <div class="workspace-block">
-            <h4>Checkpoint Updates</h4>
-            <div class="workspace-ask-disclaimer">Proposed changes shown here are NOT canonical. Now/Next above only change when you explicitly click Apply on a pending proposal.</div>
-
-            <form id="workspaceProposalForm" class="workspace-create-project-form" style="display: none; margin-top: 8px;">
-              <div id="workspaceProposalSourceNote" class="workspace-status-note"></div>
-              <label class="workspace-form-label" for="workspaceProposalNextAction">Proposed next action</label>
-              <textarea id="workspaceProposalNextAction" class="workspace-ask-input" rows="3" maxlength="1000" placeholder="What should happen next?" required></textarea>
-
-              <label class="workspace-form-label" for="workspaceProposalReason">Reason</label>
-              <input id="workspaceProposalReason" class="workspace-ask-input" type="text" maxlength="1000" placeholder="Why this update?" required>
-
-              <div class="demo-actions" style="margin-top: 8px;">
-                <button id="workspaceProposalSubmitBtn" class="workspace-ask-btn" type="submit">Create Proposal</button>
-                <button id="workspaceProposalCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
-              </div>
-              <div id="workspaceProposalFormStatus" class="workspace-status-note" aria-live="polite"></div>
-            </form>
-
-            <div id="workspaceCheckpointProposals" class="workspace-value muted" style="margin-top: 8px;">No project selected.</div>
-            <div id="workspaceCheckpointProposalsStatus" class="workspace-status-note" aria-live="polite"></div>
-          </div>
-
-          <div class="workspace-block">
-            <h4>History</h4>
-            <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
-          </div>
-
-          <div class="workspace-block">
-            <h4>Investigations / Evidence</h4>
-            <div id="workspaceInvestigations" class="workspace-value muted">No project selected.</div>
-          </div>
-
-          <div class="workspace-block">
-            <h4>Ask This Project</h4>
-            <div class="workspace-ask-row">
-              <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
-              <div class="demo-actions" style="margin: 0;">
-                <button id="workspaceAskBtn" class="workspace-ask-btn secondary" type="button">Get Context</button>
-                <button id="workspaceAskAiBtn" class="workspace-ask-btn" type="button">Ask AI</button>
-              </div>
-            </div>
-            <div class="workspace-ask-disclaimer">Get Context shows selected project context only. Ask AI uses AI reasoning over that selected project context.</div>
-            <div id="workspaceAskStatus" class="workspace-status-note">Ask a question to inspect context selection.</div>
-            <div id="workspaceAskAiStatus" class="workspace-status-note">Ask AI to receive a grounded answer (non-canonical).</div>
-
-            <div class="workspace-block" style="margin-top: 8px;">
-              <h4>AI Answer (Grounded)</h4>
-              <div id="workspaceAskAiAnswer" class="workspace-value muted">No AI answer yet.</div>
-              <div id="workspaceAskAiMeta" class="workspace-value muted" style="margin-top: 6px;">No AI grounding metadata yet.</div>
-              <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
-            </div>
-
-            <div class="workspace-block" style="margin-top: 8px;">
-              <h4>Selected Project Context</h4>
-              <div id="workspaceAskContext" class="workspace-value muted">No context selected yet.</div>
-            </div>
-
-            <div class="workspace-block" style="margin-top: 8px;">
-              <h4>Why This Context?</h4>
-              <div id="workspaceAskWhy" class="workspace-value muted">No retrieval details yet.</div>
-            </div>
-
-            <div class="workspace-debug">
-              <details>
-                <summary>Optional Debug Context Pack</summary>
-                <pre id="workspaceAskDebug">No query pack yet.</pre>
-              </details>
-            </div>
-          </div>
-        </article>
       </div>
     </section>
 

@@ -602,6 +602,16 @@ Compatibility decision:
 - No new architectural decision was required for this slice; it exposes Phase C2 exactly as governed by ADR-021 through ADR-027, plus the Project Workspace boundary in ADR-033. The critical rule those ADRs already establish - AI/Activity-derived information may be *proposed* but must never *silently* become canonical Project Memory - is unchanged and is now visible end-to-end in the UI rather than only reachable via direct API calls.
 - Context Retriever and `/ask` behavior are untouched by this slice.
 
+### Presentation Addendum - Implemented (Dashboard Leads with Project Workspace)
+
+A read-only product audit found that, despite the architecture correctly treating Project Memory as the persistent center (ADR-002, ADR-012) since the initial pivot, `dashboard.html` itself still opened with the page titled "AI Glasses Live Analysis Dashboard" and led with the Investigation/glasses demo sections, pushing Project Workspace to the sixth section on the page. This is a presentation-only correction, not a new architecture decision:
+
+- Page `<title>` and a new lead section now read "Persistent AI Project Assistant" with the sentence "Keep durable project state, evidence, history, and next actions across work sessions."
+- `projectWorkspaceSection` is now the first functional section in `<main>`, before Investigation Session and the other glasses/Investigation-demo sections.
+- A one-sentence, jargon-free explanation ("A Project keeps the current state, next action, evidence, and history for one ongoing piece of work.") now sits next to My Projects.
+- The Investigation/glasses cluster is unchanged internally and not removed; it is preceded by a short note framing it as evidence capture that can be linked to a Project, and is now positioned below Project Workspace.
+- No API, store, schema, Activity projection, context retrieval, Ask AI, proposal, revision, polling, isolation, or provider behavior was touched. This is a DOM-order and copy change only.
+
 ## Phase B Acceptance Contract
 
 Proof scenario:
