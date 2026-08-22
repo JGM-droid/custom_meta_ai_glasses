@@ -36,6 +36,173 @@
       padding: 0 18px;
     }
 
+    /* Product Shell: persistent desktop sidebar / mobile drawer wrapping the
+       existing Projects list+create content, alongside the existing .wrap
+       main content column. Below PRODUCT_SHELL_BREAKPOINT the sidebar
+       becomes an off-canvas drawer; the same DOM/JS/state drives both. */
+    .app-shell {
+      display: flex;
+      align-items: flex-start;
+      min-height: 100vh;
+    }
+
+    .app-main {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .projects-sidebar {
+      flex: 0 0 260px;
+      width: 260px;
+      box-sizing: border-box;
+      padding: 20px 14px;
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      min-height: 100vh;
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+    }
+
+    .projects-sidebar-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .projects-sidebar-head h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .drawer-close-btn {
+      display: none;
+      border: 0;
+      background: transparent;
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      color: var(--muted);
+      padding: 4px 6px;
+    }
+
+    .drawer-toggle {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 60;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+    }
+
+    .drawer-backdrop {
+      display: none;
+    }
+
+    .workspace-home {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+
+    .workspace-home h2 {
+      margin: 0 0 6px;
+    }
+
+    .project-header-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .project-header-bar h2 {
+      margin: 0;
+    }
+
+    .project-state-badge {
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #eef2f7;
+      color: #334155;
+    }
+
+    .workspace-group-label {
+      margin: 18px 0 6px;
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    @media (max-width: 899px) {
+      .app-shell {
+        display: block;
+      }
+
+      .projects-sidebar {
+        position: fixed;
+        top: 0;
+        /* Closed by default: -320px fully hides it regardless of the
+           actual rendered width (capped at max-width: 320px below), and
+           avoids animating a percentage-based transform. */
+        left: -320px;
+        bottom: 0;
+        width: 82vw;
+        max-width: 320px;
+        min-height: 100vh;
+        z-index: 55;
+        box-shadow: var(--shadow);
+        transition: left 200ms ease;
+        overflow-y: auto;
+      }
+
+      .projects-sidebar.open {
+        left: 0;
+      }
+
+      .drawer-close-btn {
+        display: inline-block;
+      }
+
+      .drawer-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .drawer-backdrop.open {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.45);
+        z-index: 50;
+      }
+
+      .app-main {
+        padding-top: 46px;
+      }
+    }
+
     .hero {
       background: linear-gradient(120deg, #0f6fff 0%, #0f4fcc 100%);
       color: #fff;
@@ -746,6 +913,13 @@
       box-shadow: var(--shadow);
       padding: 14px 16px 16px;
       margin-bottom: 16px;
+      /* Selected-Project layout is Now/Next/Capture-Ask/Suggested-Next-Steps/
+         History in that visual order (Now=1 ... Investigations=6), driven by
+         the inline `order` on each direct child below - not by physically
+         relocating each block's markup, which keeps this restructuring a
+         pure layout/order change over the exact same DOM/JS/state. */
+      display: flex;
+      flex-direction: column;
     }
 
     .workspace-shell h2 {
@@ -1103,61 +1277,75 @@
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <section class="hero">
-      <h1>Persistent AI Project Assistant</h1>
-      <p class="sub">Keep durable project state, evidence, history, and next actions across work sessions.</p>
-    </section>
+  <div class="app-shell">
+    <button id="projectsDrawerToggle" class="drawer-toggle" type="button" aria-label="Open Projects" aria-expanded="false">☰ Projects</button>
+    <div id="projectsDrawerBackdrop" class="drawer-backdrop"></div>
 
-    <section class="workspace-shell" id="projectWorkspaceSection">
-      <h2>Project Workspace</h2>
-      <p class="subtle">Project inspector built from authoritative project memory and investigation records. Create a Project here; existing Projects are inspected read-only.</p>
+    <aside id="projectsSidebar" class="projects-sidebar">
+      <div class="projects-sidebar-head">
+        <h3>My Projects</h3>
+        <button id="projectsDrawerCloseBtn" class="drawer-close-btn" type="button" aria-label="Close Projects">✕</button>
+      </div>
+      <p class="workspace-project-explainer">A Project keeps the current state, next action, evidence, and history for one ongoing piece of work.</p>
+      <div class="workspace-create-project">
+        <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
+        <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
+          <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
+          <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
 
-      <div class="workspace-grid">
-        <article class="workspace-pane">
-          <h3>My Projects</h3>
-          <p class="workspace-project-explainer">A Project keeps the current state, next action, evidence, and history for one ongoing piece of work.</p>
-          <div class="workspace-create-project">
-            <button id="workspaceCreateProjectBtn" class="workspace-ask-btn secondary" type="button" aria-expanded="false">Create Project</button>
-            <form id="workspaceCreateProjectForm" class="workspace-create-project-form" style="display: none;">
-              <label class="workspace-form-label" for="workspaceCreateProjectName">Name</label>
-              <input id="workspaceCreateProjectName" class="workspace-ask-input" type="text" maxlength="200" placeholder="Project name" required>
+          <label class="workspace-form-label" for="workspaceCreateProjectGoal">Goal</label>
+          <input id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>
 
-              <label class="workspace-form-label" for="workspaceCreateProjectGoal">Goal</label>
-              <input id="workspaceCreateProjectGoal" class="workspace-ask-input" type="text" maxlength="1000" placeholder="What is this project for?" required>
+          <label class="workspace-form-label" for="workspaceCreateProjectObjective">Current objective (optional)</label>
+          <input id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400" placeholder="e.g. Diagnose intermittent Wi-Fi drop">
 
-              <label class="workspace-form-label" for="workspaceCreateProjectObjective">Current objective (optional)</label>
-              <input id="workspaceCreateProjectObjective" class="workspace-ask-input" type="text" maxlength="400" placeholder="e.g. Diagnose intermittent Wi-Fi drop">
+          <label class="workspace-form-label" for="workspaceCreateProjectNextAction">Next action (optional)</label>
+          <input id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000" placeholder="e.g. Capture router logs during next drop">
 
-              <label class="workspace-form-label" for="workspaceCreateProjectNextAction">Next action (optional)</label>
-              <input id="workspaceCreateProjectNextAction" class="workspace-ask-input" type="text" maxlength="1000" placeholder="e.g. Capture router logs during next drop">
-
-              <div class="demo-actions" style="margin-top: 8px;">
-                <button id="workspaceCreateProjectSubmitBtn" class="workspace-ask-btn" type="submit">Create</button>
-                <button id="workspaceCreateProjectCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
-              </div>
-              <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
-            </form>
+          <div class="demo-actions" style="margin-top: 8px;">
+            <button id="workspaceCreateProjectSubmitBtn" class="workspace-ask-btn" type="submit">Create</button>
+            <button id="workspaceCreateProjectCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
           </div>
-          <ul id="workspaceProjectsList" class="workspace-list"></ul>
-          <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
-        </article>
+          <div id="workspaceCreateProjectStatus" class="workspace-status-note" aria-live="polite"></div>
+        </form>
+      </div>
+      <ul id="workspaceProjectsList" class="workspace-list"></ul>
+      <div id="workspaceProjectsStatus" class="workspace-status-note">Loading projects...</div>
+    </aside>
 
-        <article class="workspace-pane">
-          <h3>Project Inspector</h3>
-          <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
+    <main class="wrap app-main">
+      <section id="workspaceHomeState" class="workspace-home">
+        <section class="hero">
+          <h1>Persistent AI Project Assistant</h1>
+          <p class="sub">Keep durable project state, evidence, history, and next actions across work sessions.</p>
+        </section>
 
-          <div class="workspace-block">
+        <h2>What are you working on?</h2>
+        <p class="subtle">Select a Project from the sidebar, or create a new one to get started.</p>
+        <div class="demo-actions">
+          <button id="homeCreateProjectBtn" class="workspace-ask-btn" type="button">+ New Project</button>
+          <button id="homeOpenProjectsBtn" class="workspace-ask-btn secondary drawer-toggle" style="position: static; box-shadow: none;" type="button">Open Projects</button>
+        </div>
+      </section>
+
+      <section class="workspace-shell" id="projectWorkspaceSection" hidden>
+        <div class="project-header-bar">
+          <h2 id="workspaceProjectHeaderName">Project</h2>
+          <span id="workspaceProjectHeaderState" class="project-state-badge">Viewing</span>
+        </div>
+        <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
+
+          <div class="workspace-block" style="order: 1;">
             <h4>Now</h4>
             <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
           </div>
 
-          <div class="workspace-block">
+          <div class="workspace-block" style="order: 2;">
             <h4>Next</h4>
             <div id="workspaceNext" class="workspace-value muted">No project selected.</div>
           </div>
 
-          <div class="workspace-block">
+          <div class="workspace-block" style="order: 8;">
             <h4>Suggested Next Steps</h4>
             <div class="workspace-ask-disclaimer">Review a suggested next step before adding it to this project.</div>
 
@@ -1180,17 +1368,17 @@
             <div id="workspaceCheckpointProposalsStatus" class="workspace-status-note" aria-live="polite"></div>
           </div>
 
-          <div class="workspace-block">
+          <div class="workspace-block" style="order: 9;">
             <h4>History</h4>
             <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
           </div>
 
-          <div class="workspace-block">
+          <div class="workspace-block" style="order: 10;">
             <h4>Investigations / Evidence</h4>
             <div id="workspaceInvestigations" class="workspace-value muted">No project selected.</div>
           </div>
 
-          <div class="workspace-block">
+          <div class="workspace-block" id="workspaceAskThisProjectBlock" style="order: 7;">
             <h4>Ask This Project</h4>
             <div class="workspace-ask-row">
               <input id="workspaceAskInput" class="workspace-ask-input" type="text" placeholder="Example: Where did we leave off?" maxlength="1000">
@@ -1227,14 +1415,10 @@
               </details>
             </div>
           </div>
-        </article>
-      </div>
-    </section>
 
-    <p class="section-lead-note">Evidence and Investigations below can be captured on their own or linked to a Project above.</p>
-
-    <section class="investigation-demo">
-      <div class="demo-topline">
+        <section class="investigation-demo" style="order: 3;">
+          <h4 class="workspace-group-label">Capture / Ask</h4>
+          <div class="demo-topline">
         <div>
           <h2>Investigation Session</h2>
           <p class="subtle">Upload images, describe the issue, run investigation, copy the Copilot prompt, test, then verify with another capture.</p>
@@ -1293,7 +1477,7 @@
       </div>
     </section>
 
-    <section class="latest-result" id="recommendedActionSection">
+    <section class="latest-result" id="recommendedActionSection" style="order: 4;">
       <h2>Recommended AI Action</h2>
       <p class="subtle">Copy this prompt into GitHub Copilot, apply the minimal change, then validate.</p>
 
@@ -1320,7 +1504,7 @@
       </article>
     </section>
 
-    <section class="latest-result" id="verifyFixSection">
+    <section class="latest-result" id="verifyFixSection" style="order: 5;">
       <h2>Verify the Fix</h2>
       <ul id="verifyFixList" class="demo-observation-list"></ul>
       <article id="followUpCaptureCard" class="demo-result-card compact" data-empty="true" style="margin-top: 8px;">
@@ -1328,7 +1512,7 @@
       </article>
     </section>
 
-    <section class="latest-result" id="nextStepSection">
+    <section class="latest-result" id="nextStepSection" style="order: 6;">
       <h2>Next Step</h2>
       <article class="demo-result-card compact">
         <div id="primaryNextStep" class="value muted">Run an investigation to generate the next action.</div>
@@ -1344,6 +1528,7 @@
         </div>
       </article>
     </section>
+      </section>
 
     <section class="glasses-view">
       <h2>Compact Glasses View</h2>
@@ -1535,6 +1720,7 @@
       </details>
     </section>
   </main>
+  </div>
 
   <script>
     const API_ORIGIN = (window.location.origin && window.location.origin !== "null")
@@ -1634,6 +1820,16 @@
     const demoFollowUp = document.getElementById("demoFollowUp");
     const demoError = document.getElementById("demoError");
 
+    const projectsSidebar = document.getElementById("projectsSidebar");
+    const projectsDrawerToggle = document.getElementById("projectsDrawerToggle");
+    const projectsDrawerCloseBtn = document.getElementById("projectsDrawerCloseBtn");
+    const projectsDrawerBackdrop = document.getElementById("projectsDrawerBackdrop");
+    const workspaceHomeState = document.getElementById("workspaceHomeState");
+    const projectWorkspaceSectionEl = document.getElementById("projectWorkspaceSection");
+    const homeCreateProjectBtn = document.getElementById("homeCreateProjectBtn");
+    const homeOpenProjectsBtn = document.getElementById("homeOpenProjectsBtn");
+    const workspaceProjectHeaderName = document.getElementById("workspaceProjectHeaderName");
+    const workspaceProjectHeaderState = document.getElementById("workspaceProjectHeaderState");
     const workspaceProjectsList = document.getElementById("workspaceProjectsList");
     const workspaceProjectsStatus = document.getElementById("workspaceProjectsStatus");
     const workspaceCreateProjectBtn = document.getElementById("workspaceCreateProjectBtn");
@@ -2271,6 +2467,7 @@
         openBtn.setAttribute("aria-current", workspaceSelectedProjectId === project.project_id ? "true" : "false");
         openBtn.addEventListener("click", () => {
           openWorkspaceProject(project.project_id, { forceReset: true });
+          closeProjectsDrawer();
         });
 
         item.appendChild(title);
@@ -3009,6 +3206,30 @@
       }
     }
 
+    // Product Shell: Home (no Projects yet) vs. the selected-Project workspace
+    // are two presentations of the exact same workspaceProjectsCache/
+    // workspaceSelectedProjectId state already maintained by
+    // loadWorkspaceProjects()/openWorkspaceProject() - no separate "view
+    // mode" state is introduced, this only toggles which existing section is
+    // visible based on state that already exists.
+    function updateWorkspaceViewMode() {
+      const hasProjects = workspaceProjectsCache.length > 0;
+      workspaceHomeState.hidden = hasProjects;
+      projectWorkspaceSectionEl.hidden = !hasProjects;
+    }
+
+    function openProjectsDrawer() {
+      projectsSidebar.classList.add("open");
+      projectsDrawerBackdrop.classList.add("open");
+      projectsDrawerToggle.setAttribute("aria-expanded", "true");
+    }
+
+    function closeProjectsDrawer() {
+      projectsSidebar.classList.remove("open");
+      projectsDrawerBackdrop.classList.remove("open");
+      projectsDrawerToggle.setAttribute("aria-expanded", "false");
+    }
+
     async function loadWorkspaceProjects() {
       setWorkspaceStatus(workspaceProjectsStatus, "Loading projects...");
       try {
@@ -3016,6 +3237,7 @@
         workspaceProjectsCache = Array.isArray(projects) ? projects : [];
         renderWorkspaceProjectsList(workspaceProjectsCache);
         renderDemoProjectOptions();
+        updateWorkspaceViewMode();
 
         if (workspaceProjectsCache.length === 0) {
           workspaceSelectedProjectId = "";
@@ -3029,6 +3251,7 @@
       } catch (err) {
         workspaceProjectsCache = [];
         workspaceProjectsList.innerHTML = "";
+        updateWorkspaceViewMode();
         setWorkspaceStatus(workspaceProjectsStatus, `Failed to load projects: ${err?.message || err}`, true);
       }
     }
@@ -3082,6 +3305,11 @@
         renderWorkspaceInvestigations(sessions, contextPack);
         renderCheckpointProposals(workspaceProposalsCache);
         const selectedName = normalize(projectDetail?.name) || normalize(projectId);
+        // "Viewing" only - this is the Viewed Project for this UI, not the
+        // (not yet implemented) Active Capture Project. Reserve "Active" for
+        // when capture ownership is actually wired up.
+        workspaceProjectHeaderName.textContent = selectedName;
+        workspaceProjectHeaderState.textContent = "Viewing";
         setWorkspaceStatus(workspaceInspectorStatus, `Showing ${selectedName}.`);
       } catch (err) {
         if (loadToken !== workspaceLoadingToken) return;
@@ -3492,6 +3720,14 @@
         event.preventDefault();
         askWorkspaceProjectWithAI();
       }
+    });
+    projectsDrawerToggle.addEventListener("click", openProjectsDrawer);
+    projectsDrawerCloseBtn.addEventListener("click", closeProjectsDrawer);
+    projectsDrawerBackdrop.addEventListener("click", closeProjectsDrawer);
+    homeOpenProjectsBtn.addEventListener("click", openProjectsDrawer);
+    homeCreateProjectBtn.addEventListener("click", () => {
+      openProjectsDrawer();
+      showCreateProjectForm();
     });
     workspaceCreateProjectBtn.addEventListener("click", showCreateProjectForm);
     workspaceCreateProjectCancelBtn.addEventListener("click", () => hideCreateProjectForm());

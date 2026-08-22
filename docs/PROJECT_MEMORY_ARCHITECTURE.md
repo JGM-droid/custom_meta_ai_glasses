@@ -624,6 +624,18 @@ The Checkpoint Proposal Review UI (see the Phase C2 Addendum above) and History 
 
 No new ADR: this does not introduce a new architectural decision - it is the UI expressing the provenance/authority rules already established by ADR-010, ADR-021, and ADR-029 in language a non-technical user can trust, not changing what is or isn't canonical.
 
+### Slice 1 - Implemented (Product Shell: Project-First Navigation Shell)
+
+Restructures `dashboard.html` around the approved product principle - select the Project, get oriented, do the work, the Project captures what happens - without changing any backend contract. Browser and phone are responsive presentations of the exact same Project Workspace, over the exact same DOM, JS state, and API calls already proven by the Phase B/C1/C2/D1/D2 stores and the F1/G1 Workspace slices:
+
+- Desktop shows a persistent Projects sidebar (My Projects list + Create Project, reusing the existing list/create markup unchanged) beside a center workspace. At narrow widths the same sidebar becomes an off-canvas drawer behind a toggle; no separate mobile DOM, JS state, or endpoint exists - `workspaceProjectsCache`/`workspaceSelectedProjectId` and every fetch remain singular and shared.
+- A Home state ("What are you working on?", reusing the existing Create Project flow) shows only when zero Projects exist yet; once at least one exists, the existing auto-select-first-project behavior is unchanged and the selected-Project workspace shows instead. This is a pure presentation toggle over `workspaceProjectsCache.length`, not a new persisted "view mode".
+- The selected-Project workspace is reordered to a Project header (name + state) - Now - Next - Capture/Ask (the existing Investigation Session form, its result panels, and Ask This Project, grouped) - Suggested Next Steps - History (History and Investigations/Evidence, unchanged; the unified Activity/Investigation/Proposal timeline described in a prior audit remains explicitly deferred). The reorder is CSS `order` over the same DOM nodes, not a rewrite of any of those features.
+- **Viewed Project vs. Active Capture Project**: this slice only implements the Viewed Project (whichever Project a given browser/phone UI currently has open - ephemeral, per-tab, never persisted). It intentionally does **not** wire up the existing `ActiveProjectPointer` backend mechanism (`PUT/GET /projects/active[/{id}]`) into this UI, and the project header is labeled "Viewing" - never "Active" - so the UI does not imply capture-ownership routing exists yet. A safe, explicit Active Capture Project (and the device-scoping the current single-global pointer will need before it is safe for browser+phone+glasses to coexist) is deferred to a future slice.
+- No `api.py`, Project/Activity/Investigation/Proposal model, Context Retriever, or provider change was made or required.
+
+No new ADR: Slice 1 implements the Project-first shell direction already approved (see the Product Direction section and the prior Presentation Addenda) without introducing a new architectural decision. The Viewed Project / Active Capture Project distinction is a UI/navigation clarification of existing scope, not a new canonical-state concept.
+
 ## Phase B Acceptance Contract
 
 Proof scenario:

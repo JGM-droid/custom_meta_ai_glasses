@@ -97,14 +97,17 @@ def test_page_title_and_hero_lead_with_persistent_project_assistant_contract():
 def test_project_workspace_is_first_functional_section_contract():
     source = _dashboard_source()
     hero_index = source.index('<section class="hero">')
-    workspace_index = source.index('<section class="workspace-shell" id="projectWorkspaceSection">')
-    investigation_index = source.index('<section class="investigation-demo">')
+    workspace_index = source.index('<section class="workspace-shell" id="projectWorkspaceSection" hidden>')
+    investigation_index = source.index('<section class="investigation-demo" style="order: 3;">')
     glasses_view_index = source.index('<section class="glasses-view">')
 
-    # Hero, then Project Workspace, then the Investigation/glasses cluster -
-    # not duplicated anywhere else in the file.
+    # Hero (inside the Home state), then Project Workspace, which now
+    # directly contains the Investigation/Capture-Ask cluster as a nested
+    # child (Slice 1: Product Shell) - glasses-view remains outside/after the
+    # Project Workspace as legacy, project-unrelated content. Not duplicated
+    # anywhere else in the file.
     assert hero_index < workspace_index < investigation_index < glasses_view_index
-    assert source.count('<section class="workspace-shell" id="projectWorkspaceSection">') == 1
+    assert source.count('<section class="workspace-shell" id="projectWorkspaceSection" hidden>') == 1
     assert source.count('id="workspaceProjectsList"') == 1
 
 
@@ -120,24 +123,28 @@ def test_project_explainer_copy_exists_near_my_projects_contract():
     assert my_projects_index < explainer_index < projects_list_index
 
 
-def test_investigation_cluster_is_framed_as_evidence_within_a_project_contract():
+def test_investigation_cluster_is_nested_inside_project_workspace_contract():
+    # Slice 1 (Product Shell) moved the Investigation/Capture-Ask cluster to
+    # be a direct child of the Project Workspace itself (grouped under the
+    # "Capture / Ask" area), rather than a separately-framed section below
+    # it - the old standalone "linked to a Project above" lead note is gone
+    # because there is no longer an "above"; it *is* the Project now.
     source = _dashboard_source()
-    workspace_start_index = source.index('<section class="workspace-shell" id="projectWorkspaceSection">')
-    lead_note_index = source.index(
-        "Evidence and Investigations below can be captured on their own or linked to a Project above."
-    )
-    investigation_index = source.index('<section class="investigation-demo">')
-    # The framing note must come after Project Workspace and immediately
-    # before the Investigation/glasses cluster it is introducing.
-    assert workspace_start_index < lead_note_index < investigation_index
+    workspace_start_index = source.index('<section class="workspace-shell" id="projectWorkspaceSection" hidden>')
+    workspace_end_index = source.index("</main>")
+    investigation_index = source.index('<section class="investigation-demo" style="order: 3;">')
+    next_step_close_index = source.index('id="nextStepSection"')
+    assert workspace_start_index < investigation_index < next_step_close_index < workspace_end_index
+    assert "Evidence and Investigations below can be captured on their own or linked to a Project above." not in source
+    assert '<h4 class="workspace-group-label">Capture / Ask</h4>' in source
 
 
 def test_all_major_sections_still_present_after_reorder_contract():
     source = _dashboard_source()
     for marker in [
         '<section class="hero">',
-        '<section class="workspace-shell" id="projectWorkspaceSection">',
-        '<section class="investigation-demo">',
+        '<section class="workspace-shell" id="projectWorkspaceSection" hidden>',
+        '<section class="investigation-demo" style="order: 3;">',
         'id="recommendedActionSection"',
         'id="verifyFixSection"',
         'id="nextStepSection"',

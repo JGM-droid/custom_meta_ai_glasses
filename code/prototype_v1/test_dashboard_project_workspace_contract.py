@@ -11,11 +11,17 @@ def _dashboard_source() -> str:
 
 
 def test_project_workspace_section_exists_contract():
+    # Slice 1 (Product Shell): the static "Project Workspace" / "Project
+    # Inspector" headings were replaced by a dynamic per-Project header
+    # (name + Viewing/Selected state badge) - see
+    # test_dashboard_product_shell_contract.py for the new header contract.
+    # "My Projects" now lives in the sidebar rather than as an in-page
+    # heading among panes.
     source = _dashboard_source()
     assert 'id="projectWorkspaceSection"' in source
-    assert '>Project Workspace<' in source
     assert '>My Projects<' in source
-    assert '>Project Inspector<' in source
+    assert 'id="workspaceProjectHeaderName"' in source
+    assert 'id="workspaceProjectHeaderState"' in source
 
 
 def test_project_inspector_labels_exist_contract():
