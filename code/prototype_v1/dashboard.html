@@ -242,6 +242,14 @@
       text-overflow: ellipsis;
     }
 
+    .sidebar-project-row-active-dot {
+      flex: none;
+      align-self: center;
+      margin-left: 6px;
+      font-size: 0.62rem;
+      color: var(--accent);
+    }
+
     .sidebar-project-empty {
       padding: 8px 10px;
       font-size: 0.85rem;
@@ -285,8 +293,44 @@
       padding: 3px 10px;
       border-radius: 999px;
       border: 0;
+      background: var(--surface-quiet);
+      color: var(--ink-faint);
+    }
+
+    /* Exactly one Project can carry this treatment at a time - the accent
+       color is reserved for the true Active Capture Project, keeping
+       "Viewing" (any other open Project) visually calm/neutral by
+       comparison. */
+    .project-state-badge.is-active {
       background: var(--accent-quiet);
       color: var(--accent-strong);
+    }
+
+    .active-project-btn {
+      margin-left: auto;
+      border: 1px solid var(--border-hairline-strong);
+      background: transparent;
+      color: var(--ink-quiet);
+      border-radius: var(--radius-sm);
+      padding: 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .active-project-btn:hover {
+      color: var(--ink);
+      background: var(--surface-quiet);
+    }
+
+    .active-project-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .active-project-btn.is-active {
+      border-color: var(--border-hairline);
+      color: var(--ink-faint);
     }
 
     .workspace-group-label {
@@ -1792,8 +1836,10 @@
           <button id="phoneBackToProjectsBtn" class="phone-back-btn" type="button" aria-label="Back to Projects">‹ Projects</button>
           <h2 id="workspaceProjectHeaderName">Project</h2>
           <span id="workspaceProjectHeaderState" class="project-state-badge">Viewing</span>
+          <button id="workspaceActiveProjectBtn" class="active-project-btn" type="button">Work on this Project</button>
         </div>
         <p id="workspaceProjectHeaderGoal" class="workspace-project-goal"></p>
+        <div id="workspaceActiveProjectStatus" class="workspace-status-note"></div>
         <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
 
           <div class="workspace-composer" style="order: 0;">
@@ -2217,6 +2263,8 @@
     const API_PROJECT_CHECKPOINT_PROPOSALS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals`;
     const API_PROJECT_CHECKPOINT_PROPOSAL_APPLY_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/apply`;
     const API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/reject`;
+    const API_ACTIVE_PROJECT_URL = `${API_ORIGIN}/projects/active`;
+    const API_SET_ACTIVE_PROJECT_URL = (projectId) => `${API_ORIGIN}/projects/active/${projectId}`;
     const DEMO_MIN_IMAGES = 1;
     const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
@@ -2305,6 +2353,8 @@
     const workspaceProjectHeaderName = document.getElementById("workspaceProjectHeaderName");
     const workspaceProjectHeaderState = document.getElementById("workspaceProjectHeaderState");
     const workspaceProjectHeaderGoal = document.getElementById("workspaceProjectHeaderGoal");
+    const workspaceActiveProjectBtn = document.getElementById("workspaceActiveProjectBtn");
+    const workspaceActiveProjectStatus = document.getElementById("workspaceActiveProjectStatus");
     const workspaceOpenInvestigationBtn = document.getElementById("workspaceOpenInvestigationBtn");
     const projectDetailsDisclosure = document.getElementById("projectDetailsDisclosure");
     const workspaceProjectsList = document.getElementById("workspaceProjectsList");
@@ -2356,6 +2406,19 @@
     let workspaceSelectedProjectId = "";
     let workspaceProjectsCache = [];
     let workspaceLoadingToken = 0;
+    // The Active Capture Project (which project new evidence/Investigations
+    // are attributed to when none is explicitly chosen) is a distinct
+    // concept from workspaceSelectedProjectId (the Viewed Project - whatever
+    // this browser tab currently has open). null means no Active Capture
+    // Project is set. This is refreshed on the same poll cycle as
+    // loadWorkspaceProjects() - no separate interval/state system.
+    let activeProjectId = null;
+    let activeProjectActionInFlight = false;
+    // Once the user explicitly changes the demo Investigation project
+    // selector (including choosing "No project"), that choice sticks
+    // across poll ticks instead of being overwritten back to the Active
+    // Capture Project default - reset when the demo form itself resets.
+    let demoProjectSelectTouchedByUser = false;
     // Tracks which project's Ask views (AI Answer / Selected Project Context /
     // Why This Context / debug pack) are currently displayed, separately from
     // workspaceSelectedProjectId. Background polling reopens the same project
@@ -2945,6 +3008,18 @@
 
         button.appendChild(icon);
         button.appendChild(text);
+
+        // Exactly one Project can carry this dot - the Active Capture
+        // Project, not the Viewed Project (isSelected is a separate,
+        // unrelated highlight already applied above).
+        if (activeProjectId && project.project_id === activeProjectId) {
+          const activeDot = document.createElement("span");
+          activeDot.className = "sidebar-project-row-active-dot";
+          activeDot.textContent = "●";
+          activeDot.setAttribute("aria-label", "Active Project");
+          activeDot.title = "Active Project";
+          button.appendChild(activeDot);
+        }
         button.addEventListener("click", () => {
           openWorkspaceProject(project.project_id, { forceReset: true });
           enterPhoneProjectDetail();
@@ -2969,12 +3044,25 @@
       for (const project of workspaceProjectsCache) {
         const option = document.createElement("option");
         option.value = project.project_id;
-        option.textContent = normalize(project.name) || project.project_id;
+        const projectLabel = normalize(project.name) || project.project_id;
+        // Everyday default vs. explicit demo/debug control (Phase 5): the
+        // Active Capture Project's own option is labeled, but choosing a
+        // different Project (or "No project") here is still always
+        // possible and always wins for this one investigation.
+        option.textContent = (activeProjectId && project.project_id === activeProjectId)
+          ? `${projectLabel} — Active`
+          : projectLabel;
         demoProjectSelect.appendChild(option);
       }
 
       if (previousValue && workspaceProjectsCache.some((item) => item.project_id === previousValue)) {
         demoProjectSelect.value = previousValue;
+      } else if (
+        !demoProjectSelectTouchedByUser
+        && activeProjectId
+        && workspaceProjectsCache.some((item) => item.project_id === activeProjectId)
+      ) {
+        demoProjectSelect.value = activeProjectId;
       } else {
         demoProjectSelect.value = "";
       }
@@ -3710,10 +3798,32 @@
       appShellEl.classList.remove("phone-nav-detail");
     }
 
+    // Best-effort: absence of an Active Capture Project (HTTP 404) is a
+    // normal, common state - not an error to surface. Any other failure is
+    // swallowed too, since this is a convenience indicator layered on top
+    // of the Viewed Project, never something that should block the
+    // workspace from loading.
+    async function loadActiveProjectId() {
+      try {
+        const response = await fetch(API_ACTIVE_PROJECT_URL, { cache: "no-store" });
+        if (!response.ok) {
+          activeProjectId = null;
+          return;
+        }
+        const project = await response.json();
+        activeProjectId = project?.project_id || null;
+      } catch (_err) {
+        activeProjectId = null;
+      }
+    }
+
     async function loadWorkspaceProjects() {
       setWorkspaceStatus(workspaceProjectsStatus, "Loading projects...");
       try {
-        const projects = await fetchJsonOrThrow(API_PROJECTS_URL, "Unable to load projects");
+        const [projects] = await Promise.all([
+          fetchJsonOrThrow(API_PROJECTS_URL, "Unable to load projects"),
+          loadActiveProjectId(),
+        ]);
         workspaceProjectsCache = Array.isArray(projects) ? projects : [];
         renderWorkspaceProjectsList(workspaceProjectsCache);
         renderDemoProjectOptions();
@@ -3785,16 +3895,62 @@
         renderWorkspaceInvestigations(sessions, contextPack);
         renderCheckpointProposals(workspaceProposalsCache);
         const selectedName = normalize(projectDetail?.name) || normalize(projectId);
-        // "Viewing" only - this is the Viewed Project for this UI, not the
-        // (not yet implemented) Active Capture Project. Reserve "Active" for
-        // when capture ownership is actually wired up.
         workspaceProjectHeaderName.textContent = selectedName;
-        workspaceProjectHeaderState.textContent = "Viewing";
         workspaceProjectHeaderGoal.textContent = normalize(projectDetail?.goal);
+        // Viewing vs. Active Capture Project are separate concepts: the
+        // Viewed Project (this) is whichever Project the UI currently has
+        // open; the Active Capture Project (activeProjectId) is whichever
+        // Project new evidence/Investigations are attributed to. Opening a
+        // Project here never changes activeProjectId by itself.
+        renderActiveProjectControl(projectId);
         setWorkspaceStatus(workspaceInspectorStatus, `Showing ${selectedName}.`);
       } catch (err) {
         if (loadToken !== workspaceLoadingToken) return;
         setWorkspaceStatus(workspaceInspectorStatus, `Failed to load project inspector: ${err?.message || err}`, true);
+      }
+    }
+
+    // Paints the "Viewing" / "Active Project" badge and the "Work on this
+    // Project" / "Stop Working on Project" control for the Project
+    // currently open in this tab, purely from already-loaded state
+    // (activeProjectId, refreshed by loadActiveProjectId() on the same poll
+    // cycle as the Projects list). Does not fetch anything itself.
+    function renderActiveProjectControl(projectId) {
+      const isActive = Boolean(activeProjectId) && activeProjectId === projectId;
+      workspaceProjectHeaderState.textContent = isActive ? "● Active Project" : "Viewing";
+      workspaceProjectHeaderState.classList.toggle("is-active", isActive);
+      workspaceActiveProjectBtn.textContent = isActive ? "Stop Working on Project" : "Work on this Project";
+      workspaceActiveProjectBtn.classList.toggle("is-active", isActive);
+      workspaceActiveProjectBtn.disabled = activeProjectActionInFlight;
+    }
+
+    async function toggleActiveProject() {
+      if (activeProjectActionInFlight || !workspaceSelectedProjectId) return;
+      const projectId = workspaceSelectedProjectId;
+      const wasActive = Boolean(activeProjectId) && activeProjectId === projectId;
+
+      activeProjectActionInFlight = true;
+      workspaceActiveProjectBtn.disabled = true;
+      setWorkspaceStatus(workspaceActiveProjectStatus, wasActive ? "Stopping..." : "Setting as your Active Project...");
+      try {
+        const response = wasActive
+          ? await fetch(API_ACTIVE_PROJECT_URL, { method: "DELETE" })
+          : await fetch(API_SET_ACTIVE_PROJECT_URL(projectId), { method: "PUT" });
+        if (!response.ok) {
+          throw new Error(await parseErrorResponseMessage(response, "Unable to update your Active Project."));
+        }
+        activeProjectId = wasActive ? null : projectId;
+        setWorkspaceStatus(
+          workspaceActiveProjectStatus,
+          wasActive ? "No longer your Active Project." : "This is now your Active Project.",
+        );
+        renderActiveProjectControl(workspaceSelectedProjectId);
+        renderWorkspaceProjectsList(workspaceProjectsCache);
+      } catch (err) {
+        setWorkspaceStatus(workspaceActiveProjectStatus, err?.message || "Unable to update your Active Project.", true);
+      } finally {
+        activeProjectActionInFlight = false;
+        workspaceActiveProjectBtn.disabled = false;
       }
     }
 
@@ -3935,6 +4091,8 @@
       demoExplanation.value = "";
       demoMode.value = "dry_run";
       demoProjectSelect.value = "";
+      demoProjectSelectTouchedByUser = false;
+      renderDemoProjectOptions();
       latestCopilotPromptText = "";
       latestGitCommandsText = "";
       copilotPromptCopyStatus.textContent = "";
@@ -4237,6 +4395,9 @@
     });
     demoStartBtn.addEventListener("click", startDemoInvestigation);
     demoResetBtn.addEventListener("click", resetDemoView);
+    demoProjectSelect.addEventListener("change", () => {
+      demoProjectSelectTouchedByUser = true;
+    });
     copyCopilotPromptBtn.addEventListener("click", async () => {
       await handleCopyAction(latestCopilotPromptText, copyCopilotPromptBtn, "Copy Copilot Prompt", copilotPromptCopyStatus);
     });
@@ -4246,6 +4407,7 @@
     workspaceAskBtn.addEventListener("click", askWorkspaceProjectQuestion);
     workspaceAskAiBtn.addEventListener("click", askWorkspaceProjectWithAI);
     workspaceAddNoteBtn.addEventListener("click", submitComposerNote);
+    workspaceActiveProjectBtn.addEventListener("click", toggleActiveProject);
     workspaceAskInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();

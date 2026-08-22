@@ -259,6 +259,15 @@ class ProjectStore:
         self._atomic_write_json(self.active_project_path, payload)
         return pointer
 
+    def clear_active_project(self) -> None:
+        # Clearing is deleting the pointer file, not writing an empty/null
+        # pointer - ActiveProjectPointer.active_project_id is required and
+        # non-empty by schema, and the "no active project" state is already
+        # exactly what _load_active_pointer/get_active_project_id report
+        # when this file does not exist (ActiveProjectNotSet). Idempotent:
+        # clearing when nothing is active is not an error.
+        self.active_project_path.unlink(missing_ok=True)
+
     def _load_active_pointer(self) -> ActiveProjectPointer:
         if not self.active_project_path.exists() or not self.active_project_path.is_file():
             raise ActiveProjectNotSet("No active project is currently selected.")

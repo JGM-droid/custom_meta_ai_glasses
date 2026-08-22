@@ -1650,6 +1650,27 @@ def _ensure_project_exists_or_404(project_id: str) -> str:
     return normalized_project_id
 
 
+def _resolve_active_project_id_if_any() -> str | None:
+    # Active Capture Project attribution precedence (ADR-037): an explicit
+    # project_id supplied by the caller always wins and never reaches this
+    # helper (see start_demo_investigation/create_investigation_session,
+    # which only call this in their "no explicit project_id" branch). This
+    # is a best-effort convenience lookup - it must never turn an
+    # Investigation-start request into a hard failure, so any pointer/store
+    # problem (unset, corrupt, or a stale pointer referencing a since-
+    # invalid project) falls back to unscoped exactly like the pre-existing
+    # "no project_id" behavior, rather than raising.
+    try:
+        active_project_id = PROJECT_STORE.get_active_project_id()
+    except (ActiveProjectNotSet, ProjectStoreError):
+        return None
+    try:
+        PROJECT_STORE.load_project(active_project_id)
+    except (ProjectNotFound, ProjectStoreError):
+        return None
+    return active_project_id
+
+
 def _validate_activity_id_or_422(activity_id: str) -> str:
     try:
         return PROJECT_ACTIVITY_STORE.validate_activity_id(activity_id)
@@ -2353,11 +2374,15 @@ async def start_demo_investigation(
     explanation = _normalize_demo_text(user_explanation)
 
     # Optional Project ownership: when supplied, the project must already exist.
-    # Absent/blank project_id preserves the original ownerless demo behavior.
+    # Explicit project_id always wins. Absent/blank project_id falls back to
+    # the Active Capture Project if one is set (ADR-037); if neither exists,
+    # this preserves the original ownerless demo behavior exactly.
     normalized_demo_project_id: str | None = None
     raw_demo_project_id = (project_id or "").strip()
     if raw_demo_project_id:
         normalized_demo_project_id = _ensure_project_exists_or_404(raw_demo_project_id)
+    else:
+        normalized_demo_project_id = _resolve_active_project_id_if_any()
 
     if not explanation:
         raise HTTPException(status_code=422, detail="user_explanation is required.")
@@ -2732,9 +2757,14 @@ async def create_investigation_session(
     )
     create_request = _parse_session_create_payload(payload)
 
+    # Explicit project_id always wins. Absent project_id falls back to the
+    # Active Capture Project if one is set (ADR-037); if neither exists,
+    # this preserves the original ownerless session behavior exactly.
     normalized_project_id: str | None = None
     if create_request.project_id is not None:
         normalized_project_id = _ensure_project_exists_or_404(create_request.project_id)
+    else:
+        normalized_project_id = _resolve_active_project_id_if_any()
 
     try:
         return SESSION_STORE.create_session(
@@ -2879,6 +2909,18 @@ async def get_active_project() -> Project:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectStoreError:
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.delete("/projects/active", status_code=204, response_class=Response)
+async def clear_active_project() -> Response:
+    # Clearing does not delete or mutate any Project record - it only
+    # removes the convenience pointer. Idempotent: clearing when nothing is
+    # active still succeeds.
+    try:
+        PROJECT_STORE.clear_active_project()
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    return Response(status_code=204)
 
 
 @app.get("/projects/{project_id}", response_model=Project)

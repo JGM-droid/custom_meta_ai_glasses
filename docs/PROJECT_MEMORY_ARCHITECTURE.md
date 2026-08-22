@@ -2,7 +2,7 @@
 
 Status: Authoritative for approved forward product architecture.
 
-Last Updated: 2026-08-21
+Last Updated: 2026-08-22
 
 ## Product Vision
 
@@ -636,6 +636,17 @@ Restructures `dashboard.html` around the approved product principle - select the
 
 No new ADR: Slice 1 implements the Project-first shell direction already approved (see the Product Direction section and the prior Presentation Addenda) without introducing a new architectural decision. The Viewed Project / Active Capture Project distinction is a UI/navigation clarification of existing scope, not a new canonical-state concept.
 
+### Slice 2 - Implemented (Active Capture Project)
+
+Wires up the Phase B `ActiveProjectPointer` mechanism (`PUT/GET /projects/active[/{id}]`, deliberately left unconnected by Slice 1) as a real, distinct product concept - the Active Capture Project - separate from the Viewed Project the browser UI already had:
+
+- **Backend contract**: reuses the existing Phase B pointer exactly as implemented (single-pointer, restart-persistent, does not mutate Project records - see the Phase B Acceptance Contract below) with one small, symmetric addition: `DELETE /projects/active` (`ProjectStore.clear_active_project()`), which deletes the pointer file so the system returns to the same `ActiveProjectNotSet`/404 state it already reports when nothing has ever been set. Clearing is idempotent and never touches any Project record. No new model, no device/client scoping, no per-user architecture was introduced - this remains a single-global pointer, matching the current single-user prototype scope Slice 1 flagged as a prerequisite for future multi-device work, not something this slice attempts to solve.
+- **Investigation attribution precedence (ADR-037)**: `POST /demo/investigations` and `POST /investigation-sessions` (the two entry points that already accepted an optional `project_id`) now resolve project ownership as explicit `project_id` > Active Capture Project > unscoped, via a shared helper (`_resolve_active_project_id_if_any`) that is deliberately fail-safe: an unset, corrupt, or stale (referencing a since-invalid Project) pointer falls back to the pre-existing unscoped behavior rather than raising, since this is documented as a convenience layer that "must not replace explicit project identity in persistent APIs." The project-scoped `POST /projects/{project_id}/investigation-sessions` endpoint is unchanged - its `project_id` is always explicit via the URL path, so there is never ambiguity for it to resolve.
+- **Dashboard**: adds a restrained "Work on this Project" / "● Active Project" + "Stop Working on Project" control next to the Project header, and a subtle sidebar dot beside whichever single Project is Active - both driven by `activeProjectId`, refreshed read-only on the existing `loadWorkspaceProjects()` poll cycle (no new interval, no new client-side state system). Viewing/opening a Project never calls the set-active endpoint by itself; only the explicit control does. The existing "Viewing" badge is preserved for any non-Active Project. The demo Investigation project selector now defaults to the Active Capture Project (labeled "\<name\> — Active") when the user has not explicitly chosen a different value in the current form session, while still allowing explicit override to any other Project or "No project" for debug/demo control.
+- Reuses existing Project ownership/isolation (D1) and Activity projection (D2) mechanisms unchanged for however a session ends up owned, whether by explicit `project_id`, Active Capture Project, or neither.
+
+No redundant ADR for the pointer mechanism itself (Phase B already accepted it); ADR-037 below covers only the new attribution-precedence rule, which is a genuinely new behavior (previously, omitting `project_id` always meant unscoped).
+
 ## Phase B Acceptance Contract
 
 Proof scenario:
@@ -871,6 +882,9 @@ The dashboard's live demo Investigation entry point is not exempt from Project o
 
 ADR-036 - ACCEPTED
 The Project Workspace may perform explicit, user-initiated Project creation by reusing the existing Phase B `POST /projects` endpoint unchanged; this does not authorize editing, deleting, archiving, templating, or AI-generated mutation of existing Project state, and does not expose backend-only concepts (revision, checkpoint proposals, schema versions, Activity store internals) in the UI.
+
+ADR-037 - ACCEPTED
+When an Investigation-start request omits an explicit `project_id`, ownership resolution falls back to the single-global Active Capture Project (Phase B `ActiveProjectPointer`) if one is set, and to unscoped otherwise; an explicitly supplied `project_id` always takes precedence and is never overridden by the Active Capture Project. This resolution must be fail-safe - any pointer/store problem falls back to unscoped rather than blocking Investigation creation - consistent with the Active Capture Project's existing status as a convenience layer that must not replace explicit project identity in persistent APIs.
 
 ## Relationship to Other Documents
 
