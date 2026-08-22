@@ -905,13 +905,61 @@
     }
 
     .workspace-history-item,
-    .workspace-investigation-item {
+    .workspace-investigation-item,
+    .workspace-proposal-item {
       border: 1px solid #deebfb;
       border-radius: 10px;
       padding: 8px;
       background: #fcfeff;
       display: grid;
       gap: 5px;
+    }
+
+    .workspace-proposal-item[data-status="pending"] {
+      border-color: #f3c969;
+      background: #fffaf0;
+    }
+
+    .workspace-chip.status-pending {
+      border-color: #d3a325;
+      background: #fff3d6;
+      color: #7a5b05;
+    }
+
+    .workspace-chip.status-applied {
+      border-color: #2f9e57;
+      background: #e6f6ec;
+      color: #1c6b39;
+    }
+
+    .workspace-chip.status-rejected {
+      border-color: #c7cdd6;
+      background: #eef1f5;
+      color: #52606d;
+    }
+
+    .workspace-proposal-diff {
+      font-size: 0.88rem;
+      color: #0f1f2e;
+      display: grid;
+      gap: 2px;
+    }
+
+    .workspace-propose-btn {
+      border: 1px solid #0f6fff;
+      border-radius: 8px;
+      background: #f4f8ff;
+      color: #0f4fcc;
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      width: fit-content;
+    }
+
+    .workspace-propose-btn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
     }
 
     .workspace-item-head {
@@ -1225,6 +1273,29 @@
           </div>
 
           <div class="workspace-block">
+            <h4>Checkpoint Updates</h4>
+            <div class="workspace-ask-disclaimer">Proposed changes shown here are NOT canonical. Now/Next above only change when you explicitly click Apply on a pending proposal.</div>
+
+            <form id="workspaceProposalForm" class="workspace-create-project-form" style="display: none; margin-top: 8px;">
+              <div id="workspaceProposalSourceNote" class="workspace-status-note"></div>
+              <label class="workspace-form-label" for="workspaceProposalNextAction">Proposed next action</label>
+              <textarea id="workspaceProposalNextAction" class="workspace-ask-input" rows="3" maxlength="1000" placeholder="What should happen next?" required></textarea>
+
+              <label class="workspace-form-label" for="workspaceProposalReason">Reason</label>
+              <input id="workspaceProposalReason" class="workspace-ask-input" type="text" maxlength="1000" placeholder="Why this update?" required>
+
+              <div class="demo-actions" style="margin-top: 8px;">
+                <button id="workspaceProposalSubmitBtn" class="workspace-ask-btn" type="submit">Create Proposal</button>
+                <button id="workspaceProposalCancelBtn" class="workspace-ask-btn secondary" type="button">Cancel</button>
+              </div>
+              <div id="workspaceProposalFormStatus" class="workspace-status-note" aria-live="polite"></div>
+            </form>
+
+            <div id="workspaceCheckpointProposals" class="workspace-value muted" style="margin-top: 8px;">No project selected.</div>
+            <div id="workspaceCheckpointProposalsStatus" class="workspace-status-note" aria-live="polite"></div>
+          </div>
+
+          <div class="workspace-block">
             <h4>History</h4>
             <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
           </div>
@@ -1450,6 +1521,9 @@
     const API_PROJECT_INVESTIGATIONS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/investigation-sessions`;
     const API_PROJECT_CONTEXT_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/context`;
     const API_PROJECT_ASK_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/ask`;
+    const API_PROJECT_CHECKPOINT_PROPOSALS_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals`;
+    const API_PROJECT_CHECKPOINT_PROPOSAL_APPLY_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/apply`;
+    const API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/reject`;
     const DEMO_MIN_IMAGES = 1;
     const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
@@ -1544,6 +1618,15 @@
     const workspaceInspectorStatus = document.getElementById("workspaceInspectorStatus");
     const workspaceNow = document.getElementById("workspaceNow");
     const workspaceNext = document.getElementById("workspaceNext");
+    const workspaceCheckpointProposals = document.getElementById("workspaceCheckpointProposals");
+    const workspaceCheckpointProposalsStatus = document.getElementById("workspaceCheckpointProposalsStatus");
+    const workspaceProposalForm = document.getElementById("workspaceProposalForm");
+    const workspaceProposalSourceNote = document.getElementById("workspaceProposalSourceNote");
+    const workspaceProposalNextAction = document.getElementById("workspaceProposalNextAction");
+    const workspaceProposalReason = document.getElementById("workspaceProposalReason");
+    const workspaceProposalSubmitBtn = document.getElementById("workspaceProposalSubmitBtn");
+    const workspaceProposalCancelBtn = document.getElementById("workspaceProposalCancelBtn");
+    const workspaceProposalFormStatus = document.getElementById("workspaceProposalFormStatus");
     const workspaceHistory = document.getElementById("workspaceHistory");
     const workspaceInvestigations = document.getElementById("workspaceInvestigations");
     const workspaceAskInput = document.getElementById("workspaceAskInput");
@@ -1577,6 +1660,15 @@
     let workspaceAskInFlight = false;
     let workspaceAskAiInFlight = false;
     let workspaceCreateProjectInFlight = false;
+    // Canonical Project detail last loaded for the open Project. Used as the
+    // source of both "current value" comparisons and expected_project_revision
+    // when creating a proposal - never guessed/cached separately from what the
+    // Now/Next section itself is currently showing.
+    let workspaceOpenProjectDetail = null;
+    let workspaceProposalsCache = [];
+    let workspaceProposalSourceActivityId = null;
+    let workspaceProposalSubmitInFlight = false;
+    let workspaceProposalActionInFlight = new Set();
 
     const PROGRESS_STAGES = [
       ["validating", "Preparing Investigation"],
@@ -2206,14 +2298,41 @@
           ? `${normalizeOrFallback(activity.summary, "No summary")}\n${compactText(detailText, 220)}`
           : normalizeOrFallback(activity.summary, "No summary");
 
+        const proposeBtn = document.createElement("button");
+        proposeBtn.type = "button";
+        proposeBtn.className = "workspace-propose-btn";
+        proposeBtn.textContent = "Propose as Next Action";
+        proposeBtn.addEventListener("click", () => {
+          showProposalForm({
+            sourceActivityId: activity.activity_id,
+            suggestedNextAction: extractSuggestedNextAction(activity),
+            suggestedReason: `Promote finding from ${normalizeOrFallback(activity.activity_type, "activity")} activity (${formatUtcTimestamp(activity.occurred_at_utc || activity.created_at_utc)}).`,
+          });
+        });
+
         card.appendChild(head);
         card.appendChild(summary);
+        card.appendChild(proposeBtn);
         wrapper.appendChild(card);
       }
 
       workspaceHistory.innerHTML = "";
       workspaceHistory.appendChild(wrapper);
       workspaceHistory.classList.remove("muted");
+    }
+
+    function extractSuggestedNextAction(activity) {
+      // Reuse text already produced by the existing D2 Activity projection
+      // (`_project_completed_investigation_activity`, which writes
+      // "... Recommended next action: <text>" into details) rather than
+      // making any new model call. Falls back to the Activity summary for
+      // Activity types that don't follow that convention.
+      const detailText = normalize(activity.details);
+      const match = detailText.match(/Recommended next action:\s*(.+)$/);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+      return normalize(activity.summary);
     }
 
     function renderWorkspaceInvestigations(sessions, contextPack) {
@@ -2316,6 +2435,269 @@
 
       workspaceNext.textContent = nextAction;
       workspaceNext.classList.remove("muted");
+    }
+
+    function showProposalForm({ sourceActivityId = null, suggestedNextAction = "", suggestedReason = "" } = {}) {
+      workspaceProposalSourceActivityId = sourceActivityId;
+      workspaceProposalSourceNote.textContent = sourceActivityId
+        ? `Source: Activity ${sourceActivityId}`
+        : "No source Activity linked.";
+      workspaceProposalNextAction.value = suggestedNextAction;
+      workspaceProposalReason.value = suggestedReason;
+      setWorkspaceStatus(workspaceProposalFormStatus, "");
+      workspaceProposalForm.style.display = "grid";
+      workspaceProposalNextAction.focus();
+    }
+
+    function hideProposalForm({ clearFields = true } = {}) {
+      workspaceProposalForm.style.display = "none";
+      if (clearFields) {
+        workspaceProposalSourceActivityId = null;
+        workspaceProposalSourceNote.textContent = "";
+        workspaceProposalNextAction.value = "";
+        workspaceProposalReason.value = "";
+        setWorkspaceStatus(workspaceProposalFormStatus, "");
+      }
+    }
+
+    function renderCheckpointProposals(proposals) {
+      const list = Array.isArray(proposals) ? proposals : [];
+      if (list.length === 0) {
+        workspaceCheckpointProposals.textContent = "No checkpoint proposals yet.";
+        workspaceCheckpointProposals.classList.add("muted");
+        return;
+      }
+
+      // Pending proposals need review first; resolved ones are kept visible
+      // (bounded) so Apply/Reject outcomes are still legible afterward.
+      const pending = list.filter((item) => item.status === "pending");
+      const resolved = list
+        .filter((item) => item.status !== "pending")
+        .sort((a, b) => normalize(b.created_at_utc).localeCompare(normalize(a.created_at_utc)));
+      const ordered = [...pending, ...resolved.slice(0, 5)];
+
+      const currentCheckpoint = (workspaceOpenProjectDetail && workspaceOpenProjectDetail.checkpoint) || {};
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "workspace-list";
+
+      for (const proposal of ordered) {
+        const card = document.createElement("article");
+        card.className = "workspace-proposal-item";
+        card.dataset.status = proposal.status;
+
+        const head = document.createElement("div");
+        head.className = "workspace-item-head";
+
+        const statusChip = document.createElement("span");
+        statusChip.className = `workspace-chip status-${normalize(proposal.status) || "pending"}`;
+        statusChip.textContent = normalizeOrFallback(proposal.status, "pending");
+        head.appendChild(statusChip);
+
+        const time = document.createElement("span");
+        time.className = "workspace-item-time";
+        time.textContent = formatUtcTimestamp(proposal.created_at_utc);
+        head.appendChild(time);
+        card.appendChild(head);
+
+        const patch = (proposal.proposed_checkpoint_patch && typeof proposal.proposed_checkpoint_patch === "object")
+          ? proposal.proposed_checkpoint_patch
+          : {};
+        const diff = document.createElement("div");
+        diff.className = "workspace-proposal-diff";
+        for (const [field, proposedValue] of Object.entries(patch)) {
+          if (proposedValue === null || proposedValue === undefined || proposedValue === "") continue;
+          const label = field.replace(/_/g, " ");
+          const currentValue = normalizeOrFallback(currentCheckpoint[field], "not set");
+          const line = document.createElement("div");
+          line.textContent = `${label} - current: ${compactText(currentValue, 160)} -> proposed: ${compactText(String(proposedValue), 160)}`;
+          diff.appendChild(line);
+        }
+        card.appendChild(diff);
+
+        const reasonLine = document.createElement("div");
+        reasonLine.className = "workspace-item-summary";
+        reasonLine.textContent = `Reason: ${normalizeOrFallback(proposal.reason, "No reason given")}`;
+        card.appendChild(reasonLine);
+
+        const sourceIds = Array.isArray(proposal.source_activity_ids) ? proposal.source_activity_ids : [];
+        if (sourceIds.length > 0) {
+          const sourceLine = document.createElement("div");
+          sourceLine.className = "workspace-list-meta";
+          sourceLine.textContent = `Source Activity: ${sourceIds.join(", ")}`;
+          card.appendChild(sourceLine);
+        }
+
+        if (proposal.status === "pending") {
+          const actions = document.createElement("div");
+          actions.className = "demo-actions";
+          actions.style.marginTop = "4px";
+
+          const applyBtn = document.createElement("button");
+          applyBtn.type = "button";
+          applyBtn.className = "workspace-ask-btn";
+          applyBtn.textContent = "Apply";
+          applyBtn.disabled = workspaceProposalActionInFlight.has(proposal.proposal_id);
+          applyBtn.addEventListener("click", () => applyCheckpointProposal(proposal.proposal_id));
+
+          const rejectBtn = document.createElement("button");
+          rejectBtn.type = "button";
+          rejectBtn.className = "workspace-ask-btn secondary";
+          rejectBtn.textContent = "Reject";
+          rejectBtn.disabled = workspaceProposalActionInFlight.has(proposal.proposal_id);
+          rejectBtn.addEventListener("click", () => rejectCheckpointProposal(proposal.proposal_id));
+
+          actions.appendChild(applyBtn);
+          actions.appendChild(rejectBtn);
+          card.appendChild(actions);
+        }
+
+        wrapper.appendChild(card);
+      }
+
+      workspaceCheckpointProposals.innerHTML = "";
+      workspaceCheckpointProposals.appendChild(wrapper);
+      workspaceCheckpointProposals.classList.remove("muted");
+    }
+
+    async function refreshProjectAndProposals(projectId) {
+      try {
+        const [projectDetail, proposals] = await Promise.all([
+          fetchJsonOrThrow(API_PROJECT_DETAIL_URL(projectId), "Unable to load project detail"),
+          fetchJsonOrThrow(API_PROJECT_CHECKPOINT_PROPOSALS_URL(projectId), "Unable to load checkpoint proposals"),
+        ]);
+        // The user may have switched to a different Project while this refresh
+        // was in flight; the server-side action already completed and is
+        // durable, but this open Inspector must only ever render data for the
+        // Project it currently has selected.
+        if (projectId !== workspaceSelectedProjectId) return;
+        workspaceOpenProjectDetail = projectDetail;
+        workspaceProposalsCache = Array.isArray(proposals) ? proposals : [];
+        renderWorkspaceNowNext(projectDetail, null);
+        renderCheckpointProposals(workspaceProposalsCache);
+      } catch (err) {
+        if (projectId !== workspaceSelectedProjectId) return;
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, `Unable to refresh checkpoint state: ${err?.message || err}`, true);
+      }
+    }
+
+    async function submitCreateCheckpointProposal(event) {
+      event.preventDefault();
+      if (workspaceProposalSubmitInFlight) return;
+      if (!workspaceSelectedProjectId) {
+        setWorkspaceStatus(workspaceProposalFormStatus, "Select a project first.", true);
+        return;
+      }
+
+      const nextAction = normalize(workspaceProposalNextAction.value);
+      const reason = normalize(workspaceProposalReason.value);
+      if (!nextAction) {
+        setWorkspaceStatus(workspaceProposalFormStatus, "Proposed next action is required.", true);
+        workspaceProposalNextAction.focus();
+        return;
+      }
+      if (!reason) {
+        setWorkspaceStatus(workspaceProposalFormStatus, "A short reason is required.", true);
+        workspaceProposalReason.focus();
+        return;
+      }
+      if (!workspaceOpenProjectDetail || workspaceOpenProjectDetail.project_id !== workspaceSelectedProjectId) {
+        setWorkspaceStatus(workspaceProposalFormStatus, "Project state is still loading - try again in a moment.", true);
+        return;
+      }
+
+      const projectId = workspaceSelectedProjectId;
+      const payload = {
+        expected_project_revision: workspaceOpenProjectDetail.revision,
+        source_activity_ids: workspaceProposalSourceActivityId ? [workspaceProposalSourceActivityId] : [],
+        proposed_checkpoint_patch: { next_action: nextAction },
+        reason,
+      };
+
+      workspaceProposalSubmitInFlight = true;
+      workspaceProposalSubmitBtn.disabled = true;
+      workspaceProposalCancelBtn.disabled = true;
+      setWorkspaceStatus(workspaceProposalFormStatus, "Creating proposal...");
+
+      try {
+        const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSALS_URL(projectId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+          const message = await parseErrorResponseMessage(response, `Unable to create proposal (HTTP ${response.status}).`);
+          throw new Error(message);
+        }
+        hideProposalForm();
+        // Creating a proposal never mutates the canonical checkpoint - this
+        // refresh only picks up the new pending proposal itself; Now/Next are
+        // expected to come back unchanged.
+        await refreshProjectAndProposals(projectId);
+      } catch (err) {
+        setWorkspaceStatus(workspaceProposalFormStatus, err?.message || "Unable to create proposal.", true);
+      } finally {
+        workspaceProposalSubmitInFlight = false;
+        workspaceProposalSubmitBtn.disabled = false;
+        workspaceProposalCancelBtn.disabled = false;
+      }
+    }
+
+    async function applyCheckpointProposal(proposalId) {
+      const projectId = workspaceSelectedProjectId;
+      if (!projectId || workspaceProposalActionInFlight.has(proposalId)) return;
+
+      workspaceProposalActionInFlight.add(proposalId);
+      renderCheckpointProposals(workspaceProposalsCache);
+      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Applying proposal...");
+
+      try {
+        const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSAL_APPLY_URL(projectId, proposalId), { method: "POST" });
+        if (!response.ok) {
+          const message = await parseErrorResponseMessage(response, `Unable to apply proposal (HTTP ${response.status}).`);
+          if (response.status === 409) {
+            setWorkspaceStatus(
+              workspaceCheckpointProposalsStatus,
+              `Not applied: ${message} Canonical Project state has changed since this proposal was created. Nothing was overwritten; refreshed below.`,
+              true,
+            );
+          } else {
+            setWorkspaceStatus(workspaceCheckpointProposalsStatus, `Not applied: ${message}`, true);
+          }
+        } else {
+          setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Proposal applied. Now/Next updated.");
+        }
+      } catch (err) {
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to apply proposal.", true);
+      } finally {
+        workspaceProposalActionInFlight.delete(proposalId);
+        // Always refresh canonical state + proposals after an attempt,
+        // success or failure, so status/revision are never left stale.
+        await refreshProjectAndProposals(projectId);
+      }
+    }
+
+    async function rejectCheckpointProposal(proposalId) {
+      const projectId = workspaceSelectedProjectId;
+      if (!projectId || workspaceProposalActionInFlight.has(proposalId)) return;
+
+      workspaceProposalActionInFlight.add(proposalId);
+      renderCheckpointProposals(workspaceProposalsCache);
+      setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Rejecting proposal...");
+
+      try {
+        const response = await fetch(API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL(projectId, proposalId), { method: "POST" });
+        if (!response.ok) {
+          const message = await parseErrorResponseMessage(response, `Unable to reject proposal (HTTP ${response.status}).`);
+          throw new Error(message);
+        }
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, "Proposal rejected. Checkpoint unchanged.");
+      } catch (err) {
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, err?.message || "Unable to reject proposal.", true);
+      } finally {
+        workspaceProposalActionInFlight.delete(proposalId);
+        await refreshProjectAndProposals(projectId);
+      }
     }
 
     function renderWorkspaceAskResult(queryPack) {
@@ -2541,25 +2923,36 @@
       workspaceNext.textContent = "Loading...";
       workspaceHistory.textContent = "Loading...";
       workspaceInvestigations.textContent = "Loading...";
-      [workspaceNow, workspaceNext, workspaceHistory, workspaceInvestigations].forEach((el) => el.classList.remove("muted"));
+      workspaceCheckpointProposals.textContent = "Loading...";
+      [workspaceNow, workspaceNext, workspaceHistory, workspaceInvestigations, workspaceCheckpointProposals].forEach((el) => el.classList.remove("muted"));
       if (projectChanged || forceReset) {
         resetWorkspaceAskViews();
         workspaceAskViewsProjectId = projectId;
+        // A proposal draft (open form, in-progress edits) belongs to whichever
+        // Project it was opened against - it must not survive an actual
+        // Project switch, but a same-project background poll tick must never
+        // touch it (see the loadWorkspaceProjects() call site below).
+        hideProposalForm();
+        setWorkspaceStatus(workspaceCheckpointProposalsStatus, "");
       }
 
       const loadToken = ++workspaceLoadingToken;
       try {
-        const [projectDetail, activities, sessions, contextPack] = await Promise.all([
+        const [projectDetail, activities, sessions, contextPack, proposals] = await Promise.all([
           fetchJsonOrThrow(API_PROJECT_DETAIL_URL(projectId), "Unable to load project detail"),
           fetchJsonOrThrow(API_PROJECT_ACTIVITIES_URL(projectId), "Unable to load activities"),
           fetchJsonOrThrow(API_PROJECT_INVESTIGATIONS_URL(projectId), "Unable to load project investigations"),
           fetchJsonOrThrow(API_PROJECT_CONTEXT_URL(projectId), "Unable to load project context"),
+          fetchJsonOrThrow(API_PROJECT_CHECKPOINT_PROPOSALS_URL(projectId), "Unable to load checkpoint proposals"),
         ]);
         if (loadToken !== workspaceLoadingToken) return;
 
+        workspaceOpenProjectDetail = projectDetail;
+        workspaceProposalsCache = Array.isArray(proposals) ? proposals : [];
         renderWorkspaceNowNext(projectDetail, contextPack);
         renderWorkspaceHistory(activities);
         renderWorkspaceInvestigations(sessions, contextPack);
+        renderCheckpointProposals(workspaceProposalsCache);
         const selectedName = normalize(projectDetail?.name) || normalize(projectId);
         setWorkspaceStatus(workspaceInspectorStatus, `Showing ${selectedName}.`);
       } catch (err) {
@@ -2975,6 +3368,8 @@
     workspaceCreateProjectBtn.addEventListener("click", showCreateProjectForm);
     workspaceCreateProjectCancelBtn.addEventListener("click", () => hideCreateProjectForm());
     workspaceCreateProjectForm.addEventListener("submit", submitCreateWorkspaceProject);
+    workspaceProposalCancelBtn.addEventListener("click", () => hideProposalForm());
+    workspaceProposalForm.addEventListener("submit", submitCreateCheckpointProposal);
 
     resetDemoView();
     resetWorkspaceAskViews();

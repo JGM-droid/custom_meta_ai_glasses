@@ -586,6 +586,22 @@ Compatibility decision:
 
 - This updates the Phase F1 "read-only projection" framing: Project *creation* is now an explicit, user-initiated Workspace action. All other Phase F1 invariants are unchanged - the Workspace still does not edit, delete, archive, or AI-generate state for any *existing* Project, Activity, Checkpoint, or Proposal.
 
+### Phase C2 Addendum - Implemented (Checkpoint Proposal Review UI in Project Workspace)
+
+Implemented scope:
+
+- Exposes the existing Phase C2 Checkpoint Proposal mechanism (`POST/GET /projects/{id}/checkpoint-proposals`, `POST .../{proposal_id}/apply`, `POST .../{proposal_id}/reject`) through a new "Checkpoint Updates" block in the Project Inspector, reusing all four endpoints exactly as-is. No backend, store, or schema changes.
+- Closes the previously dead-ended `Investigation -> Activity -> Context -> AI reasoning -> ???` loop: a History Activity now offers a "Propose as Next Action" action that pre-fills a proposed `next_action` from text the existing D2 Activity projection already wrote (parsed from the Activity's own `details`/`summary`; no new AI/model call), which the user can review and edit before creating the proposal via the existing create endpoint with `source_activity_ids` provenance preserved.
+- "Checkpoint Updates" is rendered directly beside Now/Next and is explicitly labeled non-canonical; creating a proposal never mutates Now/Next. Only an explicit user click on Apply calls the existing apply endpoint and repaints Now/Next from the server's response - there is no optimistic client-side mutation.
+- Reject calls the existing reject endpoint; the checkpoint is left unchanged, matching the existing backend contract.
+- A stale-revision Apply attempt (backend `revision_conflict`, HTTP 409) is surfaced as a concise, human-readable message; canonical Project state and the proposal list are refreshed from the server, and the proposal is left exactly as pending as the backend leaves it - it is not automatically rebased, retried, or recreated.
+- Project isolation, the existing `loadToken` staleness guard, and the existing project-changed detection (added for Ask-view persistence) are reused unchanged: proposals are fetched in the same guarded batch as Activities/Investigations, a real Project switch clears any in-progress proposal draft, and a same-project background poll tick never touches an open draft.
+
+Compatibility decision:
+
+- No new architectural decision was required for this slice; it exposes Phase C2 exactly as governed by ADR-021 through ADR-027, plus the Project Workspace boundary in ADR-033. The critical rule those ADRs already establish - AI/Activity-derived information may be *proposed* but must never *silently* become canonical Project Memory - is unchanged and is now visible end-to-end in the UI rather than only reachable via direct API calls.
+- Context Retriever and `/ask` behavior are untouched by this slice.
+
 ## Phase B Acceptance Contract
 
 Proof scenario:

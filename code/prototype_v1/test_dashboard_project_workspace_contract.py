@@ -126,9 +126,16 @@ def test_create_project_form_exists_with_required_and_optional_fields_contract()
     assert 'id="workspaceCreateProjectCancelBtn"' in source
     assert 'id="workspaceCreateProjectStatus"' in source
 
-    # Backend-only concepts must not be surfaced as user-facing fields/labels.
+    # Backend-only concepts must not be surfaced as user-facing fields/labels
+    # in the Create Project form itself. Scoped to the form's own markup
+    # (rather than the whole file) because Checkpoint Proposals are a
+    # separate, intentionally-exposed feature elsewhere in the Workspace -
+    # see test_checkpoint_updates_section_exists_contract and friends below.
+    form_start = source.index('<form id="workspaceCreateProjectForm"')
+    form_end = source.index("</form>", form_start)
+    create_project_form_html = source[form_start:form_end].lower()
     for hidden_concept in ["revision", "checkpoint proposal", "schema_version", "activity store"]:
-        assert hidden_concept not in source.lower()
+        assert hidden_concept not in create_project_form_html
 
 
 def test_create_project_reuses_existing_post_projects_endpoint_contract():
