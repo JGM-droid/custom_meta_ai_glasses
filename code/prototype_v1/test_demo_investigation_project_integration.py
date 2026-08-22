@@ -153,6 +153,36 @@ def test_demo_investigation_completion_creates_exactly_one_project_activity(demo
     assert activity["metadata"]["investigation_result_id"]
 
 
+def test_demo_investigation_activity_projection_uses_domain_neutral_dry_run_text(demo_project_context):
+    # D2 Activity projection (result_id resolution, exactly-once creation,
+    # metadata) must keep working unchanged for a non-software Project, and
+    # the projected text must not carry the old hardcoded coding-specific
+    # dry-run response into Activity history.
+    client, *_rest = demo_project_context
+    project = _create_project(client, name="Upstairs AC Repair")
+
+    response = _post_demo_investigation(
+        client,
+        _two_images(),
+        project_id=project["project_id"],
+        user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+    )
+    snapshot = _wait_for_demo_terminal_snapshot(client, response.json()["demo_id"])
+    assert snapshot["status"] == "completed"
+    assert snapshot["retained_result"] is not None
+
+    activities = client.get(f"/projects/{project['project_id']}/activities")
+    assert activities.status_code == 200
+    body = activities.json()
+    assert len(body) == 1
+
+    activity_text = f"{body[0]['summary']} {body[0]['details']}".lower()
+    for banned_term in ["api.py", "copilot", "router", "include_router", "route registration"]:
+        assert banned_term not in activity_text
+    assert "dry-run mode does not perform real visual diagnosis" in activity_text
+    assert "capacitor" in activity_text
+
+
 def test_demo_investigation_project_isolation_between_a_and_b(demo_project_context):
     client, *_rest = demo_project_context
     project_a = _create_project(client, name="Project A")

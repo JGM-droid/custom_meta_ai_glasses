@@ -650,7 +650,7 @@ def test_demo_investigation_accepts_one_image_dry_run():
     assert snapshot["session_id"]
     assert snapshot["image_count"] == 1
     assert snapshot["image_order"] == ["1:first.png"]
-    assert "route registration" in snapshot["response"]["concise_diagnosis"].lower()
+    assert "dry-run mode does not perform real visual diagnosis" in snapshot["response"]["concise_diagnosis"].lower()
     assert snapshot["retained_result"] is None
     assert snapshot["product_action"]["copilot_prompt"]
     assert snapshot["product_action"]["why_this_should_work"]
@@ -684,12 +684,118 @@ def test_demo_investigation_accepts_two_images_dry_run():
     assert snapshot["session_id"]
     assert snapshot["image_count"] == 2
     assert snapshot["image_order"] == ["1:first.png", "2:second.png"]
-    assert "route registration" in snapshot["response"]["concise_diagnosis"].lower()
+    assert "dry-run mode does not perform real visual diagnosis" in snapshot["response"]["concise_diagnosis"].lower()
     assert snapshot["retained_result"]["image_count"] == 2
     assert snapshot["retained_result"]["image_order"] == ["1:first.png", "2:second.png"]
     assert snapshot["product_action"]["action_status"] in {"Prompt ready", "Verification required"}
     assert "Copilot" in snapshot["product_action"]["copilot_prompt"]
     assert len(snapshot["progress_events"]) >= 1
+
+
+_DRY_RUN_BANNED_CODING_TERMS = ["api.py", "copilot", "router", "include_router", "route registration"]
+
+
+def test_demo_investigation_dry_run_hvac_explanation_has_no_coding_terminology():
+    response = _post_demo_investigation(
+        [_image_part("capacitor.png", b"1"), _image_part("outdoor_unit.png", b"2")],
+        user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+    )
+    assert response.status_code == 202
+    snapshot = _wait_for_demo_terminal_snapshot(response.json()["demo_id"])
+    assert snapshot["status"] == "completed"
+
+    result = snapshot["response"]
+    combined_text = " ".join(
+        [result["concise_diagnosis"], result["immediate_recommended_action"]] + result["supporting_observations"]
+    ).lower()
+    for banned_term in _DRY_RUN_BANNED_CODING_TERMS:
+        assert banned_term not in combined_text
+
+    assert "dry-run mode does not perform real visual diagnosis" in result["concise_diagnosis"].lower()
+    assert "capacitor" in result["concise_diagnosis"].lower()
+
+
+def test_demo_investigation_dry_run_user_explanation_framed_as_unconfirmed():
+    response = _post_demo_investigation(
+        [_image_part("capacitor.png", b"1"), _image_part("outdoor_unit.png", b"2")],
+        user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+    )
+    assert response.status_code == 202
+    snapshot = _wait_for_demo_terminal_snapshot(response.json()["demo_id"])
+    assert snapshot["status"] == "completed"
+
+    diagnosis = snapshot["response"]["concise_diagnosis"]
+    # The user's own words must appear only as an explicitly unconfirmed,
+    # user-supplied quote - never restated as an AI-derived finding.
+    assert "not a confirmed finding" in diagnosis.lower()
+    assert "user-provided context" in diagnosis.lower()
+    assert "capacitor looks swollen" in diagnosis.lower()
+
+
+def test_demo_investigation_dry_run_software_explanation_uses_identical_template_no_domain_branching():
+    hvac_response = _post_demo_investigation(
+        [_image_part("first.png", b"1"), _image_part("second.png", b"2")],
+        user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+    )
+    hvac_snapshot = _wait_for_demo_terminal_snapshot(hvac_response.json()["demo_id"])
+
+    software_response = _post_demo_investigation(
+        [_image_part("first.png", b"1"), _image_part("second.png", b"2")],
+        user_explanation="The login endpoint returns 500 after the last deploy.",
+    )
+    software_snapshot = _wait_for_demo_terminal_snapshot(software_response.json()["demo_id"])
+
+    assert hvac_snapshot["status"] == "completed"
+    assert software_snapshot["status"] == "completed"
+
+    # Identical structural template and identical (fully static, non-domain)
+    # recommended action across both - proves there is no per-domain
+    # classifier or special-case branch, only the same template applied to
+    # whatever explanation was provided.
+    diagnosis_prefix = "Investigation evidence was captured for review. Dry-run mode does not perform real visual diagnosis."
+    assert hvac_snapshot["response"]["concise_diagnosis"].startswith(diagnosis_prefix)
+    assert software_snapshot["response"]["concise_diagnosis"].startswith(diagnosis_prefix)
+    assert (
+        hvac_snapshot["response"]["immediate_recommended_action"]
+        == software_snapshot["response"]["immediate_recommended_action"]
+    )
+    assert hvac_snapshot["response"]["confidence_or_uncertainty"] == software_snapshot["response"]["confidence_or_uncertainty"]
+
+
+def test_demo_investigation_dry_run_is_deterministic_for_same_input():
+    def _run():
+        response = _post_demo_investigation(
+            [_image_part("capacitor.png", b"1"), _image_part("outdoor_unit.png", b"2")],
+            user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+        )
+        snapshot = _wait_for_demo_terminal_snapshot(response.json()["demo_id"])
+        assert snapshot["status"] == "completed"
+        return snapshot["response"]
+
+    first = _run()
+    second = _run()
+
+    assert first["concise_diagnosis"] == second["concise_diagnosis"]
+    assert first["immediate_recommended_action"] == second["immediate_recommended_action"]
+    assert first["supporting_observations"] == second["supporting_observations"]
+    assert first["confidence_or_uncertainty"] == second["confidence_or_uncertainty"]
+    assert first["follow_up_capture_request"] == second["follow_up_capture_request"]
+
+
+def test_demo_investigation_dry_run_makes_no_openai_provider_call(monkeypatch):
+    class _RaisingOpenAIProvider:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("OpenAIInvestigationAnalysisProvider must not be constructed for dry_run mode.")
+
+    monkeypatch.setattr(api, "OpenAIInvestigationAnalysisProvider", _RaisingOpenAIProvider)
+
+    response = _post_demo_investigation(
+        [_image_part("capacitor.png", b"1"), _image_part("outdoor_unit.png", b"2")],
+        user_explanation="Outdoor AC unit capacitor looks swollen, coils are not getting cold.",
+    )
+    assert response.status_code == 202
+    snapshot = _wait_for_demo_terminal_snapshot(response.json()["demo_id"])
+    assert snapshot["status"] == "completed"
 
 
 def test_demo_investigation_accepts_three_images_dry_run():

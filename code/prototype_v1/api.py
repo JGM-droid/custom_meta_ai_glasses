@@ -468,22 +468,45 @@ class _SessionRouteResultPersistence:
 
 
 class _DemoDryRunProvider:
+    # Deterministic, zero-AI stand-in used by dry-run demo Investigations
+    # (see start_demo_investigation / InvestigationDemoMode.DRY_RUN). Must stay
+    # domain-neutral: it is exercised for arbitrary Project types (e.g. an
+    # HVAC "Upstairs AC Repair" Investigation, not just coding Projects), and
+    # must never claim to have actually diagnosed the evidence - only "live"
+    # mode (OpenAIInvestigationAnalysisProvider) performs real analysis.
     def __init__(self, model: str):
         self.model = model
 
     def analyze(self, request_package) -> InvestigationAnalysisResponse:
+        evidence_count = len(request_package.ordered_evidence_inputs)
+        explanation = str(request_package.normalized_explanation_text or "").strip()
+
+        observations = [
+            f"Received {evidence_count} image(s) in preserved order.",
+            "Dry-run mode performed no real visual analysis and made no OpenAI network call.",
+        ]
+
+        if explanation:
+            # Echoed back only as unconfirmed, user-supplied context - never
+            # restated as if it were an AI-derived finding.
+            context_snippet = _truncate_activity_summary(explanation, 300)
+            diagnosis = _truncate_activity_summary(
+                "Investigation evidence was captured for review. Dry-run mode does not perform real visual "
+                f'diagnosis. User-provided context (not a confirmed finding): "{context_snippet}"',
+                500,
+            )
+            observations.append(f'User-provided context (not a confirmed finding): "{context_snippet}"')
+        else:
+            diagnosis = "Investigation evidence was captured for review. Dry-run mode does not perform real visual diagnosis."
+
         return InvestigationAnalysisResponse(
             schema_version=INVESTIGATION_ANALYSIS_RESPONSE_SCHEMA_VERSION,
-            concise_diagnosis="The endpoint appears implemented, but the route registration step is likely missing in api.py, so requests may not reach the handler.",
-            immediate_recommended_action="Ask Copilot to verify router registration in api.py and add only the missing include_router wiring without changing unrelated endpoints.",
-            supporting_observations=[
-                f"Received {len(request_package.ordered_evidence_inputs)} image(s) in preserved order.",
-                "The captured workflow indicates implementation progress but unresolved runtime behavior.",
-                "Dry-run mode used deterministic analysis with no OpenAI network call.",
-            ],
-            confidence_or_uncertainty="Moderate confidence from deterministic dry-run evidence; verify with focused tests.",
+            concise_diagnosis=diagnosis,
+            immediate_recommended_action="Review the captured evidence and verify the suspected issue described in the investigation before updating Project state.",
+            supporting_observations=observations,
+            confidence_or_uncertainty="Not applicable - dry-run mode performs no real analysis and reports no confidence level.",
             warning_or_blocker=None,
-            follow_up_capture_request="After applying the Copilot change and running tests, capture another screenshot so verification can confirm the fix.",
+            follow_up_capture_request="Capture additional evidence as needed, then re-run analysis in live mode for a real diagnosis.",
         )
 
 
