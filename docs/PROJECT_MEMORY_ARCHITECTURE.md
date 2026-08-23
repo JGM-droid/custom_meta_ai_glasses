@@ -993,10 +993,28 @@ Status: APPROVED ROADMAP. None of the items in this section are implemented. The
 - Ideas are separate from the Roadmap until explicitly promoted (ADR-048) - the core anti-drift guardrail: a Project exploring an unrelated idea records it as an Idea, not a silent change to current work.
 - CONTINUE / DISAGREE / MORE EVIDENCE is the approved user-facing terminology for the AI-hypothesis review loop (ADR-049), refining ADR-042's provisional "Correct" wording. DISAGREE never requires the user to know the right answer.
 - Evidence relates to the Finding/Activity/Decision/Investigation it supports (ADR-050), not a flat per-Project gallery.
+
 - Recent Important Changes is a filtered, meaningful-only view distinct from raw History (ADR-051), derived from existing Activities/Checkpoint transitions rather than a new store.
 - Universal kernel, not domain templates: a single set of core concepts (Objective, Current State, Roadmap, Next Action, History, Evidence, Decisions, Findings, Open Questions, Blockers, Outcomes, Ideas) is the approved MVP scope across Project types (software, field repair, construction, IT incident, etc.). Domain-specific specialization (e.g. HVAC asset/complaint/measurement fields, construction punch lists) is explicitly deferred post-MVP and does not require a new ADR to remain deferred.
 - "Who has the ball" (representing who/what owns the next action - user, a specific AI agent, an external party) remains a research/roadmap idea, not approved for MVP scope, unless a future slice's implementation shows it falls out nearly for free from existing structures.
 - Automatic Project Drift detection (recognizing conversation has branched from the current objective/milestone/task and proactively offering to capture it as an Idea) remains a future idea, not MVP. The one MVP-relevant behavior this protects - Ideas being separate from the Roadmap until promoted (ADR-048) - is already in scope without needing automatic detection.
+
+### Universal Project Workspace MVP Milestone 1 - Implemented (Project Orientation / Roadmap Backend Contract)
+
+Implemented:
+
+- Read-only, project-scoped `GET /projects/{project_id}/orientation` endpoint.
+- Deterministic orientation assembled entirely from application-owned Project and Activity state; no OpenAI/model/provider call occurs.
+- Project identity fields: `project_id`, `name`, `status`, and `objective` (`Project.goal`).
+- Checkpoint precedence is explicit and non-merging: `current_objective` supplies `where_we_are`, `current_work` supplies `now`, `next_action` supplies `next`, and `blockers` supplies `blockers`. Roadmap Activities do not override or synthesize these fields.
+- Roadmap convention: an existing `ProjectActivity` is included only when `metadata.roadmap_status` is exactly one of `completed`, `current`, `upcoming`, or `deferred`. Untagged Activities and unknown values are excluded.
+- Each Roadmap group returns full existing Activity records in the Activity store's deterministic order: `occurred_at_utc`, then `created_at_utc`, then `activity_id`.
+- Empty Roadmap state returns all four groups as empty lists; absent Checkpoint values return `null`.
+- The read does not mutate Project revision/timestamps/checkpoint, Activities, proposals, or the Active Project pointer.
+
+No new persistence abstraction or Roadmap write endpoint was added. Existing Activity append and Checkpoint Proposal validation remain the available write foundations; consequential state evolution must continue through the approved validation rules.
+
+Not implemented by Milestone 1: Milestones 2-5 (Trusted AI Loop, Project Knowledge, Ideas / Plan Control, and MVP Demo Hardening), including `IDEA`, any Roadmap editing/reordering API, and all Android/UI work.
 
 ### Project Update Proposal / trust model evolution - ADR-042, ADR-043
 

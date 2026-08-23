@@ -13,6 +13,7 @@ PROJECT_ACTIVITY_SCHEMA_VERSION = "1.0"
 CHECKPOINT_PROPOSAL_SCHEMA_VERSION = "1.0"
 PROJECT_CONTEXT_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION = "1.0"
+PROJECT_ORIENTATION_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -302,6 +303,39 @@ class ProjectActivityCreateRequest(BaseModel):
         if value.tzinfo is None:
             raise ValueError("occurred_at_utc must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
+
+
+class ProjectRoadmap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    completed: list[ProjectActivity] = Field(default_factory=list)
+    current: list[ProjectActivity] = Field(default_factory=list)
+    upcoming: list[ProjectActivity] = Field(default_factory=list)
+    deferred: list[ProjectActivity] = Field(default_factory=list)
+
+
+class ProjectOrientation(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    project_id: str
+    name: str
+    status: ProjectStatus
+    objective: str
+    where_we_are: str | None = None
+    now: str | None = None
+    next: str | None = None
+    blockers: str | None = None
+    roadmap: ProjectRoadmap = Field(default_factory=ProjectRoadmap)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_orientation_schema_version(cls, value: str) -> str:
+        if value != PROJECT_ORIENTATION_SCHEMA_VERSION:
+            raise ValueError(
+                f"Unsupported schema_version. Use {PROJECT_ORIENTATION_SCHEMA_VERSION}."
+            )
+        return value
 
 
 class CheckpointProposalPatch(BaseModel):

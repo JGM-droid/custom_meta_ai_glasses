@@ -2,6 +2,7 @@ from .models import (
     ACTIVE_PROJECT_POINTER_SCHEMA_VERSION,
     CHECKPOINT_PROPOSAL_SCHEMA_VERSION,
     PROJECT_ACTIVITY_SCHEMA_VERSION,
+    PROJECT_ORIENTATION_SCHEMA_VERSION,
     PROJECT_SCHEMA_VERSION,
     ActiveProjectPointer,
     CheckpointProposal,
@@ -22,6 +23,8 @@ from .models import (
     ProjectActivitySourceType,
     ProjectActivityType,
     ProjectInvestigationSummary,
+    ProjectOrientation,
+    ProjectRoadmap,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -29,6 +32,12 @@ from .models import (
     ProjectSummary,
     create_new_project,
     to_project_summary,
+)
+from .project_orientation import (
+    ROADMAP_STATUSES,
+    ROADMAP_STATUS_METADATA_KEY,
+    ProjectOrientationError,
+    ProjectOrientationReader,
 )
 from .checkpoint_proposal_store import (
     CheckpointProposalForeignActivityReference,
@@ -73,6 +82,7 @@ __all__ = [
     "ACTIVE_PROJECT_POINTER_SCHEMA_VERSION",
     "CHECKPOINT_PROPOSAL_SCHEMA_VERSION",
     "PROJECT_ACTIVITY_SCHEMA_VERSION",
+    "PROJECT_ORIENTATION_SCHEMA_VERSION",
     "PROJECT_SCHEMA_VERSION",
     "ActiveProjectPointer",
     "CheckpointProposal",
@@ -93,6 +103,8 @@ __all__ = [
     "ProjectActivitySourceType",
     "ProjectActivityType",
     "ProjectInvestigationSummary",
+    "ProjectOrientation",
+    "ProjectRoadmap",
     "ProjectCheckpoint",
     "ProjectCheckpointPatchRequest",
     "ProjectCreateRequest",
@@ -128,4 +140,8 @@ __all__ = [
     "ProjectInvalidId",
     "ProjectRevisionConflict",
     "ActiveProjectNotSet",
+    "ROADMAP_STATUSES",
+    "ROADMAP_STATUS_METADATA_KEY",
+    "ProjectOrientationError",
+    "ProjectOrientationReader",
 ]

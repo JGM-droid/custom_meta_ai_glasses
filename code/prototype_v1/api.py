@@ -139,6 +139,9 @@ from projects import (
     DEFAULT_RECENT_ACTIVITY_LIMIT,
     DEFAULT_RECENT_INVESTIGATION_LIMIT,
     ProjectInvalidId,
+    ProjectOrientation,
+    ProjectOrientationError,
+    ProjectOrientationReader,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -2944,6 +2947,22 @@ async def get_project(project_id: str) -> Project:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectStoreError:
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/orientation", response_model=ProjectOrientation)
+async def get_project_orientation(project_id: str) -> ProjectOrientation:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    reader = ProjectOrientationReader(PROJECT_STORE, PROJECT_ACTIVITY_STORE)
+    try:
+        return reader.get_orientation(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
+    except ProjectActivityStoreError:
+        _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+    except ProjectOrientationError:
+        _raise_project_http_error(status_code=500, category="project_orientation_unavailable", message="Project orientation is unavailable.")
 
 
 @app.get("/projects/{project_id}/context", response_model=ProjectContextPack)
