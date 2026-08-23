@@ -1069,6 +1069,28 @@ No AI-generated Ideas, automatic promotion/prioritization, Roadmap reorder, UI/A
 
 Implemented MVP milestones: 1-4. Not implemented: Milestone 5 (MVP Demo Hardening).
 
+### Universal Project Workspace MVP Milestone 5 - Implemented (MVP Demo Hardening / Feature Freeze)
+
+Implemented:
+
+- Standalone desktop demo at `GET /mvp-demo`. It intentionally leaves the existing dashboard and phone-navigation work untouched while exposing the locked MVP backend contracts in one usable surface.
+- The deterministic AC Repair bootstrap creates Project identity, checkpoint orientation, and completed/current/upcoming/deferred Roadmap Activities using only existing Project APIs.
+- The demo supports project-scoped evidence capture and the existing offline `dry_run` Investigation path, shows the retained inferred AI result, and exposes CONTINUE / DISAGREE / MORE EVIDENCE. CONTINUE still requires the user to apply its pending Checkpoint Proposal before the recommendation becomes canonical Project state.
+- Project Knowledge renders Recent Important Changes, Evidence, Decisions, confirmed Findings, and History without reclassifying inferred AI output as confirmed knowledge.
+- Ideas remain outside the Roadmap until the user explicitly promotes one; promotion creates linked upcoming Roadmap work through the Milestone 4 contract.
+- `test_mvp_demo_hardening_milestone5.py` is the deterministic end-to-end acceptance harness. It covers the complete AC Repair loop, explicit trust/proposal semantics, knowledge projection, Idea promotion linkage, store reconstruction (process-restart equivalent), Project isolation, and an offline/no-provider guarantee.
+- Reload behavior is application-owned: after a page reload, selecting the Project reconstructs the same orientation, Roadmap, knowledge, and ideas from persisted stores rather than conversation or browser state.
+
+Known MVP limitations:
+
+- The page is a focused demonstration surface, not a replacement or redesign of the existing dashboard.
+- Offline demo analysis is deterministic fixture behavior for acceptance/demo use; it is not a new diagnosis model or generalized domain engine.
+- Confirming a Finding still requires an explicit existing Activity write; a CONTINUE decision accepts a working hypothesis but never self-confirms model output.
+- There is no Roadmap drag/reorder, automatic Idea promotion, drift detection, Project Memory Index, generalized workflow engine, domain-specific HVAC schema, cross-agent handoff system, or new Android/glasses workflow in this milestone.
+- Android attribution and glasses behavior remain unchanged because neither was a blocker to the backend/desktop MVP demonstration.
+
+MVP FEATURE DEVELOPMENT IS FROZEN. Milestones 1-5 form the locked Universal Project Workspace MVP boundary. Further feature work requires a separately approved post-MVP milestone; maintenance may fix regressions without expanding scope.
+
 ### Project Update Proposal / trust model evolution - ADR-042, ADR-043
 
 - Extends the existing Phase C2 Checkpoint Proposal mechanism (`pending`/`applied`/`rejected`, ADR-022 through ADR-027) and the provenance categories already anticipated in ADR-010, into an explicit graduated progression: Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome.

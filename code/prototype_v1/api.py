@@ -209,6 +209,7 @@ INVESTIGATION_SESSIONS_ROOT = RESULTS_DIR / "investigation_sessions"
 PROJECTS_ROOT = RESULTS_DIR / "projects"
 CONTEXT_FUSION_JSON = RESULTS_DIR / "context_fusion.json"
 DISPLAY_HTML = BASE_DIR / "glasses_display_mock.html"
+MVP_DEMO_HTML = BASE_DIR / "mvp_demo.html"
 GLASSES_WEBAPP_DIR = BASE_DIR / "glasses_webapp"
 GLASSES_WEBAPP_INDEX = GLASSES_WEBAPP_DIR / "index.html"
 GLASSES_API_TOKEN = (os.environ.get("GLASSES_API_TOKEN") or "").strip()
@@ -2365,6 +2366,13 @@ async def dashboard_page():
     if not dashboard_html.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found.")
     return FileResponse(str(dashboard_html), media_type="text/html")
+
+
+@app.get("/mvp-demo", response_class=FileResponse)
+async def mvp_demo_page():
+    if not MVP_DEMO_HTML.exists():
+        raise HTTPException(status_code=404, detail="MVP demo not found.")
+    return FileResponse(str(MVP_DEMO_HTML), media_type="text/html")
 
 
 # Legacy UI shell routes retained for existing local demo flows.
