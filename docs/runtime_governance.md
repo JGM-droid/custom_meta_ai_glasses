@@ -47,6 +47,14 @@ If another document conflicts with this section, this section wins.
 - `launch_demo.py` is the official operator launcher for tunnel-aware demo startup and endpoint validation.
 - Diagnostic scripts such as `https_tunnel_readiness.py` and `https_tunnel_test_runner.py` are support tools and do not replace canonical startup ownership.
 
+### Stable Public Backend Domain
+
+- Verified registered/root domain (confirmed from the owner's Cloudflare Registrar email): `customaiglasses.us`.
+- Verified locally configured API hostname: `glasses-api.customaiglasses.us`. The local cloudflared ingress configuration maps this hostname to `http://127.0.0.1:8001`. This records the intended permanent hostname; the local configuration alone does not prove that its DNS record or tunnel is currently active.
+- Intended connectivity model: Android / glasses -> `https://glasses-api.customaiglasses.us` -> Cloudflare Tunnel -> `http://127.0.0.1:8001`.
+- This stable, project-owned hostname is intended to prevent Android/glasses clients from depending on temporary `trycloudflare.com` URLs or changing LAN IP addresses.
+- Android currently uses a local/LAN backend configuration. Once the tunnel and DNS mapping are confirmed active, Android should use `https://glasses-api.customaiglasses.us` as its backend base URL.
+
 ### Environment/Secret Loading
 
 - `code/prototype_v1/api.py` loads the repository's `.env` file into its own process environment once at module import (`load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)`), before any `os.environ`-based configuration (OpenAI key, model name, tokens) is read. A real shell-exported value always takes precedence over `.env`.
