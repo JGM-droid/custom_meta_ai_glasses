@@ -150,6 +150,11 @@ from projects import (
     ProjectKnowledge,
     ProjectKnowledgeError,
     ProjectKnowledgeReader,
+    ProjectIdeaCreateRequest,
+    ProjectIdeaList,
+    ProjectIdeaNotFound,
+    ProjectIdeaPromotionResponse,
+    ProjectIdeaService,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -3027,6 +3032,45 @@ async def get_project_knowledge(project_id: str) -> ProjectKnowledge:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationSessionStoreError, InvestigationEvidenceStoreError, ProjectKnowledgeError):
         _raise_project_http_error(status_code=500, category="project_knowledge_unavailable", message="Project knowledge is unavailable.")
+
+
+@app.post("/projects/{project_id}/ideas", response_model=ProjectActivity, status_code=201)
+async def create_project_idea(project_id: str, payload: dict[str, object] | None = None) -> ProjectActivity:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectIdeaCreateRequest.model_validate(payload or {})
+        return ProjectIdeaService(PROJECT_ACTIVITY_STORE).create_idea(normalized_project_id, request)
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError):
+        _raise_project_http_error(status_code=500, category="project_idea_storage_error", message="Project Ideas are unavailable.")
+
+
+@app.get("/projects/{project_id}/ideas", response_model=ProjectIdeaList)
+async def list_project_ideas(project_id: str) -> ProjectIdeaList:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return ProjectIdeaService(PROJECT_ACTIVITY_STORE).list_ideas(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError):
+        _raise_project_http_error(status_code=500, category="project_idea_storage_error", message="Project Ideas are unavailable.")
+
+
+@app.post("/projects/{project_id}/ideas/{activity_id}/promote", response_model=ProjectIdeaPromotionResponse)
+async def promote_project_idea(project_id: str, activity_id: str) -> ProjectIdeaPromotionResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_activity_id = _validate_activity_id_or_422(activity_id)
+    try:
+        return ProjectIdeaService(PROJECT_ACTIVITY_STORE).promote(normalized_project_id, normalized_activity_id)
+    except (ProjectActivityNotFound, ProjectIdeaNotFound):
+        _raise_project_http_error(status_code=404, category="idea_not_found", message="Idea does not exist.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError):
+        _raise_project_http_error(status_code=500, category="project_idea_storage_error", message="Project Ideas are unavailable.")
 
 
 @app.get("/projects/{project_id}/context", response_model=ProjectContextPack)

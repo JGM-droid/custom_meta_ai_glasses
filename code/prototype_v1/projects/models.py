@@ -16,6 +16,7 @@ PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_ORIENTATION_SCHEMA_VERSION = "1.0"
 PROJECT_TRUST_STATE_SCHEMA_VERSION = "1.0"
 PROJECT_KNOWLEDGE_SCHEMA_VERSION = "1.0"
+PROJECT_IDEA_LIST_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -41,6 +42,8 @@ class ProjectActivityType(str, Enum):
     DECISION = "decision"
     BLOCKER = "blocker"
     MILESTONE = "milestone"
+    IDEA = "idea"
+    OPEN_QUESTION = "open_question"
 
 
 class ProjectActivitySourceType(str, Enum):
@@ -311,6 +314,31 @@ class ProjectActivityCreateRequest(BaseModel):
         if value.tzinfo is None:
             raise ValueError("occurred_at_utc must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
+
+
+class ProjectIdeaCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    summary: str = Field(..., min_length=1, max_length=_MAX_ACTIVITY_SUMMARY_LENGTH)
+    details: str | None = Field(default=None, max_length=_MAX_ACTIVITY_DETAILS_LENGTH)
+    metadata: dict[str, str | int | float | bool | None] | None = None
+
+
+class ProjectIdeaList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    project_id: str
+    limit: int
+    ideas: list[ProjectActivity] = Field(default_factory=list)
+
+
+class ProjectIdeaPromotionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idea: ProjectActivity
+    roadmap_activity: ProjectActivity
+    created: bool
 
 
 class ProjectRoadmap(BaseModel):

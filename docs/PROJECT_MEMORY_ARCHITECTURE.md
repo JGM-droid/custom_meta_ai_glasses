@@ -1051,6 +1051,24 @@ No new knowledge persistence, Evidence media duplication, Decision/Finding CRUD,
 
 Implemented MVP milestones: 1-3. Not implemented: Milestones 4-5 (Ideas / Plan Control and MVP Demo Hardening).
 
+### Universal Project Workspace MVP Milestone 4 - Implemented (Ideas / Plan Control Backend Contract)
+
+Implemented:
+
+- `IDEA` and `OPEN_QUESTION` are explicit `ProjectActivityType` values. Both reuse project-scoped append-only Activity persistence and existing provenance/ordering guarantees; no Ideas store was added.
+- Idea routes: `POST /projects/{project_id}/ideas`, bounded deterministic `GET /projects/{project_id}/ideas`, and explicit `POST /projects/{project_id}/ideas/{activity_id}/promote`.
+- Idea creation produces a user/reported `IDEA` Activity with `metadata.idea_state=captured`. It does not mutate Project/checkpoint/revision, Roadmap, Findings, Decisions, blockers, current work, or next action.
+- Idea listing returns newest first, bounded to 100 Activities, and reports the bound.
+- Promotion validates project ownership and Idea type, preserves the original Idea unchanged, and creates a new user/reported `MILESTONE` Activity with `roadmap_status=upcoming` and `promoted_from_activity_id=<idea activity id>`. It does not apply a Checkpoint Proposal or change current/next work.
+- Duplicate promotion is sequentially idempotent: if a Roadmap Activity already references the Idea via `promoted_from_activity_id`, the route returns the existing Activity with `created=false` rather than creating duplicate Roadmap work.
+- The promoted Activity naturally appears in Milestone 1 Orientation through the existing Roadmap metadata convention. Unpromoted Ideas/Open Questions appear in Milestone 3 History only; promotion is visible in Recent Important Changes because the new record is a `MILESTONE`. Neither Ideas nor Open Questions are classified as Evidence, Decisions, or Findings.
+- Open Questions use the existing generic Activity create/list APIs; no redundant Open Question CRUD surface was introduced.
+- All Idea operations are deterministic, project-scoped, append-only, and zero-AI.
+
+No AI-generated Ideas, automatic promotion/prioritization, Roadmap reorder, UI/Android/glasses work, drift detection, Project Memory Index, or generalized workflow engine was added.
+
+Implemented MVP milestones: 1-4. Not implemented: Milestone 5 (MVP Demo Hardening).
+
 ### Project Update Proposal / trust model evolution - ADR-042, ADR-043
 
 - Extends the existing Phase C2 Checkpoint Proposal mechanism (`pending`/`applied`/`rejected`, ADR-022 through ADR-027) and the provenance categories already anticipated in ADR-010, into an explicit graduated progression: Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome.
