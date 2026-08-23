@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 
@@ -119,6 +120,87 @@ def test_more_evidence_keeps_original_and_creates_linked_follow_up(trust_context
     assert client.get(f"/projects/{project['project_id']}/investigation-sessions/{session_id}").json() == original_session
     follow_up = client.get(f"/projects/{project['project_id']}/investigation-sessions/{follow_up_id}").json()
     assert follow_up["status"] == "created"
+
+
+@pytest.mark.parametrize("decision", ["continue", "more_evidence"])
+def test_equivalent_repeated_trust_decision_reuses_canonical_records(trust_context, monkeypatch, decision):
+    client, _projects_root, _sessions_root = trust_context
+    project, session_id = _completed_investigation(client, monkeypatch)
+    path = f"/projects/{project['project_id']}/investigation-sessions/{session_id}/trust-decision"
+
+    first = client.post(path, json={"decision": decision})
+    second = client.post(path, json={"decision": decision})
+
+    assert first.status_code == second.status_code == 201
+    first_body, second_body = first.json(), second.json()
+    assert second_body["decision_activity"]["activity_id"] == first_body["decision_activity"]["activity_id"]
+    if decision == "continue":
+        assert second_body["checkpoint_proposal"]["proposal_id"] == first_body["checkpoint_proposal"]["proposal_id"]
+        assert second_body["checkpoint_proposal"]["status"] == "pending"
+    else:
+        assert second_body["trust_state"]["follow_up_investigation_session_id"] == first_body["trust_state"]["follow_up_investigation_session_id"]
+
+
+@pytest.mark.parametrize("decision", ["continue", "more_evidence"])
+def test_concurrent_equivalent_trust_decision_is_exactly_once(trust_context, monkeypatch, decision):
+    client, _projects_root, _sessions_root = trust_context
+    project, session_id = _completed_investigation(client, monkeypatch)
+    path = f"/projects/{project['project_id']}/investigation-sessions/{session_id}/trust-decision"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(lambda _: client.post(path, json={"decision": decision}), range(2)))
+
+    assert all(response.status_code == 201 for response in responses)
+    bodies = [response.json() for response in responses]
+    assert len({body["decision_activity"]["activity_id"] for body in bodies}) == 1
+    if decision == "continue":
+        assert len({body["checkpoint_proposal"]["proposal_id"] for body in bodies}) == 1
+    else:
+        assert len({body["trust_state"]["follow_up_investigation_session_id"] for body in bodies}) == 1
+
+
+def test_different_later_trust_decision_remains_append_only(trust_context, monkeypatch):
+    client, _projects_root, _sessions_root = trust_context
+    project, session_id = _completed_investigation(client, monkeypatch)
+    path = f"/projects/{project['project_id']}/investigation-sessions/{session_id}/trust-decision"
+
+    continued = client.post(path, json={"decision": "continue"}).json()
+    disagreed = client.post(path, json={"decision": "disagree", "correction": "Measured value is in range."}).json()
+    continued_again = client.post(path, json={"decision": "continue"}).json()
+
+    assert len({
+        continued["decision_activity"]["activity_id"],
+        disagreed["decision_activity"]["activity_id"],
+        continued_again["decision_activity"]["activity_id"],
+    }) == 3
+    assert continued_again["checkpoint_proposal"]["proposal_id"] != continued["checkpoint_proposal"]["proposal_id"]
+
+
+def test_continue_retry_reconstructs_missing_proposal_without_duplicate_decision(trust_context, monkeypatch):
+    client, _projects_root, _sessions_root = trust_context
+    project, session_id = _completed_investigation(client, monkeypatch)
+    path = f"/projects/{project['project_id']}/investigation-sessions/{session_id}/trust-decision"
+    original_create = api.CHECKPOINT_PROPOSAL_STORE.create_proposal
+    calls = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise api.CheckpointProposalStoreError("injected write failure")
+        return original_create(*args, **kwargs)
+
+    monkeypatch.setattr(api.CHECKPOINT_PROPOSAL_STORE, "create_proposal", fail_once)
+    assert client.post(path, json={"decision": "continue"}).status_code == 500
+    retried = client.post(path, json={"decision": "continue"})
+
+    assert retried.status_code == 201
+    assert retried.json()["checkpoint_proposal"]["status"] == "pending"
+    decisions = [
+        item for item in client.get(f"/projects/{project['project_id']}/activities").json()
+        if (item.get("metadata") or {}).get("trust_decision") == "continue"
+    ]
+    assert len(decisions) == 1
 
 
 def test_trust_read_is_isolated_deterministic_non_mutating_and_zero_ai(trust_context, monkeypatch):

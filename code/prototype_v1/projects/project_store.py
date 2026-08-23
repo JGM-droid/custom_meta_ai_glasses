@@ -60,13 +60,13 @@ class ProjectStore:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
         self._global_lock = threading.Lock()
-        self._project_locks: dict[str, threading.Lock] = {}
+        self._project_locks: dict[str, threading.RLock] = {}
 
-    def _get_project_lock(self, project_id: str) -> threading.Lock:
+    def _get_project_lock(self, project_id: str) -> threading.RLock:
         with self._global_lock:
             lock = self._project_locks.get(project_id)
             if lock is None:
-                lock = threading.Lock()
+                lock = threading.RLock()
                 self._project_locks[project_id] = lock
             return lock
 

@@ -52,20 +52,23 @@ class ProjectIdeaService:
         )
 
     def promote(self, project_id: str, activity_id: str) -> ProjectIdeaPromotionResponse:
-        idea = self.activity_store.load_activity(project_id, activity_id)
-        if idea.activity_type != ProjectActivityType.IDEA:
-            raise ProjectIdeaNotFound("Idea does not exist.")
-        activities = self.activity_store.list_activities(project_id)
-        existing = next((item for item in activities
-                         if (item.metadata or {}).get(PROMOTED_FROM_METADATA_KEY) == idea.activity_id), None)
-        if existing is not None:
-            return ProjectIdeaPromotionResponse(idea=idea, roadmap_activity=existing, created=False)
-        roadmap = self.activity_store.create_activity(project_id, ProjectActivityCreateRequest(
-            activity_type=ProjectActivityType.MILESTONE,
-            source_type=ProjectActivitySourceType.USER,
-            confirmation_status=ProjectActivityConfirmationStatus.REPORTED,
-            summary=idea.summary,
-            details=idea.details,
-            metadata={"roadmap_status": "upcoming", PROMOTED_FROM_METADATA_KEY: idea.activity_id},
-        ))
-        return ProjectIdeaPromotionResponse(idea=idea, roadmap_activity=roadmap, created=True)
+        normalized_project_id = self.activity_store.project_store.validate_project_id(project_id)
+        project_lock = self.activity_store.project_store._get_project_lock(normalized_project_id)
+        with project_lock:
+            idea = self.activity_store.load_activity(normalized_project_id, activity_id)
+            if idea.activity_type != ProjectActivityType.IDEA:
+                raise ProjectIdeaNotFound("Idea does not exist.")
+            activities = self.activity_store.list_activities(normalized_project_id)
+            existing = next((item for item in activities
+                             if (item.metadata or {}).get(PROMOTED_FROM_METADATA_KEY) == idea.activity_id), None)
+            if existing is not None:
+                return ProjectIdeaPromotionResponse(idea=idea, roadmap_activity=existing, created=False)
+            roadmap = self.activity_store.create_activity(normalized_project_id, ProjectActivityCreateRequest(
+                activity_type=ProjectActivityType.MILESTONE,
+                source_type=ProjectActivitySourceType.USER,
+                confirmation_status=ProjectActivityConfirmationStatus.REPORTED,
+                summary=idea.summary,
+                details=idea.details,
+                metadata={"roadmap_status": "upcoming", PROMOTED_FROM_METADATA_KEY: idea.activity_id},
+            ))
+            return ProjectIdeaPromotionResponse(idea=idea, roadmap_activity=roadmap, created=True)

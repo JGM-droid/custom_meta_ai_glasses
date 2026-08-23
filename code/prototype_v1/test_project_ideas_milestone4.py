@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 
@@ -98,6 +99,26 @@ def test_promotion_preserves_idea_creates_upcoming_roadmap_and_is_idempotent(ide
     knowledge = client.get(f"/projects/{project['project_id']}/knowledge").json()
     assert roadmap["activity_id"] in {item["activity_id"] for item in knowledge["recent_important_changes"]}
     assert idea["activity_id"] not in {item["activity_id"] for item in knowledge["recent_important_changes"]}
+
+
+def test_concurrent_promotion_creates_exactly_one_roadmap_activity(idea_context):
+    client = idea_context
+    project = _project(client)
+    idea = _idea(client, project["project_id"], "Concurrent promotion")
+    path = f"/projects/{project['project_id']}/ideas/{idea['activity_id']}/promote"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(lambda _: client.post(path), range(2)))
+
+    assert all(response.status_code == 200 for response in responses)
+    bodies = [response.json() for response in responses]
+    assert sorted(body["created"] for body in bodies) == [False, True]
+    assert len({body["roadmap_activity"]["activity_id"] for body in bodies}) == 1
+    promoted = [
+        item for item in client.get(f"/projects/{project['project_id']}/activities").json()
+        if (item.get("metadata") or {}).get("promoted_from_activity_id") == idea["activity_id"]
+    ]
+    assert len(promoted) == 1
 
 
 def test_cross_project_promotion_rejected_and_open_question_type_supported(idea_context):
