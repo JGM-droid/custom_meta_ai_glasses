@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Architecture Guardian"
+  short_description: "Review plans and diffs against architecture"
+  default_prompt: "Use $custom-meta-ai-glasses-architecture-guardian to perform a read-only architecture review of this change."

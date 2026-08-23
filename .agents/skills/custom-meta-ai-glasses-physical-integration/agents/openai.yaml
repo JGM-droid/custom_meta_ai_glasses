@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Physical Integration"
+  short_description: "Diagnose glasses-to-backend integration failures"
+  default_prompt: "Use $custom-meta-ai-glasses-physical-integration to diagnose the glasses, Android, tunnel, FastAPI, and Project attribution chain."

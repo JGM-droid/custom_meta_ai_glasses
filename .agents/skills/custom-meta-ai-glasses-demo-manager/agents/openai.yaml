@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Demo Manager"
+  short_description: "Decide whether the current MVP is demo-ready"
+  default_prompt: "Use $custom-meta-ai-glasses-demo-manager to run a read-only MVP release-readiness check."

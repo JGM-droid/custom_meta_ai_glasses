@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses QA Breaker"
+  short_description: "Stress-test MVP edge cases without fixing them"
+  default_prompt: "Use $custom-meta-ai-glasses-qa-breaker to try to break the MVP and report reproducible regressions."

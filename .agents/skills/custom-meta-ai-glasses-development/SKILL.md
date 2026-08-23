@@ -48,7 +48,7 @@ MVP feature development is frozen. Unless the user explicitly authorizes a post-
 
 ## Independent architecture review
 
-After implementation and initial validation, launch one read-only reviewer subagent when subagents are available. Give it the task acceptance criteria, applicable authority paths, pre-existing dirty-file list, and resulting diff. It must not edit files. Ask it to return either `PASS` or `BLOCKING FINDINGS` and inspect:
+After implementation and initial validation, launch one read-only reviewer subagent using `$custom-meta-ai-glasses-architecture-guardian` at `.agents/skills/custom-meta-ai-glasses-architecture-guardian/SKILL.md` when subagents are available. Give it the task acceptance criteria, applicable authority paths, pre-existing dirty-file list, and resulting diff. It must not edit files. Require `PASS` or `BLOCKING ARCHITECTURE FINDINGS`.
 
 - Project isolation and `project_id` semantics
 - canonical-state mutation and trust/provenance violations
@@ -77,3 +77,12 @@ Report:
 - whether the change set is ready for commit/PR or needs human input
 
 For future branch work, prefer: task -> feature branch or isolated worktree -> implementation -> tests -> independent review -> blocking fixes -> push branch -> pull request -> human merge.
+
+## Agent team workflows
+
+- UX: `$custom-meta-ai-glasses-user-tester` -> `$custom-meta-ai-glasses-triage` -> this development skill -> `$custom-meta-ai-glasses-architecture-guardian`.
+- Quality: `$custom-meta-ai-glasses-qa-breaker` -> `$custom-meta-ai-glasses-triage` -> this development skill -> `$custom-meta-ai-glasses-architecture-guardian` -> regression retest.
+- Physical: `$custom-meta-ai-glasses-physical-integration` -> this development skill only when a code fix is explicitly authorized -> physical retest.
+- Release: `$custom-meta-ai-glasses-demo-manager` -> ready verdict or actual blockers. Route any repair through triage/development rather than editing from the release role.
+
+Run these as controlled sequential roles. Do not launch an uncontrolled swarm, and do not let read-only roles edit production code.
