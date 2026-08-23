@@ -335,6 +335,17 @@ class InvestigationEvidenceStore:
 
         return self.session_store.run_with_session_lock(normalized_session_id, _load_any_state)
 
+    def load_evidence_content(self, *, session_id: str, evidence_id: str) -> tuple[InvestigationEvidence, Path]:
+        """Resolve retained evidence through the store's validated record/path boundary."""
+        record = self.load_evidence_for_analysis(session_id=session_id, evidence_id=evidence_id)
+        try:
+            payload_path = self._safe_record_payload_path(record.session_id, record.storage_ref)
+        except ValueError as exc:
+            raise InvestigationEvidenceStoreError("Evidence record is unsafe.") from exc
+        if not payload_path.exists() or not payload_path.is_file():
+            raise InvestigationEvidenceStoreError("Evidence payload is missing.")
+        return record, payload_path
+
     def _validate_request(self, request: InvestigationEvidenceCreateRequest) -> InvestigationEvidenceCreateRequest:
         return InvestigationEvidenceCreateRequest.model_validate(request.model_dump(mode="python"))
 

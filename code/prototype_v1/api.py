@@ -2863,6 +2863,44 @@ async def get_project_investigation_session(project_id: str, session_id: str) ->
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
 
 
+@app.get("/projects/{project_id}/investigation-sessions/{session_id}/evidence", response_model=list[InvestigationEvidence])
+async def list_project_investigation_evidence(project_id: str, session_id: str) -> list[InvestigationEvidence]:
+    normalized_project_id = _ensure_project_exists_or_404(project_id)
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        SESSION_STORE.load_session_for_project(normalized_project_id, normalized_session_id)
+        return EVIDENCE_STORE.list_evidence_for_analysis(normalized_session_id)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence is unavailable.")
+
+
+@app.get("/projects/{project_id}/investigation-sessions/{session_id}/evidence/{evidence_id}/content")
+async def get_project_investigation_evidence_content(project_id: str, session_id: str, evidence_id: str) -> FileResponse:
+    normalized_project_id = _ensure_project_exists_or_404(project_id)
+    normalized_session_id = _validate_session_id_or_422(session_id)
+    try:
+        SESSION_STORE.load_session_for_project(normalized_project_id, normalized_session_id)
+        evidence, payload_path = EVIDENCE_STORE.load_evidence_content(
+            session_id=normalized_session_id,
+            evidence_id=evidence_id,
+        )
+        return FileResponse(path=payload_path, media_type=evidence.mime_type, filename=evidence.filename)
+    except InvestigationSessionNotFound:
+        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
+    except InvestigationEvidenceNotFound:
+        _raise_session_http_error(status_code=404, category="evidence_not_found", message="Evidence does not exist.")
+    except InvestigationEvidenceInvalidId:
+        _raise_session_http_error(status_code=422, category="invalid_evidence_id", message="evidence_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+    except InvestigationEvidenceStoreError:
+        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence is unavailable.")
+
+
 def _project_trust_service() -> ProjectInvestigationTrustService:
     return ProjectInvestigationTrustService(
         activity_store=PROJECT_ACTIVITY_STORE,
