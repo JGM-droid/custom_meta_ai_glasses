@@ -17,6 +17,7 @@ import tempfile
 import threading
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -168,6 +169,17 @@ app.add_middleware(
 
 BASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BASE_DIR.parent.parent
+
+# Load the repo's own .env into this process's environment once, at the actual app entrypoint -
+# mirrors the same load_dotenv() convention demo_live_investigation.py already establishes for
+# local Investigation runs. Without this, any os.environ-only config reader (e.g.
+# InvestigationOpenAIProviderConfig.from_env() in investigations/openai_analysis_provider.py)
+# never sees a key that only exists in .env, even though _load_openai_api_key() below already
+# falls back to reading .env directly for the Project Q&A path - this closes that same gap for
+# every other os.environ-based reader instead of adding a second, inconsistent .env convention.
+# override=False: a value already exported in the real shell environment always wins over .env.
+load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)
+
 VENV_PYTHON = (REPO_ROOT / "venv" / "Scripts" / "python.exe").resolve()
 API_LOCK_PATH = BASE_DIR / "results" / "api_server.lock"
 WATCH_SCRIPT = BASE_DIR / "watch_latest_image.py"
