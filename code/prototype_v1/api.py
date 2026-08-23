@@ -142,6 +142,11 @@ from projects import (
     ProjectOrientation,
     ProjectOrientationError,
     ProjectOrientationReader,
+    ProjectInvestigationTrustError,
+    ProjectInvestigationTrustService,
+    ProjectInvestigationTrustState,
+    ProjectTrustDecisionRequest,
+    ProjectTrustDecisionResponse,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -2840,6 +2845,44 @@ async def get_project_investigation_session(project_id: str, session_id: str) ->
         _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
     except InvestigationSessionStoreError:
         _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
+
+
+def _project_trust_service() -> ProjectInvestigationTrustService:
+    return ProjectInvestigationTrustService(
+        activity_store=PROJECT_ACTIVITY_STORE,
+        proposal_store=CHECKPOINT_PROPOSAL_STORE,
+        session_store=SESSION_STORE,
+        canonical_result_root=_canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+    )
+
+
+@app.post("/projects/{project_id}/investigation-sessions/{session_id}/trust-decision", response_model=ProjectTrustDecisionResponse, status_code=201)
+async def create_project_investigation_trust_decision(project_id: str, session_id: str, payload: dict[str, object] | None = None) -> ProjectTrustDecisionResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectTrustDecisionRequest.model_validate(payload or {})
+        return _project_trust_service().decide(normalized_project_id, session_id, request)
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except (ProjectNotFound, InvestigationSessionNotFound):
+        _raise_project_http_error(status_code=404, category="investigation_not_found", message="Investigation does not exist for this Project.")
+    except ProjectInvestigationTrustError as exc:
+        _raise_project_http_error(status_code=409, category="trust_decision_unavailable", message=str(exc))
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationStoreError, InvestigationSessionStoreError):
+        _raise_project_http_error(status_code=500, category="trust_storage_error", message="Investigation trust state is unavailable.")
+
+
+@app.get("/projects/{project_id}/investigation-sessions/{session_id}/trust", response_model=ProjectInvestigationTrustState)
+async def get_project_investigation_trust(project_id: str, session_id: str) -> ProjectInvestigationTrustState:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return _project_trust_service().get_state(normalized_project_id, session_id)
+    except (ProjectNotFound, InvestigationSessionNotFound):
+        _raise_project_http_error(status_code=404, category="investigation_not_found", message="Investigation does not exist for this Project.")
+    except ProjectInvestigationTrustError as exc:
+        _raise_project_http_error(status_code=409, category="trust_state_unavailable", message=str(exc))
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationStoreError, InvestigationSessionStoreError):
+        _raise_project_http_error(status_code=500, category="trust_storage_error", message="Investigation trust state is unavailable.")
 
 
 @app.post("/projects", response_model=Project, status_code=201)

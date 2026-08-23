@@ -1016,6 +1016,23 @@ No new persistence abstraction or Roadmap write endpoint was added. Existing Act
 
 Not implemented by Milestone 1: Milestones 2-5 (Trusted AI Loop, Project Knowledge, Ideas / Plan Control, and MVP Demo Hardening), including `IDEA`, any Roadmap editing/reordering API, and all Android/UI work.
 
+### Universal Project Workspace MVP Milestone 2 - Implemented (Trusted AI Loop Backend Contract)
+
+Implemented:
+
+- Project-scoped trust decision write: `POST /projects/{project_id}/investigation-sessions/{session_id}/trust-decision` with exactly `continue`, `disagree`, or `more_evidence` and optional `correction`.
+- Deterministic zero-AI read: `GET /projects/{project_id}/investigation-sessions/{session_id}/trust`.
+- Each decision is a new append-only user `ACTION` Activity with `reported` confirmation status. Metadata records `trust_decision`, `trust_session_id`, `trust_result_id`, and `source_activity_id`; the original AI `RESULT` Activity and canonical retained result remain unchanged and `inferred`.
+- CONTINUE records a working hypothesis and creates a pending Checkpoint Proposal for the AI-recommended next action, sourced from both the AI result Activity and user decision Activity. It does not apply the Proposal, confirm the hypothesis, or complete Roadmap work.
+- DISAGREE records the optional user correction in the decision Activity, reports `needs_reassessment`, preserves the original AI result, and performs no reassessment/model call.
+- MORE EVIDENCE reports `unresolved` and creates a new project-owned follow-up Investigation session whose client metadata links to the original session/result. The original completed Investigation/result remains immutable while the follow-up can collect additional evidence.
+- The trust read reports the immutable hypothesis/recommendation, latest user decision/correction, decision Activity/timestamp, current Proposal id/status where applicable, and follow-up Investigation id where applicable. Activity ordering determines the latest decision deterministically.
+- Project ownership is enforced through the existing project-scoped Investigation loader. Reads do not mutate Project, checkpoint, Activities, proposals, Investigation state, or Active Project.
+
+No TrustStore, confirmed-finding mutation, direct checkpoint mutation, Roadmap completion, AI reassessment, Android/UI work, or Orientation redesign was added. Applied Continue proposals naturally flow into Milestone 1 Orientation through the canonical checkpoint `next_action`.
+
+Implemented MVP milestones: 1-2. Not implemented: Milestones 3-5 (Project Knowledge, Ideas / Plan Control, MVP Demo Hardening).
+
 ### Project Update Proposal / trust model evolution - ADR-042, ADR-043
 
 - Extends the existing Phase C2 Checkpoint Proposal mechanism (`pending`/`applied`/`rejected`, ADR-022 through ADR-027) and the provenance categories already anticipated in ADR-010, into an explicit graduated progression: Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome.

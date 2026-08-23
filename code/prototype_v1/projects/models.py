@@ -14,6 +14,7 @@ CHECKPOINT_PROPOSAL_SCHEMA_VERSION = "1.0"
 PROJECT_CONTEXT_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_ORIENTATION_SCHEMA_VERSION = "1.0"
+PROJECT_TRUST_STATE_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -52,6 +53,12 @@ class ProjectActivityConfirmationStatus(str, Enum):
     OBSERVED = "observed"
     INFERRED = "inferred"
     CONFIRMED = "confirmed"
+
+
+class ProjectTrustDecisionType(str, Enum):
+    CONTINUE = "continue"
+    DISAGREE = "disagree"
+    MORE_EVIDENCE = "more_evidence"
 
 
 class CheckpointProposalStatus(str, Enum):
@@ -338,6 +345,39 @@ class ProjectOrientation(BaseModel):
         return value
 
 
+class ProjectTrustDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    decision: ProjectTrustDecisionType
+    correction: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("correction")
+    @classmethod
+    def _normalize_correction(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class ProjectInvestigationTrustState(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    project_id: str
+    investigation_session_id: str
+    investigation_result_id: str
+    hypothesis: str
+    recommended_next_action: str
+    status: str
+    user_decision: ProjectTrustDecisionType | None = None
+    user_correction: str | None = None
+    decision_activity_id: str | None = None
+    decided_at_utc: datetime | None = None
+    checkpoint_proposal_id: str | None = None
+    checkpoint_proposal_status: CheckpointProposalStatus | None = None
+    follow_up_investigation_session_id: str | None = None
+
+
 class CheckpointProposalPatch(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -568,6 +608,14 @@ class ActiveProjectPointer(BaseModel):
         if value.tzinfo is None:
             raise ValueError("updated_at_utc must be timezone-aware UTC.")
         return value.astimezone(timezone.utc)
+
+
+class ProjectTrustDecisionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    trust_state: ProjectInvestigationTrustState
+    decision_activity: ProjectActivity
+    checkpoint_proposal: CheckpointProposal | None = None
 
 
 class ProjectInvestigationSummary(BaseModel):
