@@ -119,7 +119,29 @@ def test_mvp_demo_page_exposes_locked_workflow_without_touching_dashboard(mvp_co
     response = client.get("/mvp-demo")
     assert response.status_code == 200
     source = response.text
-    for required in ["Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "History", "Capture Idea", "Promote", "Continue", "Disagree", "More Evidence"]:
+    for required in ["Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "History", "Capture Idea", "Promote", "Continue", "Disagree", "More Evidence", "AI hypothesis", "Recommended next action"]:
         assert required in source
     assert "mode','dry_run" in source
     assert "/orientation" in source and "/knowledge" in source and "/ideas" in source and "/trust-decision" in source
+    assert "/trust`" in source
+
+
+def test_mvp_demo_bootstrap_is_repeatable_and_trust_controls_are_gated(mvp_context):
+    client, projects_root, _ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "Open AC Repair MVP Demo" in source
+    assert "AC Repair — MVP Demo" in source
+    assert "ac-repair-mvp-v1" in source
+    assert "findDemoProject" in source
+    assert "demo_fixture_id" in source
+    assert "if(!p)" in source
+    assert 'data-decision="continue" disabled' in source
+    assert 'data-decision="disagree" disabled' in source
+    assert 'data-decision="more_evidence" disabled' in source
+    assert "setTrustEnabled(true)" in source
+    assert "inferred suggestion, not confirmed Project truth" in source
+
+    # The acceptance harness is bound to its pytest temp store, never the configured live store.
+    assert projects_root.parent.name == "results"
+    assert projects_root != api.PROJECTS_ROOT
