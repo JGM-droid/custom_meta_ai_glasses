@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Triage"
+  short_description: "Turn usability findings into one repair batch"
+  default_prompt: "Use $custom-meta-ai-glasses-triage to classify a tester report and produce one bounded MVP repair batch."

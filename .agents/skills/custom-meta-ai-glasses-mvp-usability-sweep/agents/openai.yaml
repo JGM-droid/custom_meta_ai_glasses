@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses MVP Usability Sweep"
+  short_description: "Orchestrate user test, triage, repair, review"
+  default_prompt: "Use $custom-meta-ai-glasses-mvp-usability-sweep to run the complete user test, triage, repair, and review workflow."

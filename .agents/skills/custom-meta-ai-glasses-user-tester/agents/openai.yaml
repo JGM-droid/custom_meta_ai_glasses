@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses User Tester"
+  short_description: "Audit the full MVP journey as a normal user"
+  default_prompt: "Use $custom-meta-ai-glasses-user-tester to audit the complete MVP user journey and return a read-only usability report."
