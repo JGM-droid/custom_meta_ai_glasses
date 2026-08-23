@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Development Workflow"
+  short_description: "Implement and review bounded project changes"
+  default_prompt: "Use $custom-meta-ai-glasses-development to complete this bounded task, review the diff, and leave it ready for approval."
