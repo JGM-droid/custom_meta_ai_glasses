@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses API Watchdog"
+  short_description: "Detect FastAPI and Android contract drift"
+  default_prompt: "Use $custom-meta-ai-glasses-api-contract-watchdog to compare backend contracts with Android callers and report drift."

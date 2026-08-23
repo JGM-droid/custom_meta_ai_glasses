@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Release Sweep"
+  short_description: "Run one bounded pre-release agent audit"
+  default_prompt: "Use $custom-meta-ai-glasses-release-sweep to run the finite pre-release audit and return readiness with at most one repair batch."

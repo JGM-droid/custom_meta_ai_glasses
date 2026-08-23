@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses State Recovery"
+  short_description: "Test interruption, retry, and reconstruction"
+  default_prompt: "Use $custom-meta-ai-glasses-state-recovery to interrupt MVP workflows and produce a recovery matrix without editing production code."

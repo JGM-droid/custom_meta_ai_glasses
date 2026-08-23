@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Memory Auditor"
+  short_description: "Audit Project Memory and human continuity"
+  default_prompt: "Use $custom-meta-ai-glasses-project-memory-auditor to verify deterministic Project continuity, provenance, and isolation."

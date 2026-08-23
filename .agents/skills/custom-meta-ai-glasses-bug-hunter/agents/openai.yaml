@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Bug Hunter"
+  short_description: "Find small reproducible MVP defects quickly"
+  default_prompt: "Use $custom-meta-ai-glasses-bug-hunter to inspect every reachable MVP surface and report one low-risk repair batch."
