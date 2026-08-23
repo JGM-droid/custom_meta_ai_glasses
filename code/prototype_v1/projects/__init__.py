@@ -4,6 +4,7 @@ from .models import (
     PROJECT_ACTIVITY_SCHEMA_VERSION,
     PROJECT_ORIENTATION_SCHEMA_VERSION,
     PROJECT_TRUST_STATE_SCHEMA_VERSION,
+    PROJECT_KNOWLEDGE_SCHEMA_VERSION,
     PROJECT_SCHEMA_VERSION,
     ActiveProjectPointer,
     CheckpointProposal,
@@ -30,6 +31,9 @@ from .models import (
     ProjectTrustDecisionRequest,
     ProjectTrustDecisionResponse,
     ProjectTrustDecisionType,
+    ProjectKnowledge,
+    ProjectKnowledgeEvidence,
+    ProjectKnowledgeRecord,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -39,6 +43,15 @@ from .models import (
     to_project_summary,
 )
 from .investigation_trust import ProjectInvestigationTrustError, ProjectInvestigationTrustService
+from .project_knowledge import (
+    DECISION_LIMIT,
+    EVIDENCE_LIMIT,
+    FINDING_LIMIT,
+    HISTORY_LIMIT,
+    RECENT_IMPORTANT_CHANGE_LIMIT,
+    ProjectKnowledgeError,
+    ProjectKnowledgeReader,
+)
 from .project_orientation import (
     ROADMAP_STATUSES,
     ROADMAP_STATUS_METADATA_KEY,
@@ -90,6 +103,7 @@ __all__ = [
     "PROJECT_ACTIVITY_SCHEMA_VERSION",
     "PROJECT_ORIENTATION_SCHEMA_VERSION",
     "PROJECT_TRUST_STATE_SCHEMA_VERSION",
+    "PROJECT_KNOWLEDGE_SCHEMA_VERSION",
     "PROJECT_SCHEMA_VERSION",
     "ActiveProjectPointer",
     "CheckpointProposal",
@@ -116,6 +130,9 @@ __all__ = [
     "ProjectTrustDecisionRequest",
     "ProjectTrustDecisionResponse",
     "ProjectTrustDecisionType",
+    "ProjectKnowledge",
+    "ProjectKnowledgeEvidence",
+    "ProjectKnowledgeRecord",
     "ProjectCheckpoint",
     "ProjectCheckpointPatchRequest",
     "ProjectCreateRequest",
@@ -157,4 +174,11 @@ __all__ = [
     "ProjectOrientationReader",
     "ProjectInvestigationTrustError",
     "ProjectInvestigationTrustService",
+    "DECISION_LIMIT",
+    "EVIDENCE_LIMIT",
+    "FINDING_LIMIT",
+    "HISTORY_LIMIT",
+    "RECENT_IMPORTANT_CHANGE_LIMIT",
+    "ProjectKnowledgeError",
+    "ProjectKnowledgeReader",
 ]

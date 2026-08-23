@@ -15,6 +15,7 @@ PROJECT_CONTEXT_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_CONTEXT_QUERY_PACK_SCHEMA_VERSION = "1.0"
 PROJECT_ORIENTATION_SCHEMA_VERSION = "1.0"
 PROJECT_TRUST_STATE_SCHEMA_VERSION = "1.0"
+PROJECT_KNOWLEDGE_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -616,6 +617,51 @@ class ProjectTrustDecisionResponse(BaseModel):
     trust_state: ProjectInvestigationTrustState
     decision_activity: ProjectActivity
     checkpoint_proposal: CheckpointProposal | None = None
+
+
+class ProjectKnowledgeEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    origin: str
+    occurred_at_utc: datetime
+    summary: str
+    source_type: str
+    confirmation_status: str
+    evidence_id: str | None = None
+    activity_id: str | None = None
+    investigation_session_id: str | None = None
+    related_activity_ids: list[str] = Field(default_factory=list)
+    reference: str | None = None
+
+
+class ProjectKnowledgeRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    record_kind: str
+    occurred_at_utc: datetime
+    summary: str
+    source_type: str
+    confirmation_status: str
+    activity_id: str | None = None
+    proposal_id: str | None = None
+    metadata: dict[str, str | int | float | bool | None] | None = None
+
+
+class ProjectKnowledge(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    project_id: str
+    evidence_limit: int
+    decision_limit: int
+    finding_limit: int
+    history_limit: int
+    recent_important_change_limit: int
+    evidence: list[ProjectKnowledgeEvidence] = Field(default_factory=list)
+    decisions: list[ProjectKnowledgeRecord] = Field(default_factory=list)
+    findings: list[ProjectKnowledgeRecord] = Field(default_factory=list)
+    history: list[ProjectActivity] = Field(default_factory=list)
+    recent_important_changes: list[ProjectKnowledgeRecord] = Field(default_factory=list)
 
 
 class ProjectInvestigationSummary(BaseModel):

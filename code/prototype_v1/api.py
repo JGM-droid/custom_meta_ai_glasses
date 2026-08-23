@@ -147,6 +147,9 @@ from projects import (
     ProjectInvestigationTrustState,
     ProjectTrustDecisionRequest,
     ProjectTrustDecisionResponse,
+    ProjectKnowledge,
+    ProjectKnowledgeError,
+    ProjectKnowledgeReader,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -3006,6 +3009,24 @@ async def get_project_orientation(project_id: str) -> ProjectOrientation:
         _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
     except ProjectOrientationError:
         _raise_project_http_error(status_code=500, category="project_orientation_unavailable", message="Project orientation is unavailable.")
+
+
+@app.get("/projects/{project_id}/knowledge", response_model=ProjectKnowledge)
+async def get_project_knowledge(project_id: str) -> ProjectKnowledge:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    reader = ProjectKnowledgeReader(
+        project_store=PROJECT_STORE,
+        activity_store=PROJECT_ACTIVITY_STORE,
+        proposal_store=CHECKPOINT_PROPOSAL_STORE,
+        session_store=SESSION_STORE,
+        evidence_store=EVIDENCE_STORE,
+    )
+    try:
+        return reader.get_knowledge(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationSessionStoreError, InvestigationEvidenceStoreError, ProjectKnowledgeError):
+        _raise_project_http_error(status_code=500, category="project_knowledge_unavailable", message="Project knowledge is unavailable.")
 
 
 @app.get("/projects/{project_id}/context", response_model=ProjectContextPack)

@@ -1033,6 +1033,24 @@ No TrustStore, confirmed-finding mutation, direct checkpoint mutation, Roadmap c
 
 Implemented MVP milestones: 1-2. Not implemented: Milestones 3-5 (Project Knowledge, Ideas / Plan Control, MVP Demo Hardening).
 
+### Universal Project Workspace MVP Milestone 3 - Implemented (Project Knowledge Backend Contract)
+
+Implemented:
+
+- Single read-only, project-scoped, zero-AI endpoint: `GET /projects/{project_id}/knowledge`.
+- Evidence is the union of project-owned Investigation evidence and `OBSERVATION` Activities. Investigation evidence retains its evidence/session identifiers, source, validation state, storage reference, timestamp, and related Activity ids where the existing session metadata establishes that relationship. Observation Activities retain Activity provenance. AI result Activities are not reclassified as evidence.
+- Decisions are `DECISION` Activities whose source is not AI, or AI Decision Activities explicitly marked `confirmed`, plus applied Checkpoint Proposals. Pending/rejected Proposals and raw AI hypotheses are excluded.
+- Findings are only `RESULT` or `OBSERVATION` Activities with `confirmation_status=confirmed`. AI `inferred` results are never Findings merely because a model produced them.
+- History is the existing append-only Activity log, newest first; no duplicate event store is introduced.
+- Recent Important Changes deterministically includes Activities of type `MILESTONE`, `DECISION`, `BLOCKER`, or `RESULT`; Activities carrying a recognized Roadmap status; Milestone 2 trust decisions; and applied Checkpoint Proposals. Ordinary Notes and unrelated Actions are excluded. Provenance/confirmation fields remain visible, so inclusion does not imply confirmation.
+- All sections order newest first, using timestamp and stable record id as the deterministic tie-breaker.
+- Explicit bounds: Evidence 50, Decisions 50, Findings 50, History 100, Recent Important Changes 10. Each bound is returned in the response.
+- Reads do not mutate Project/checkpoint/revision, Activities, Proposals, Investigations/evidence, or Active Project.
+
+No new knowledge persistence, Evidence media duplication, Decision/Finding CRUD, AI importance scoring, Project Memory Index, Orientation expansion, Android/UI work, or domain-specific schema was added.
+
+Implemented MVP milestones: 1-3. Not implemented: Milestones 4-5 (Ideas / Plan Control and MVP Demo Hardening).
+
 ### Project Update Proposal / trust model evolution - ADR-042, ADR-043
 
 - Extends the existing Phase C2 Checkpoint Proposal mechanism (`pending`/`applied`/`rejected`, ADR-022 through ADR-027) and the provenance categories already anticipated in ADR-010, into an explicit graduated progression: Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome.
