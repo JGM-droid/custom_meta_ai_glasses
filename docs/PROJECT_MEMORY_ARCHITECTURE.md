@@ -2,7 +2,7 @@
 
 Status: Authoritative for approved forward product architecture.
 
-Last Updated: 2026-08-22
+Last Updated: 2026-08-23
 
 ## Product Vision
 
@@ -647,6 +647,52 @@ Wires up the Phase B `ActiveProjectPointer` mechanism (`PUT/GET /projects/active
 
 No redundant ADR for the pointer mechanism itself (Phase B already accepted it); ADR-037 below covers only the new attribution-precedence rule, which is a genuinely new behavior (previously, omitting `project_id` always meant unscoped).
 
+### Slice 3 - Implemented (Android Project-Scoped Capture Attribution, Physically Validated)
+
+Implemented scope:
+
+- Android's top-level Capture navigation state now carries an explicit `sourceProjectId`, threaded from a Project's Workspace ("Continue Project" -> "Capture / Test Glasses") through the existing, unmodified Meta camera/capture flow (`CameraAccessScaffold`/`StreamScreen`/Mock Device Kit) into the Investigation submission request, reusing the existing `POST /investigation-sessions` contract's optional `project_id` field. No new backend endpoint was introduced.
+- The existing global "Capture / Test Glasses" entry point from Projects Home is unchanged: it supplies no explicit `project_id`, preserving ADR-037's Active Capture Project fallback / unscoped behavior exactly as already implemented server-side.
+- Opening/viewing a Project through its Workspace and starting Capture from there does not call the Active Capture Project set endpoint - explicit Project context and global Active Project state are kept deliberately separate on the client, matching the same viewing-vs-active distinction Slice 1/Slice 2 already established for the dashboard.
+- A pre-existing, unrelated Compose layout crash in the Mock Device Kit debug screen (nested `Modifier.verticalScroll()` containers - see `MockDeviceKitScreen.kt`/`BackendInvestigationPanel.kt`) was fixed as a prerequisite for physical validation; the fix is layout-only and did not touch Investigation, Project, or attribution logic.
+
+Physical-device/backend validation performed (real backend, real Android device, no mocks):
+
+1. Project A marked Active; Capture started from Project B's Workspace -> the created Investigation session's `project_id` equals Project B, and Project A remained the Active Project throughout. Project B did not become Active merely because Capture was opened from it.
+2. Global Capture with Project A Active and no explicit Project context -> the created Investigation session's `project_id` resolves to Project A purely through the existing backend Active Capture Project fallback (Android sent no explicit `project_id`).
+3. Global Capture with no Active Project set -> the created Investigation session's `project_id` is `null` (unscoped), confirming existing unscoped behavior remains intact.
+
+This is the first client-side, physically-validated proof of the ADR-037 precedence rule (explicit Project -> Active Capture Project fallback -> unscoped/null) rather than a backend-only/test-only guarantee.
+
+Known limitations:
+
+- Validated against the Mock Device Kit / phone-camera evidence path, not yet against real Meta Ray-Ban Display capture end-to-end.
+- No return-navigation, UI-indicator, or Android-side architecture changes beyond attribution plumbing were made; see the Android repository's own commit history for full diff detail (out of scope for this backend-authoritative document).
+
+### Slice 4 - Implemented (Investigation Analysis Orchestration Restored)
+
+Context:
+
+- The existing `POST /investigation-sessions/{session_id}/analyze` orchestration path (`_create_session_orchestrator` -> `OpenAIInvestigationAnalysisProvider` -> `InvestigationOrchestrator.run_confirmed_investigation`) began failing in local development with a generic `"Analysis orchestration is unavailable."` (HTTP 500, category `orchestration_unavailable`).
+
+Root cause (diagnosed, not a new architectural gap):
+
+- `InvestigationOpenAIProviderConfig.from_env()` (`investigations/openai_analysis_provider.py`) reads `OPENAI_API_KEY` only via `os.environ`, with no fallback to the repository's `.env` file - unlike `_load_openai_api_key()` in `api.py` (used by the working Project Q&A path), which already falls back to reading `.env` directly. `api.py`, the actual FastAPI entrypoint, never loaded `.env` into its own process environment, so any `os.environ`-only reader (including the Investigation provider config) would fail in a correctly-configured checkout unless the launching shell happened to export the key manually. A compounding local-environment issue (the server process having been started via a non-canonical, dependency-incomplete Python interpreter instead of the project's own `venv` - see `docs/runtime_governance.md`'s "Venv only" execution contract) was also present and was corrected by restarting through the canonical `venv` interpreter.
+
+Fix:
+
+- `api.py` now calls `load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)` once at module load, immediately after `REPO_ROOT` is defined and before any `os.environ`-based configuration is read. This reuses the same `python-dotenv` mechanism `demo_live_investigation.py` already established for local Investigation runs, applied once at the actual app entrypoint so every current and future `os.environ`-based reader benefits consistently, rather than adding a third, inconsistent `.env`-reading convention. `override=False` preserves existing precedence: a value already exported in the real shell environment always wins over `.env`.
+- No change was made to `investigations/openai_analysis_provider.py` (the provider layer) or to any orchestration/error-handling logic.
+
+Physical-device/backend validation performed (real backend, real Android device, one real OpenAI call):
+
+- Project B Workspace -> Capture -> Mock Device Kit evidence -> spoken/typed explanation -> Analyze, via Android, completed successfully end to end.
+- Exactly one Investigation analysis attempt was created and completed (`current_analysis_attempt_id == active_analysis_attempt_id == latest_analysis_attempt_id`, single value, `last_error: null`).
+- The completed session's `project_id` remained Project B; the global Active Capture Project (Project A) was unchanged before and after.
+- Project B's canonical `checkpoint`/`revision` were unchanged by the AI result - the result was recorded only as a Project Activity with `source_type: "ai"` and `confirmation_status: "inferred"` (existing Phase D2 projection, unchanged), never written into canonical checkpoint state. This directly confirms ADR-029 and ADR-021 continue to hold under a real (non-mocked) analysis result, not only under test fakes.
+
+No new ADR was required for the orchestration behavior itself (nothing about the orchestrator, provider contract, or error taxonomy changed); ADR-039 below covers only the new environment-loading requirement this fix establishes.
+
 ## Phase B Acceptance Contract
 
 Proof scenario:
@@ -886,6 +932,66 @@ The Project Workspace may perform explicit, user-initiated Project creation by r
 ADR-037 - ACCEPTED
 When an Investigation-start request omits an explicit `project_id`, ownership resolution falls back to the single-global Active Capture Project (Phase B `ActiveProjectPointer`) if one is set, and to unscoped otherwise; an explicitly supplied `project_id` always takes precedence and is never overridden by the Active Capture Project. This resolution must be fail-safe - any pointer/store problem falls back to unscoped rather than blocking Investigation creation - consistent with the Active Capture Project's existing status as a convenience layer that must not replace explicit project identity in persistent APIs.
 
+ADR-038 - ACCEPTED
+The ADR-037 precedence rule (explicit Project -> Active Capture Project fallback -> unscoped/null) is a client-observable contract, not only a backend/test guarantee: any client entering Capture/Investigation-creation from a specific Project's Workspace must forward that Project's canonical `project_id` explicitly, and must never call the Active Capture Project set endpoint merely because a Project was opened or captured from. Viewing/using a Project remains conceptually distinct from that Project being globally Active unless the user explicitly requests the latter. This has been physically validated for the Android client (Slice 3) and applies to any future client (Ray-Ban Display, other Android surfaces, desktop) that originates Investigation creation.
+
+ADR-039 - ACCEPTED
+`api.py`, as the actual FastAPI runtime entrypoint, must load the repository's `.env` file into its own process environment once at startup (via `load_dotenv`, `override=False`) so that every current and future `os.environ`-based configuration reader - not only the readers that happen to implement their own `.env` fallback - can resolve local secrets/configuration consistently. This does not change what belongs in `.env` versus real environment variables, and does not weaken `docs/runtime_governance.md`'s "one startup path, venv only" execution contract; it removes a gap where a correctly-configured `.env` checkout could still fail a specific provider's configuration loader depending on incidental reader implementation differences.
+
+ADR-040 - ACCEPTED (Research-Informed Roadmap)
+Adopt Interpretable Context Methodology (ICM, Jake Van Clief) context-engineering principles - interpretable retrieval, explicit inclusion/exclusion semantics, and bounded/measurable context - as approved future direction for the existing Context Retriever/Context Pack subsystem. Do not adopt ICM's filesystem-centric memory storage architecture. Structured, application-owned Project Memory (ProjectStore, Activities, Checkpoints) remains the sole authoritative memory model; ICM is a source of retrieval/observability principles only, not a storage architecture replacement.
+
+ADR-041 - ACCEPTED (Research-Informed Roadmap)
+A future Project Memory Index is approved as a derived, rebuildable, non-canonical compact summary layer over Project Memory (current state, objective, open tasks, blockers, major decisions, key evidence, recent checkpoints, investigations, artifacts, historical topics). It must never become an alternate source of truth; Project Memory (ProjectStore/Activities/Checkpoints) remains authoritative and the Index must always be reconstructable from it. Long-term retrieval direction: Project -> Memory Index -> relevant Project Memory -> Context Pack -> AI, rather than Project -> entire history -> AI.
+
+ADR-042 - ACCEPTED (Research-Informed Roadmap)
+Approved future direction: AI-derived Project knowledge follows a graduated trust progression - Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome - extending the provenance categories already established in ADR-010 and the Provenance Strategy section into an explicit, ordered state progression. User agreement ("Continue") does not equal objective proof and must not be conflated with a Confirmed Finding. A rejected AI hypothesis ("Correct"/"That's wrong") must never become canonical truth, and the correction/reason must be preserved as provenance/context so future reasoning does not blindly repeat the same mistake. This extends, and does not replace, the existing Phase C2 Checkpoint Proposal `pending`/`applied`/`rejected` lifecycle (ADR-022 through ADR-027); exact schema changes remain unspecified pending implementation design.
+
+ADR-043 - ACCEPTED (Research-Informed Roadmap)
+Approved future direction: validation/confirmation requirements scale with risk, not uniformly. Low-risk observable events (photo captured, timestamp, Investigation created, user-entered measurement, Project selection, user statement) may generally be recorded automatically without confirmation prompts, to avoid confirmation fatigue. Higher-risk interpretations/state changes (AI diagnosis, changing Project next action, declaring a component defective, marking an issue resolved, consequential recommendations, promoting an inference to confirmed Project knowledge) require stronger validation/evidence before becoming canonical. The model must never be permitted to unilaterally decide that its own conclusion is canonical truth; the application controls that transition. This extends ADR-009/ADR-010/ADR-021.
+
+ADR-044 - ACCEPTED (Research-Informed Roadmap)
+Approved future direction: Project continuity belongs to the application, not to any individual AI provider or coding agent (OpenAI, Anthropic/Claude, Codex, GitHub Copilot, Gemini, or future providers/agents). A provider usage limit or session boundary must become a provider-availability problem, not a Project-continuity problem. The application should eventually be able to produce a bounded, provider-agnostic work/handoff Action Artifact (Project goal, current objective, constraints, architecture rules, completed work, current checkpoint, relevant files, current issue, relevant evidence, proven vs. unproven state, acceptance criteria, next required action) sufficient for a different agent/provider to continue without depending on the previous agent's conversation. Different Artifact kinds (e.g., a field Investigation artifact versus a coding/implementation work order) are not assumed to share identical lifecycle semantics merely because they may eventually share a common Artifact abstraction. This generalizes the provider-neutral reasoning boundary already established for Project Q&A by ADR-034 to the broader cross-agent/cross-provider continuity problem.
+
+ADR-045 - ACCEPTED (Research-Informed Roadmap)
+Approved future milestone: a Glasses Project Navigator / Hands-Free Project Controller on the Meta Ray-Ban Display, using Neural Band navigation/select to browse and open Projects and drive a capture -> speak context -> analyze -> finding/next-action -> Continue/Correct/More-Evidence loop, so glasses interaction feels like a hands-free Project controller rather than passive AI-answer display. A Project selected/opened through glasses supplies explicit Project context/`project_id` to capture and Investigation, following the same ADR-037/ADR-038 explicit-Project -> Active-Project-fallback -> unscoped precedence; opening/selecting a Project on glasses remains distinct from changing the global Active Project unless explicitly requested. No separate glasses memory is permitted - all clients (glasses, phone, desktop/web) operate over the same application-owned Project Memory, with responsibilities split as: glasses+Neural Band for the immediate hands-free action loop, phone for richer field workspace/control, desktop/web for deep Project workspace (timeline, history, evidence, files, detailed AI results, Project management, coding/action prompts). A dedicated Meta SDK capability spike (Ray-Ban Display UI/text capabilities, available controls/buttons, Neural Band navigation/select behavior, gesture callbacks, Project navigation feasibility, capture integration, and whether programmable haptic output is actually exposed) is required before implementation begins; do not architect around arbitrary programmable Neural Band haptic patterns until SDK support is proven. Builds on existing capability research in `research/display_capabilities.md`, `research/meta_glasses_capabilities.md`, and `research_agent/display_sdk_integration_findings.md`.
+
+## Approved Roadmap - Research-Informed Extensions
+
+Status: APPROVED ROADMAP. None of the items in this section are implemented. They extend existing architecture and must not be read as competing/replacement definitions of it. Each item is backed by an ADR above (ADR-040 through ADR-045); this section is a readable index, not additional authority beyond those ADRs.
+
+### Interpretable, bounded context (ICM-informed) - ADR-040, ADR-041
+
+- Interpretable Context Packs: Phase E3 already emits interpretability metadata (question class, retrieval contract, required/optional/excluded categories, per-category inclusion/exclusion reasons, limits, fallback reason) for the question-aware query path. Approved extension: deepen and generalize this observability - across more question classes and the non-query Context Pack path - so a poor AI answer can always be diagnosed as either (a) retrieval selected bad/incomplete context or (b) the model reasoned incorrectly from good context.
+- Retrieval inclusion/exclusion contracts: Phase E3's `required`/`optional`/`excluded` categories are the existing implementation of what ICM frames as MUST / MAY / MUST-NOT retrieve. Approved extension: broaden this pattern's coverage (e.g. NEXT_ACTION-style contracts that positively include the latest checkpoint, unresolved tasks, blockers, and recent relevant evidence while excluding completed historical tasks, unrelated investigations, and superseded recommendations) to reduce context contamination and token usage. Prefer extending the existing contract mechanism over introducing new terminology.
+- Project Memory Index: a new, not-yet-implemented derived/rebuildable/non-canonical compact index (current state, objective, open tasks, blockers, major decisions, key evidence, recent checkpoints, investigations, artifacts, historical topics) sitting between Project Memory and the Context Retriever as Projects grow. See ADR-041 for the non-canonical constraint.
+- Bounded context / token efficiency: as Project history grows, AI context size should grow substantially more slowly than that history (extends ADR-030). Approved direction: make this measurable/observable, not just qualitatively true.
+
+### Project Update Proposal / trust model evolution - ADR-042, ADR-043
+
+- Extends the existing Phase C2 Checkpoint Proposal mechanism (`pending`/`applied`/`rejected`, ADR-022 through ADR-027) and the provenance categories already anticipated in ADR-010, into an explicit graduated progression: Observation/Event -> AI Hypothesis -> Accepted Hypothesis -> Confirmed Finding -> Action Performed -> Outcome.
+- Human review loop (interaction concept, not yet implemented UI): CONTINUE (plausible enough to keep working from; not proof), CORRECT/"that's wrong" (capture the correction/reason as provenance; a rejected hypothesis must never become canonical), MORE EVIDENCE (gather another image/explanation/measurement/test before accepting or rejecting - never collapse this to a binary yes/no).
+- Risk-tiered validation (ADR-043): low-risk observable facts (photo captured, timestamp, Investigation created, user-entered measurement, Project selection, user statement) may be recorded automatically; higher-risk interpretations (AI diagnosis, next-action changes, defect declarations, resolution claims, promoting inference to confirmed knowledge) require stronger validation. The model never self-certifies its own conclusion as canonical.
+- Exact schema/state-machine changes are intentionally left unspecified pending implementation design; this section locks the semantics, not a database migration.
+
+### Cross-agent/provider continuity and Action Artifacts - ADR-044
+
+- Generalizes the provider-neutral reasoning boundary ADR-034 already established for Project Q&A: Project continuity belongs to the application, not to OpenAI, Claude, Codex, Copilot, Gemini, or any other provider/agent. A provider usage limit is an availability problem, not a continuity problem.
+- Approved future direction: a bounded, provider-agnostic work/handoff Action Artifact (goal, current objective, constraints, architecture rules, completed work, current checkpoint, relevant files, current issue, relevant evidence, proven/unproven state, acceptance criteria, next required action) that lets a different agent/provider continue a Project without the previous agent's conversation history.
+- Different Artifact kinds (e.g. a field Investigation artifact vs. a coding/implementation work order) are not assumed to share identical lifecycle semantics merely because they may eventually share a common Artifact abstraction.
+- Not approved: implementing this capability now. Consider prioritizing a minimal cross-agent continuation/handoff capability earlier in future roadmap sequencing than a full Artifact system.
+
+### Glasses Project Navigator / Hands-Free Project Controller - ADR-045
+
+- Approved future milestone, not yet implemented: use the Meta Ray-Ban Display + Neural Band as a hands-free Project controller (select Project -> Project-scoped capture -> speak context -> analyze -> concise finding/next action -> Continue/Correct/More Evidence/Help/Done -> continue working), not passive AI-answer display.
+- Project selection on glasses follows the same ADR-037/ADR-038 precedence and must not silently change the global Active Project.
+- No separate glasses memory: glasses, phone, and desktop/web all operate over the same application-owned Project Memory. Approximate responsibilities: glasses+Neural Band = immediate hands-free action loop; phone = richer field workspace/control/review/capture; desktop/web = deep Project workspace (timeline, history, evidence, files, detailed AI results, Project management, coding/action prompts).
+- Hard prerequisite: a dedicated Meta SDK capability spike (Display UI/text capabilities, available controls, Neural Band navigation/select behavior, gesture callbacks, Project navigation feasibility, capture integration, and whether programmable haptic output is actually exposed) must be performed with the then-current SDK before implementation begins. Do not architect around arbitrary programmable Neural Band haptic patterns until SDK support is proven. See `research/display_capabilities.md`, `research/meta_glasses_capabilities.md`, and `research_agent/display_sdk_integration_findings.md` for existing capability research this spike should build on.
+
+### Multi-agent methodology - development/review practice, not product architecture
+
+Multi-agent/multi-perspective review (distinct mandates, deliberate disagreement, independent-then-synthesized conclusions) is approved as a development and architecture-review practice for high-value decisions - see `docs/research/MULTI_AGENT_PRODUCT_REVIEW.md` for the first application of this practice. It is explicitly NOT an approved product feature: a multi-agent swarm (Project Memory -> specialized Context Packs -> multiple agents/providers -> synthesis -> proposed Project update) remains a research/product possibility only, not implementation work, and would require its own future architecture decision before any implementation. Reviewer/agent conclusions are proposals/research input, never automatically architecture.
+
 ## Relationship to Other Documents
 
 - docs/PROJECT_MEMORY_ARCHITECTURE.md is authoritative for approved forward product architecture.
@@ -893,3 +999,4 @@ When an Investigation-start request omits an explicit `project_id`, ownership re
 - docs/investigation_session_api_v1.md remains authoritative for current Investigation Session API contract.
 - architecture/Phase2_System_Design.md remains valuable as Investigation subsystem design history and implementation reference.
 - docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md is supporting external research evidence and does not override architecture authority.
+- docs/research/MULTI_AGENT_PRODUCT_REVIEW.md is a structured product/architecture review (RESEARCH / RECOMMENDATIONS - HUMAN REVIEW REQUIRED); it does not override architecture authority, and its recommendations are not automatically approved architecture or roadmap.

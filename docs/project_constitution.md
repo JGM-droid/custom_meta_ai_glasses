@@ -46,8 +46,9 @@ Target product:
 
 Current state relative to this vision:
 - Implemented: FastAPI backend runtime, OpenAI-backed analysis paths, retained-result projections, desktop and glasses-facing outputs.
-- Partially implemented: Investigation session lifecycle and orchestration are advanced in backend, but Android production contract is not fully finalized for mobile-first polling and submission.
-- Planned: Full Android capture client integration through stable session contracts.
+- Implemented (physically validated): Android project-scoped Investigation capture submission and real end-to-end analysis (Mock Device Kit/phone-camera evidence path) - see docs/PROJECT_MEMORY_ARCHITECTURE.md Slice 3/Slice 4 and ADR-038/ADR-039. Explicit-Project / Active-Project-fallback / unscoped attribution precedence (ADR-037) is proven client-observable, not only a backend guarantee.
+- Partially implemented: Investigation session lifecycle and orchestration are advanced in backend and now proven through a real Android client end to end, but a hardened mobile-first polling/production contract (see Section 6/17 below) is not yet fully finalized.
+- Planned: Real Meta Ray-Ban Display capture end-to-end (currently validated against Mock Device Kit/phone camera, not yet real glasses hardware).
 - Explicitly deferred: Production auth hardening, hosted production deployment, and advanced observability.
 
 ## 2. Primary User Workflow
@@ -248,8 +249,8 @@ Strategy:
 - DAT registration and camera-stream behavior should not be refactored merely to add backend networking.
 
 Decision status:
-- This repository currently contains backend code only.
-- Final Android repository strategy is an architectural decision that must be completed before substantial Android implementation.
+- This repository contains backend code only; Android implementation lives in a separate repository (`meta-wearables-dat-android`, forked/controlled from the Meta DAT sample), matching the strategy above.
+- The Android repository strategy is complete and has substantial implementation: project-scoped capture attribution and a real Investigation analysis have both been physically validated through that repository (see docs/PROJECT_MEMORY_ARCHITECTURE.md Slice 3/Slice 4). Per this constitution's repository-scope rule, detailed Android implementation history belongs in the Android repository's own commit history, not duplicated here.
 
 ## 10. Development Guardrails
 
@@ -309,17 +310,17 @@ Commit policy:
 - Desktop dashboard output.
 - Compact glasses projection output.
 - CameraAccess/DAT discovery and architecture audit (documentation and analysis level).
+- Slice 1A backend Android-facing contract preparation (project-scoped Investigation session creation, existing `POST /investigation-sessions` contract).
+- Slice 1B Android networking foundation (Android submits real sessions/evidence to this backend over HTTP).
+- Slice 1C ordered image-session state (evidence capture and ordering proven through the Android client).
+- Slice 1D explanation and submission UI (typed explanation + submission proven end to end from Android).
+- Slice 1F physical Android phone test (extensive physical-device validation across multiple slices; see docs/PROJECT_MEMORY_ARCHITECTURE.md Slice 3/Slice 4).
 
 ### Next
 
 - Project Constitution (draft complete; architect ratification pending).
-- Slice 1A backend Android-facing contract preparation.
-- Slice 1B Android networking foundation.
-- Slice 1C ordered image-session state.
-- Slice 1D explanation and submission UI.
-- Slice 1E polling and compact result UI.
-- Slice 1F physical Android phone test.
-- Slice 1G Meta glasses end-to-end demo.
+- Slice 1E polling and compact result UI - the current validated Android path completes analysis synchronously within one request/response; dedicated mobile-first polling UX for slower analyses is not yet separately proven.
+- Slice 1G Meta glasses end-to-end demo - validated so far only against Mock Device Kit / phone-camera evidence, not real Meta Ray-Ban Display hardware.
 
 ### Later
 
@@ -387,18 +388,18 @@ This wearable demo definition is an interface milestone and does not redefine to
   - code/prototype_v1/dashboard.html
   - code/prototype_v1/glasses_display_mock.html
   - code/prototype_v1/glasses_webapp/
+- Android networking integration and capture UX (Mock Device Kit/phone-camera evidence path): project-scoped session creation, evidence submission, explanation, and a real Analyze call have been physically validated end to end from the Android repository against this backend, including correct `project_id` attribution and Active Capture Project isolation. See docs/PROJECT_MEMORY_ARCHITECTURE.md Slice 3/Slice 4.
 
 ### 17.2 Partially implemented
 
-- Session-centric orchestration and production Android session polling/analyze contracts are implemented as the canonical mobile path in this backend.
+- Session-centric orchestration and production Android session polling/analyze contracts are implemented as the canonical mobile path in this backend, and are now proven through a real Android client (not only backend tests); a dedicated mobile-first polling UX for slower analyses remains unproven separately from the synchronous path already validated.
 - Some internal/session-interaction flows support one selected capture during orchestration, while retained canonical projection model enforces 2 to 3 image results.
 - Legacy HUD endpoints (/latest, /glasses/latest) and investigation endpoints coexist; governance is needed so mobile clients rely on canonical session-scoped contracts.
 
 ### 17.3 Planned
 
-- Finalized Android-facing session-specific status/result contract.
-- Android networking integration and capture UX implementation.
-- End-to-end physical Meta glasses demonstration through Android + backend flow.
+- Finalized, hardened Android-facing session-specific status/result polling contract for slower analyses (the core synchronous submit-and-analyze path is already proven; see 17.1).
+- End-to-end physical Meta glasses demonstration through Android + backend flow (validated so far only against Mock Device Kit / phone-camera evidence, not real Meta Ray-Ban Display hardware).
 
 ### 17.4 Explicitly deferred
 

@@ -47,6 +47,12 @@ If another document conflicts with this section, this section wins.
 - `launch_demo.py` is the official operator launcher for tunnel-aware demo startup and endpoint validation.
 - Diagnostic scripts such as `https_tunnel_readiness.py` and `https_tunnel_test_runner.py` are support tools and do not replace canonical startup ownership.
 
+### Environment/Secret Loading
+
+- `code/prototype_v1/api.py` loads the repository's `.env` file into its own process environment once at module import (`load_dotenv(dotenv_path=REPO_ROOT / ".env", override=False)`), before any `os.environ`-based configuration (OpenAI key, model name, tokens) is read. A real shell-exported value always takes precedence over `.env`.
+- This does not change where secrets belong (still `.env` or real environment variables, never hardcoded) - it only guarantees that starting `api.py` through the canonical `venv` interpreter (see "Venv only" above) is sufficient on its own for `.env`-provided configuration to reach every `os.environ`-based reader, including the Investigation analysis provider (`investigations/openai_analysis_provider.py`). See docs/PROJECT_MEMORY_ARCHITECTURE.md ADR-039.
+- Starting `api.py` via any interpreter other than the canonical `venv` (see below) remains unsupported regardless of `.env` loading - a non-canonical interpreter may still lack required third-party packages entirely.
+
 ### Official Testing Workflow
 
 - Run tests from repository root using the canonical environment:
