@@ -119,7 +119,7 @@ def test_mvp_demo_page_exposes_locked_workflow_without_touching_dashboard(mvp_co
     response = client.get("/mvp-demo")
     assert response.status_code == 200
     source = response.text
-    for required in ["CURRENT PROJECT", "Needs Your Attention", "Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "Project history", "Save idea for later", "Add to roadmap", "Keep as working hypothesis", "I disagree", "Add more evidence", "AI suggestion", "Recommended next action"]:
+    for required in ["CURRENT PROJECT", "Needs Your Attention", "Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "Project history", "Ideas for this Project", "Get ideas", "Add to Roadmap", "Keep as working hypothesis", "I disagree", "Add more evidence", "AI suggestion", "Recommended next action"]:
         assert required in source
     assert '.set("mode","dry_run")' in source
     assert "/orientation" in source and "/knowledge" in source and "/ideas" in source and "/trust-decision" in source
@@ -210,15 +210,15 @@ def test_mvp_demo_gates_investigation_and_idea_prerequisites(mvp_context):
     source = client.get("/mvp-demo").text
 
     assert 'id="analyze" class="primary" disabled' in source
-    assert 'id="addIdea" disabled' in source
+    assert 'id="explore" class="primary" disabled' in source
     assert "Boolean(projectId)" in source
-    assert '$("addIdea").disabled=!projectId' in source
+    assert '$("explore").disabled=!ready' in source
     assert "Select a Project to run an Investigation." in source
     assert "Choose at least two images to run an Investigation." in source
-    assert "Select a Project to capture an idea." in source
-    assert "Enter an idea to capture it." in source
+    assert "Select a Project and describe the ideas you want." in source
+    assert "Describe the ideas you want." in source
     assert '$("evidence").onchange=updatePrerequisites' in source
-    assert '$("ideaText").oninput=updatePrerequisites' in source
+    assert '$("exploreIntent").addEventListener("input",updateExplorePrerequisites)' in source
 
 
 def test_mvp_demo_prioritizes_attention_and_preserves_human_trust_semantics(mvp_context):
@@ -233,5 +233,109 @@ def test_mvp_demo_prioritizes_attention_and_preserves_human_trust_semantics(mvp_
     assert 'data-decision="disagree" disabled' in source and "I disagree" in source
     assert 'data-decision="more_evidence" disabled' in source and "Add more evidence" in source
     assert "Keeping a working hypothesis does not update your Project" in source
-    assert "Saving an idea does not change the Project plan" in source
+    assert "Suggestions use the selected Project and remain unconfirmed" in source
     assert "data-decision" in source and "decision:" in source and "correction:" in source
+
+
+def test_mvp_demo_projects_saved_explore_state_with_explicit_trust_boundaries(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "What kind of ideas would you like?" in source
+    assert "AI suggestions — unconfirmed" in source
+    assert "Keep for consideration" in source
+    assert "Dismiss" in source
+    assert "Choose as preferred direction" in source
+    assert "Add to Roadmap" in source
+    assert "Preferred direction" in source
+    assert "Suggested Project change" in source
+    assert "Canonical Project state" in source
+    assert "Roadmap:" in source
+    assert "option.ordinal" in source
+
+
+def test_mvp_demo_uses_canonical_explore_endpoints_and_recovers_after_mutations(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "async function loadExplore" in source
+    assert "async function runExplore" in source
+    assert "async function mutateExplore" in source
+    assert "`/projects/${selected}/interactions/explore`" in source
+    assert "`/projects/${selected}/ideas/${ideaId}/disposition`" in source
+    assert "`/projects/${selected}/ideas/${promoteId}/promote`" in source
+    assert "await loadExplore();await load()" in source
+    assert "exploreLoadGeneration" in source
+    assert "projectId===selected" in source
+    assert "crypto.randomUUID()" in source
+
+
+def test_mvp_demo_explore_is_project_scoped_typed_only_and_reconstructs_on_reopen(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert 'id="exploreIntent"' in source
+    assert "user_intent:intent" in source
+    assert "input_refs:[]" in source
+    assert '$("projectSelect").addEventListener("change",()=>{beginExploreLoad(projectId);loadExplore()' in source
+    assert '$("refresh").addEventListener("click",()=>loadExplore().catch' in source
+    assert "loadExplore();" in source
+    assert "photo" not in source[source.index("Ideas for this Project"):source.index("Roadmap", source.index("Ideas for this Project"))].lower()
+
+
+def test_mvp_demo_explore_clears_project_a_before_project_b_load_and_rejects_stale_results(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "exploreProjectionProjectId=null" in source
+    assert "function beginExploreLoad(selected)" in source
+    assert "canonicalExplore=null;exploreProjectionProjectId=selected||null" in source
+    assert "Loading ideas for the selected Project" in source
+    assert 'document.querySelectorAll("[data-explore-idea],[data-explore-promote]")' in source
+    assert "generation===exploreLoadGeneration&&projectId===selected" in source
+    assert "projectId!==ownerProjectId||projection.project_id!==ownerProjectId" in source
+    assert "Saved suggestions are temporarily unavailable for this Project." in source
+    assert 'loadExplore().catch(()=>{})' in source
+
+
+def test_mvp_demo_reconciles_ambiguous_explore_generation_and_mutations(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "group.idempotency_key===idempotencyKey" in source
+    assert "option.disposition===disposition" in source
+    assert "option.idea.activity_id===promoteId&&option.promoted" in source
+    assert "operationError&&!reconciled" in source
+    assert "Project state reloaded; review current status below." in source
+    assert "Ideas saved with this Project." in source
+    assert "Choice saved with this Project." in source
+    assert "Idea added to the Roadmap." in source
+    assert "the request outcome is not yet verified" in source
+    assert "the action outcome is not yet verified" in source
+
+
+def test_mvp_demo_maps_backend_explore_state_to_supported_consumer_guidance(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert "function exploreGuidance(projection)" in source
+    assert "Review the suggested Project change in Needs Your Attention." in source
+    assert "Your preferred direction is saved. Add it to the Roadmap when you are ready." in source
+    assert "Review the saved suggestions and choose what to keep, dismiss, or prefer." in source
+    assert "projection.next_action" not in source
+    assert "Create or review a suggested Project change" not in source
+    assert "Retry Explore" not in source
+    assert "Start Explore" not in source
+
+
+def test_mvp_demo_programmatic_demo_open_loads_canonical_explore_state(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert 'const openDemoProject=$("bootstrap").onclick' in source
+    assert '$("bootstrap").onclick=async event=>' in source
+    assert 'await openDemoProject.call($("bootstrap"),event)' in source
+    assert "await loadExplore().catch(()=>{})" in source
+    # The canonical loader retains the same owner and stale-generation guards used by selection/reopen.
+    assert "generation===exploreLoadGeneration&&projectId===selected" in source
+    assert "projection.project_id!==ownerProjectId" in source
