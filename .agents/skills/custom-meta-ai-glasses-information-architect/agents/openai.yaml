@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Information Architect"
+  short_description: "Keep Project Workspace information coherent"
+  default_prompt: "Use $custom-meta-ai-glasses-information-architect to organize this Project experience without changing persistence or code."

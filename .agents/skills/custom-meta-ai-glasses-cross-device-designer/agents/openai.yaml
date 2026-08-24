@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Cross-Device Designer"
+  short_description: "Design coherent glasses, phone, desktop roles"
+  default_prompt: "Use $custom-meta-ai-glasses-cross-device-designer to define this workflow across glasses, phone, and desktop without editing code."

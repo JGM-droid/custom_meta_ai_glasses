@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Scope Guardian"
+  short_description: "Challenge complexity and feature creep"
+  default_prompt: "Use $custom-meta-ai-glasses-scope-guardian to classify this proposed batch and find the smallest coherent scope."

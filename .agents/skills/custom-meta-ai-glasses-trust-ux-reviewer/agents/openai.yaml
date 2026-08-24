@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Trust UX Reviewer"
+  short_description: "Review AI uncertainty and approval clarity"
+  default_prompt: "Use $custom-meta-ai-glasses-trust-ux-reviewer to audit AI state and approval wording without modifying anything."

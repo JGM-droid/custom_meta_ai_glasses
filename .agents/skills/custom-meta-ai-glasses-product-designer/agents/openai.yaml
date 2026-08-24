@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Product Designer"
+  short_description: "Design bounded product workflows before coding"
+  default_prompt: "Use $custom-meta-ai-glasses-product-designer to design an implementation-ready product workflow without modifying anything."

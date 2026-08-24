@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Demo Scenario Designer"
+  short_description: "Design realistic differentiated product demos"
+  default_prompt: "Use $custom-meta-ai-glasses-demo-scenario-designer to design an evidence-backed end-to-end scenario without changing anything."
