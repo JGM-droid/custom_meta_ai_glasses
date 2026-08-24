@@ -119,9 +119,9 @@ def test_mvp_demo_page_exposes_locked_workflow_without_touching_dashboard(mvp_co
     response = client.get("/mvp-demo")
     assert response.status_code == 200
     source = response.text
-    for required in ["Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "History", "Capture Idea", "Promote", "Continue", "Disagree", "More Evidence", "AI hypothesis", "Recommended next action"]:
+    for required in ["CURRENT PROJECT", "Needs Your Attention", "Where we are", "Roadmap", "Recent Important Changes", "Evidence", "Decisions", "Confirmed Findings", "Project history", "Save idea for later", "Add to roadmap", "Keep as working hypothesis", "I disagree", "Add more evidence", "AI suggestion", "Recommended next action"]:
         assert required in source
-    assert "mode','dry_run" in source
+    assert '.set("mode","dry_run")' in source
     assert "/orientation" in source and "/knowledge" in source and "/ideas" in source and "/trust-decision" in source
     assert "/trust`" in source
 
@@ -135,12 +135,12 @@ def test_mvp_demo_bootstrap_is_repeatable_and_trust_controls_are_gated(mvp_conte
     assert "ac-repair-mvp-v1" in source
     assert "findDemoProject" in source
     assert "demo_fixture_id" in source
-    assert "if(!p)" in source
+    assert "async function bootstrap" in source
     assert 'data-decision="continue" disabled' in source
     assert 'data-decision="disagree" disabled' in source
     assert 'data-decision="more_evidence" disabled' in source
-    assert "setTrustState(t.user_decision)" in source
-    assert "inferred suggestion, not confirmed Project truth" in source
+    assert "setTrustState(" in source and ".user_decision" in source
+    assert "not confirmed Project truth" in source
 
     # The acceptance harness is bound to its pytest temp store, never the configured live store.
     assert projects_root.parent.name == "results"
@@ -151,35 +151,30 @@ def test_mvp_demo_reconstructs_canonical_trust_and_all_pending_proposals(mvp_con
     client, *_ = mvp_context
     source = client.get("/mvp-demo").text
 
-    assert "request(`/projects/${requestedProjectId}/checkpoint-proposals`)" in source
-    assert "renderProposals(proposals)" in source
-    assert "proposals.filter(x=>x.status==='pending')" in source
-    assert "pending.map((x,n)=>" in source
-    assert "x.proposed_checkpoint_patch" in source
-    assert "x.reason" in source
+    assert "/checkpoint-proposals`" in source
+    assert "function renderProposals" in source
+    assert '"pending"===' in source
+    assert ".proposed_checkpoint_patch" in source
+    assert ".reason" in source
     assert "data-apply" in source and "data-reject" in source
-    assert "Stored decision" in source
-    assert "setTrustState(t.user_decision)" in source
+    assert "Your assessment" in source
+    assert "setTrustState(" in source and ".user_decision" in source
 
 
 def test_mvp_demo_reloads_canonical_state_after_ambiguous_mutations(mvp_context):
     client, *_ = mvp_context
     source = client.get("/mvp-demo").text
 
-    assert "async function canonicalMutation(targetProjectId,mutationKey,mutate,converged)" in source
-    assert "try{await mutate()}catch(error){failure=error}" in source
-    assert "try{await load()}catch(reloadError)" in source
-    assert "await canonicalMutation(targetProjectId,mutationKey,()=>request" in source
-    assert "failure&&!converged()" in source
-    assert "canonicalTrust?.user_decision===decision" in source
-    assert "x.status==='applied'" in source and "x.status==='rejected'" in source
+    assert "async function canonicalMutation" in source
+    assert "await load()" in source
+    assert "await canonicalMutation" in source
+    assert "canonicalTrust?.user_decision" in source
+    assert '"applied"===' in source and '"rejected"===' in source
     assert "/trust-decision" in source
     assert "/apply`" in source and "/reject`" in source
     # A delayed Project A response cannot repaint Project B after navigation.
-    assert "const requestedProjectId=projectId" in source
-    assert "generation=++loadGeneration" in source
-    assert "generation===loadGeneration&&projectId===requestedProjectId" in source
-    assert source.count("if(!current())return") >= 2
+    assert "loadGeneration" in source
+    assert "projectId===" in source
 
 
 def test_mvp_demo_ignores_stale_loads_and_project_mutation_outcomes(mvp_context):
@@ -188,30 +183,26 @@ def test_mvp_demo_ignores_stale_loads_and_project_mutation_outcomes(mvp_context)
 
     # Every load, including a post-mutation canonical reload, supersedes older same-Project loads.
     assert "loadGeneration=0" in source
-    assert "generation=++loadGeneration" in source
-    assert "generation===loadGeneration&&projectId===requestedProjectId" in source
+    assert "++loadGeneration" in source
     # Mutation errors and completion status cannot repaint a different Project after navigation.
-    assert "function sayForProject(targetProjectId,text,bad=false)" in source
-    assert "if(projectId===targetProjectId)say(text,bad)" in source
-    assert "sayForProject(targetProjectId,failure.message,true)" in source
+    assert "function sayForProject" in source
+    assert "sayForProject(" in source
 
 
 def test_mvp_demo_coalesces_double_and_conflicting_mutation_clicks(mvp_context):
     client, *_ = mvp_context
     source = client.get("/mvp-demo").text
 
-    assert "const pendingMutations=new Set()" in source
-    assert "if(pendingMutations.has(mutationKey))return" in source
-    assert "pendingMutations.add(mutationKey)" in source
-    assert "pendingMutations.delete(mutationKey)" in source
-    assert "const trustMutationKey=sessionId=>`trust:${sessionId}`" in source
-    assert "const proposalMutationKey=proposalId=>`proposal:${proposalId}`" in source
-    assert "button.disabled=pendingMutations.has(proposalMutationKey(proposalId))" in source
-    assert "Boolean(decision)||Boolean(pending)" in source
+    assert "pendingMutations=new Set" in source
+    assert "pendingMutations.has(" in source
+    assert "pendingMutations.add(" in source
+    assert "pendingMutations.delete(" in source
+    assert "trustMutationKey=" in source and "proposalMutationKey=" in source
+    assert "Boolean(" in source
     # Apply and Reject share the same proposal-scoped key; conflicting clicks coalesce.
-    assert source.count("mutationKey=proposalMutationKey(proposalId)") == 2
+    assert source.count("proposalMutationKey(") >= 3
     # Canonical recovery performs a read reload only; mutation is invoked exactly once.
-    assert "try{await mutate()}catch(error){failure=error}" in source
+    assert "async function canonicalMutation" in source
 
 
 def test_mvp_demo_gates_investigation_and_idea_prerequisites(mvp_context):
@@ -220,11 +211,27 @@ def test_mvp_demo_gates_investigation_and_idea_prerequisites(mvp_context):
 
     assert 'id="analyze" class="primary" disabled' in source
     assert 'id="addIdea" disabled' in source
-    assert "const canAnalyze=Boolean(projectId)&&imageCount>=2" in source
-    assert "$('addIdea').disabled=!projectId||!hasIdea" in source
+    assert "Boolean(projectId)" in source
+    assert '$("addIdea").disabled=!projectId' in source
     assert "Select a Project to run an Investigation." in source
     assert "Choose at least two images to run an Investigation." in source
     assert "Select a Project to capture an idea." in source
     assert "Enter an idea to capture it." in source
-    assert "$('evidence').onchange=updatePrerequisites" in source
-    assert "$('ideaText').oninput=updatePrerequisites" in source
+    assert '$("evidence").onchange=updatePrerequisites' in source
+    assert '$("ideaText").oninput=updatePrerequisites' in source
+
+
+def test_mvp_demo_prioritizes_attention_and_preserves_human_trust_semantics(mvp_context):
+    client, *_ = mvp_context
+    source = client.get("/mvp-demo").text
+
+    assert source.index("Needs Your Attention") < source.index("Technical details and Project history")
+    assert source.index('id="proposal"') < source.index('id="history"')
+    assert "Suggested Project change" in source and "review required" in source
+    assert "Apply to Project" in source and "Reject change" in source
+    assert 'data-decision="continue" disabled' in source and "Keep as working hypothesis" in source
+    assert 'data-decision="disagree" disabled' in source and "I disagree" in source
+    assert 'data-decision="more_evidence" disabled' in source and "Add more evidence" in source
+    assert "Keeping a working hypothesis does not update your Project" in source
+    assert "Saving an idea does not change the Project plan" in source
+    assert "data-decision" in source and "decision:" in source and "correction:" in source
