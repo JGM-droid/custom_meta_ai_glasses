@@ -438,3 +438,20 @@ def test_record_progress_desktop_reloads_canonical_state_and_rejects_stale_proje
     assert 'if(clearInputs)progressFields.forEach(id=>$(id).value="")' in source
     assert "revisionChanged=canonical.revision!==revision" in source
     assert 'resetProgressForm(false);say("The Project changed after this preview. Preview again before saving."' in source
+
+
+def test_bootstrap_demo_button_guards_against_concurrent_double_click_duplicate_projects(mvp_context):
+    # Regression coverage for a confirmed Bug Hunter finding: without an in-flight guard, a
+    # double-click (or two open tabs) on "Open AC Repair MVP Demo" raced findDemoProject's
+    # check against bootstrap's own create-if-absent write, producing multiple duplicate
+    # "AC Repair — MVP Demo" fixture Projects. Mirrors the same in-flight-flag +
+    # disabled-button pattern already used and tested for Create Project
+    # (see test_dashboard_project_workspace_contract.py's workspaceCreateProjectInFlight
+    # assertions) rather than inventing a second guarding mechanism.
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+
+    assert "bootstrapInFlight=false" in source
+    assert "if(bootstrapInFlight)return;bootstrapInFlight=true;" in source
+    assert '$("bootstrap").disabled=true' in source
+    assert "finally{bootstrapInFlight=false;" in source
+    assert '$("bootstrap").disabled=false}}' in source
