@@ -280,7 +280,9 @@ def test_mvp_demo_explore_is_project_scoped_typed_only_and_reconstructs_on_reope
     assert '$("projectSelect").addEventListener("change",()=>{beginExploreLoad(projectId);loadExplore()' in source
     assert '$("refresh").addEventListener("click",()=>loadExplore().catch' in source
     assert "loadExplore();" in source
-    assert "photo" not in source[source.index("Ideas for this Project"):source.index("Roadmap", source.index("Ideas for this Project"))].lower()
+    ideas_start = source.index("Ideas for this Project")
+    ideas_end = source.index("</article>", ideas_start)
+    assert "photo" not in source[ideas_start:ideas_end].lower()
 
 
 def test_mvp_demo_explore_clears_project_a_before_project_b_load_and_rejects_stale_results(mvp_context):
@@ -338,4 +340,57 @@ def test_mvp_demo_programmatic_demo_open_loads_canonical_explore_state(mvp_conte
     assert "await loadExplore().catch(()=>{})" in source
     # The canonical loader retains the same owner and stale-generation guards used by selection/reopen.
     assert "generation===exploreLoadGeneration&&projectId===selected" in source
+
+
+def test_project_assistant_uses_only_explicit_existing_capabilities(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+    for label in ["Project Assistant", "Ask Project", "Continue where I left off", "Add photos", "Get ideas"]:
+        assert label in source
+    assert "`/projects/${selected}/ask`" in source
+    assert "`/projects/${selected}/interactions/explore`" in source
+    assert '$("addPhotos").addEventListener("click"' in source
+    assert '$("getIdeasAction").addEventListener("click"' in source
+    assert 'insertBefore($("projectAssistant"),document.querySelector(".grid").children[1])' in source
+    assert "assistant/resolve" not in source
+    assert "assistant/execute" not in source
+    assert "intent classifier" not in source.lower()
+
+
+def test_project_assistant_rejects_stale_ask_responses_and_preserves_unsupported_boundary(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+    assert "assistantAskGeneration" in source
+    assert "projectId!==selected||generation!==assistantAskGeneration" in source
+    assert 'beginAssistantProjectLoad(selected)' in source
+    assert "External research, media, and instructions are not available yet." in source
+
+
+def test_project_assistant_labels_ai_grounding_provenance_and_no_mutation(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+    assert "AI answer — based on saved Project information" in source
+    assert "Grounded in saved Project information" in source
+    assert "Partially grounded — some information may be missing" in source
+    assert "Not enough saved Project information" in source
+    assert 'answer.grounding_status==="partial"' in source
+    assert 'answer.grounding_status==="insufficient_context"' in source
+    assert "answer.uncertainty_note" in source
+    assert "answer.references||[]" in source
+    assert "answer.selected_context_summary" in source
+    assert "This answer does not change your Project." in source
+
+
+def test_project_assistant_invalidates_project_a_before_project_b_load(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+    assert "assistantCanonicalProjectId===projectId" in source
+    assert "function beginAssistantProjectLoad(selected)" in source
+    assert 'for(const id of["where","now","next"])' in source
+    assert 'beginAssistantProjectLoad(selected);try{await selectProjectAndLoadCanonicalState' in source
+    assert "if(projectId===selected&&selected)assistantCanonicalProjectId=selected" in source
+    assert 'if(assistantCanonicalProjectId!==projectId)return' in source
+
+
+def test_project_switch_clears_pending_evidence_and_disables_analysis(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+    assert '$("evidence").value="";updatePrerequisites()' in source
+    assert 'const e=$("evidence").files?.length||0' in source
+    assert '$("analyze").disabled=!t' in source
     assert "projection.project_id!==ownerProjectId" in source
