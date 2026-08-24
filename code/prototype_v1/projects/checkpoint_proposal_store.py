@@ -191,6 +191,32 @@ class CheckpointProposalStore:
                 return False
         return True
 
+    def _sibling_already_applied_at_same_revision(self, project_id: str, proposal: CheckpointProposal) -> bool:
+        """True when a DIFFERENT proposal at the same base revision with identical patch
+        content is already applied.
+
+        The revision+content-match check above (Phase C2's documented crash-recovery
+        reconciliation, PROJECT_MEMORY_ARCHITECTURE.md "Atomicity note") exists to let a
+        single proposal's own retried apply succeed after a partial write - Project
+        written, this Proposal's own status write lost. It cannot tell that case apart
+        from a genuinely different sibling proposal that happens to propose the same
+        patch: both look identical from revision-delta + content alone. Marking a
+        proposal "applied" when a sibling actually caused the revision bump would let
+        Presentation Addendum 2's "Confirmed & Added" UI copy report success for a
+        proposal that never had any causal effect - a provenance violation of
+        ADR-024/ADR-029. Mirrors project_progress.py's own reconciliation, which is
+        always scoped to one deterministically-derived proposal_id rather than falling
+        back to content-matching across records.
+        """
+        expected_patch = proposal.proposed_checkpoint_patch.to_update_fields()
+        return any(
+            other.proposal_id != proposal.proposal_id
+            and other.base_project_revision == proposal.base_project_revision
+            and other.status == CheckpointProposalStatus.APPLIED
+            and other.proposed_checkpoint_patch.to_update_fields() == expected_patch
+            for other in self._list_proposals_no_lock(project_id)
+        )
+
     def _validate_source_activities(self, project_id: str, source_activity_ids: list[str]) -> None:
         for activity_id in source_activity_ids:
             try:
@@ -268,22 +294,25 @@ class CheckpointProposalStore:
         with project_lock:
             return self._load_proposal_no_lock(normalized_project_id, proposal_id)
 
+    def _list_proposals_no_lock(self, project_id: str) -> list[CheckpointProposal]:
+        proposal_dir = self._proposal_dir(project_id)
+        if not proposal_dir.exists() or not proposal_dir.is_dir():
+            return []
+
+        proposals: list[CheckpointProposal] = []
+        for path in sorted(proposal_dir.glob("*.json")):
+            proposals.append(self._load_proposal_from_path(project_id, path))
+
+        proposals.sort(key=lambda item: (item.created_at_utc, item.proposal_id))
+        return proposals
+
     def list_proposals(self, project_id: str) -> list[CheckpointProposal]:
         normalized_project_id = self.project_store.validate_project_id(project_id)
         self.project_store.load_project(normalized_project_id)
         project_lock = self.project_store._get_project_lock(normalized_project_id)
 
         with project_lock:
-            proposal_dir = self._proposal_dir(normalized_project_id)
-            if not proposal_dir.exists() or not proposal_dir.is_dir():
-                return []
-
-            proposals: list[CheckpointProposal] = []
-            for path in sorted(proposal_dir.glob("*.json")):
-                proposals.append(self._load_proposal_from_path(normalized_project_id, path))
-
-            proposals.sort(key=lambda item: (item.created_at_utc, item.proposal_id))
-            return proposals
+            return self._list_proposals_no_lock(normalized_project_id)
 
     def apply_proposal(self, project_id: str, proposal_id: str) -> CheckpointProposal:
         normalized_project_id = self.project_store.validate_project_id(project_id)
@@ -305,6 +334,7 @@ class CheckpointProposalStore:
                 if (
                     project.revision == proposal.base_project_revision + 1
                     and self._project_matches_patch(project, proposal.proposed_checkpoint_patch)
+                    and not self._sibling_already_applied_at_same_revision(normalized_project_id, proposal)
                 ):
                     reconciled = proposal.model_copy(
                         update={

@@ -565,3 +565,58 @@ def test_unknown_proposal_returns_not_found(checkpoint_proposal_test_context):
     response = client.get(f"/projects/{project['project_id']}/checkpoint-proposals/{uuid4()}")
     assert response.status_code == 404
     assert response.json()["detail"]["category"] == "proposal_not_found"
+
+
+def test_sibling_proposal_with_matching_patch_cannot_ride_along_as_applied(checkpoint_proposal_test_context):
+    # Regression coverage for a confirmed Bug Hunter finding, independently reproduced in the
+    # live AC Repair acceptance Project's real data: apply_proposal's crash-recovery
+    # reconciliation (PROJECT_MEMORY_ARCHITECTURE.md's "Atomicity note") only checked
+    # project.revision == base_revision + 1 and patch content, with no way to tell "this
+    # proposal's own retry after a partial write" apart from "an unrelated sibling proposal
+    # that happens to propose identical content." Two independently-created sibling proposals
+    # at the same base_project_revision with byte-identical patches previously both ended up
+    # status="applied" even though only one of them ever caused the Project's revision to
+    # advance - exactly the provenance violation ADR-024/ADR-029 exist to prevent.
+    client, _project_store, _activity_store, _proposal_store, _projects_root = checkpoint_proposal_test_context
+    project = _create_project(client, name="AC Repair", goal="Restore reliable cooling")
+    a1 = _create_activity(client, project["project_id"], summary="Capacitor appears swollen.")
+
+    patch = {"next_action": "Measure capacitance."}
+    first = _create_proposal(
+        client, project["project_id"],
+        expected_project_revision=0, source_activity_ids=[a1["activity_id"]],
+        proposed_checkpoint_patch=patch, reason="First suggestion.",
+    ).json()
+    second = _create_proposal(
+        client, project["project_id"],
+        expected_project_revision=0, source_activity_ids=[a1["activity_id"]],
+        proposed_checkpoint_patch=patch, reason="Second, independent suggestion with the same wording.",
+    ).json()
+    assert first["proposal_id"] != second["proposal_id"]
+
+    applied_first = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{first['proposal_id']}/apply")
+    assert applied_first.status_code == 200
+    assert applied_first.json()["status"] == "applied"
+
+    after_first = client.get(f"/projects/{project['project_id']}").json()
+    assert after_first["revision"] == 1
+
+    # The real bug: applying the second, never-attempted sibling used to silently succeed
+    # (marked "applied") purely because the Project's content already matched its patch.
+    applied_second = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{second['proposal_id']}/apply")
+    assert applied_second.status_code == 409
+    assert applied_second.json()["detail"]["category"] == "revision_conflict"
+
+    second_after = client.get(f"/projects/{project['project_id']}/checkpoint-proposals/{second['proposal_id']}").json()
+    assert second_after["status"] == "pending"
+
+    # The Project must not have been touched a second time by the rejected sibling.
+    after_second_attempt = client.get(f"/projects/{project['project_id']}").json()
+    assert after_second_attempt["revision"] == 1
+    assert after_second_attempt["updated_at_utc"] == after_first["updated_at_utc"]
+
+    # A repeat apply of the SAME (first) proposal must still be idempotent success - this fix
+    # must not break ordinary retry-of-an-already-applied-proposal behavior.
+    retry_first = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{first['proposal_id']}/apply")
+    assert retry_first.status_code == 200
+    assert retry_first.json()["status"] == "applied"
