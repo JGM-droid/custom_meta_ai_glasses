@@ -989,9 +989,12 @@ Current Meta DAT 0.8 capability claims must remain evidence-bounded. Verified pu
 ADR-056 - ACCEPTED
 Investigation image evidence has a dynamic capacity of at most five accepted images. Five is a ceiling, never a completion requirement: each Analyze path preserves its existing minimum (one image for session orchestration; two images for the direct retained Analyze contract), and both accept every count through five above that minimum. The sixth distinct image must be explicitly rejected without changing retained evidence, sequence order, or Project attribution. Accepted evidence remains session- and Project-scoped, is ordered deterministically, and is supplied to one Analyze request as one ordered evidence set. This contract replaces the former maximum-three backend constraint without changing canonical Project Memory ownership or Active Project semantics.
 
+ADR-057 - ACCEPTED (Project Interaction Foundation)
+Project Interaction is a lightweight application-level orchestration and correlation boundary, not a new universal persisted aggregate, session store, result store, or workflow engine. The initial foundation requires explicit `project_id`, a server-owned `interaction_id`, deterministic Context Pack retrieval, provider-neutral structured validation, and idempotent projection into existing family-appropriate owners. Investigation retains its specialized session/evidence/result/trust lifecycle. The first non-Investigation proof is a backend-first Room Redesign `EXPLORE` interaction using only `OPTION_SET` and `INFORMATION_REQUEST`: validated options project as ordered AI/inferred Idea Activities, user dispositions are linked append-only Decisions, and canonical direction changes only through existing Checkpoint Proposal Apply. This decision authorizes the documented foundation and proposed milestone sequencing, not implementation. `docs/PROJECT_INTERACTION_FOUNDATION.md` is the focused authoritative design.
+
 ## Approved Roadmap - Research-Informed Extensions
 
-Status: APPROVED ROADMAP. These entries mix implemented foundations with explicitly future extensions; each subsection labels its current state. They extend existing architecture and must not be read as competing/replacement definitions of it. Each item is backed by an ADR above (ADR-040 through ADR-056); this section is a readable index, not additional authority beyond those ADRs.
+Status: APPROVED ROADMAP. These entries mix implemented foundations with explicitly future extensions; each subsection labels its current state. They extend existing architecture and must not be read as competing/replacement definitions of it. Each item is backed by an ADR above (ADR-040 through ADR-057); this section is a readable index, not additional authority beyond those ADRs.
 
 ### Interpretable, bounded context (ICM-informed) - ADR-040, ADR-041
 
@@ -1146,6 +1149,7 @@ Multi-agent/multi-perspective review (distinct mandates, deliberate disagreement
 - docs/PROJECT_MEMORY_ARCHITECTURE.md is authoritative for approved forward product architecture.
 - docs/runtime_governance.md remains authoritative for runtime execution/startup ownership.
 - docs/investigation_session_api_v1.md remains authoritative for current Investigation Session API contract.
+- docs/PROJECT_INTERACTION_FOUNDATION.md is authoritative for the approved lightweight Project Interaction abstraction, initial structured-result boundary, and first proposed non-Investigation proof under ADR-057.
 - architecture/Phase2_System_Design.md remains valuable as Investigation subsystem design history and implementation reference.
 - docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md is supporting external research evidence and does not override architecture authority.
 - docs/research/MULTI_AGENT_PRODUCT_REVIEW.md is a structured product/architecture review (RESEARCH / RECOMMENDATIONS - HUMAN REVIEW REQUIRED); it does not override architecture authority, and its recommendations are not automatically approved architecture or roadmap.

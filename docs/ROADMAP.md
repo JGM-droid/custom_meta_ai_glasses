@@ -29,7 +29,7 @@
 
 ## Approved Post-MVP Direction - Persistent Goal-Oriented Project Assistant
 
-Status: APPROVED ROADMAP. This section records direction, not implemented functionality, and does not unfreeze the completed Universal Project Workspace MVP. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-052 through ADR-055 are authoritative.
+Status: APPROVED ROADMAP. This section records direction, not implemented functionality, and does not unfreeze the completed Universal Project Workspace MVP. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-052 through ADR-057 are authoritative. The focused foundation is `docs/PROJECT_INTERACTION_FOUNDATION.md`.
 
 The product is a persistent multimodal Project Workspace, not "ChatGPT running on glasses." A Project represents a durable user objective: repair an AC, restore a vehicle, redesign a room, build a PC, plan a garden or trip, research a purchase, remodel a bathroom, develop software, or learn a craft. The application owns Project identity, state, checkpoints, history, evidence, decisions, current step, next actions, references, and approved memory changes.
 
@@ -46,6 +46,8 @@ PROJECT
 ```
 
 Investigation remains one Project Interaction. Candidate future families are INVESTIGATE, EXPLORE, RESEARCH, COMPARE, GUIDE, PLAN, EXPLAIN, and LOOK/ANALYZE EVIDENCE. They are not approved implementation scope yet.
+
+The approved foundation keeps Project Interaction as a lightweight orchestration/correlation boundary over existing Project Memory rather than adding a universal store or workflow engine. The first proposed proof is backend-first Room Redesign `EXPLORE`: deterministic Project Context retrieval, one provider-neutral call, strict `OPTION_SET | INFORMATION_REQUEST`, ordered AI/inferred Idea Activities, explicit user Decision Activities, existing Idea promotion, and Checkpoint Proposal Apply for any canonical direction change. This milestone is documented but not implemented or authorized by this design task.
 
 ### Canonical creative use case - Room Redesign
 
