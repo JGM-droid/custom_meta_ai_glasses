@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -217,3 +219,24 @@ def test_trust_read_is_isolated_deterministic_non_mutating_and_zero_ai(trust_con
     assert client.get(f"/projects/{project_b['project_id']}/investigation-sessions/{session_a}/trust").status_code == 404
     assert client.get(f"/projects/{project_a['project_id']}").json() == before_project
     assert client.get(f"/projects/{project_a['project_id']}/activities").json() == before_activities
+
+
+def test_historical_completed_session_without_canonical_result_returns_precise_domain_response(trust_context):
+    client, _projects_root, sessions_root = trust_context
+    project = client.post("/projects", json={"name": "Historical Project", "goal": "Recover safely"}).json()
+    created = client.post(f"/projects/{project['project_id']}/investigation-sessions", json={}).json()
+    session_path = sessions_root / "sessions" / f"{created['session_id']}.json"
+    payload = json.loads(session_path.read_text(encoding="utf-8"))
+    payload["status"] = "completed"
+    payload["completed_result_id"] = str(uuid4())
+    session_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    response = client.get(
+        f"/projects/{project['project_id']}/investigation-sessions/{created['session_id']}/trust"
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "category": "trust_state_unavailable",
+        "message": "Investigation canonical result is unavailable; no trust decision can be reconstructed.",
+    }

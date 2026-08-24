@@ -261,6 +261,8 @@ class CheckpointProposalStore:
             project = self.project_store._load_project_no_lock(normalized_project_id)
             proposal = self._load_proposal_no_lock(normalized_project_id, normalized_proposal_id)
 
+            if proposal.status == CheckpointProposalStatus.APPLIED:
+                return proposal
             if proposal.status != CheckpointProposalStatus.PENDING:
                 raise CheckpointProposalStateError("Only pending proposals can be applied.")
 
@@ -315,6 +317,8 @@ class CheckpointProposalStore:
             self.project_store._load_project_no_lock(normalized_project_id)
             proposal = self._load_proposal_no_lock(normalized_project_id, normalized_proposal_id)
 
+            if proposal.status == CheckpointProposalStatus.REJECTED:
+                return proposal
             if proposal.status != CheckpointProposalStatus.PENDING:
                 raise CheckpointProposalStateError("Only pending proposals can be rejected.")
 

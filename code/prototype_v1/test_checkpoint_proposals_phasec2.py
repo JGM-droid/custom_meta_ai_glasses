@@ -170,7 +170,7 @@ def test_partial_patch_behavior_preserves_unspecified_fields(checkpoint_proposal
     assert updated_project["checkpoint"]["next_action"] == "Identify capacitor rating and test capacitance."
 
 
-def test_acceptance_scenario_apply_and_double_apply_conflict(checkpoint_proposal_test_context):
+def test_acceptance_scenario_apply_and_equivalent_retry_converges(checkpoint_proposal_test_context):
     client, _project_store, _activity_store, _proposal_store, _projects_root = checkpoint_proposal_test_context
     project = _create_project(
         client,
@@ -223,8 +223,8 @@ def test_acceptance_scenario_apply_and_double_apply_conflict(checkpoint_proposal
     assert after_apply["updated_at_utc"] != before_apply["updated_at_utc"]
 
     second_apply = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{proposal['proposal_id']}/apply")
-    assert second_apply.status_code == 409
-    assert second_apply.json()["detail"]["category"] == "invalid_proposal_state"
+    assert second_apply.status_code == 200
+    assert second_apply.json() == applied.json()
 
 
 def test_stale_revision_keeps_proposal_pending_without_partial_mutation(checkpoint_proposal_test_context):
@@ -280,6 +280,9 @@ def test_reject_proposal_no_project_mutation_and_cannot_apply_after(checkpoint_p
 
     rejected = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{proposal['proposal_id']}/reject")
     assert rejected.status_code == 200
+    repeated_reject = client.post(f"/projects/{project['project_id']}/checkpoint-proposals/{proposal['proposal_id']}/reject")
+    assert repeated_reject.status_code == 200
+    assert repeated_reject.json() == rejected.json()
     rejected_body = rejected.json()
     assert rejected_body["status"] == "rejected"
     assert rejected_body["rejected_at_utc"] is not None

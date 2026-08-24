@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from investigations import InvestigationSessionStore, load_canonical_investigation_result
+from investigations import InvestigationSessionStore, InvestigationStoreError, load_canonical_investigation_result
 
 from .activity_store import ProjectActivityStore
 from .checkpoint_proposal_store import CheckpointProposalStore
@@ -43,7 +43,12 @@ class ProjectInvestigationTrustService:
         session = self.session_store.load_session_for_project(project_id, session_id)
         if not session.completed_result_id:
             raise ProjectInvestigationTrustError("Investigation has no completed result.")
-        envelope = load_canonical_investigation_result(self.canonical_result_root, session.completed_result_id)
+        try:
+            envelope = load_canonical_investigation_result(self.canonical_result_root, session.completed_result_id)
+        except InvestigationStoreError as exc:
+            raise ProjectInvestigationTrustError(
+                "Investigation canonical result is unavailable; no trust decision can be reconstructed."
+            ) from exc
         activities = self.activity_store.list_activities(project_id)
         source = next((a for a in activities if (a.metadata or {}).get("investigation_result_id") == session.completed_result_id
                        and a.source_type == ProjectActivitySourceType.AI), None)
