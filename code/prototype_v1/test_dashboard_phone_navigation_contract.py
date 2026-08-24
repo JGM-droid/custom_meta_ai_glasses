@@ -68,7 +68,7 @@ def test_sidebar_is_the_phone_home_screen_contract():
     # instead, matching a real "Projects list first" phone home rather than
     # a shrunk desktop hero.
     phone_media_start = source.index("@media (max-width: 720px)")
-    phone_media_end = source.index("\n    .hero {", phone_media_start)
+    phone_media_end = source.index("</style>", phone_media_start)
     phone_media_block = source[phone_media_start:phone_media_end]
 
     assert ".workspace-home {" in phone_media_block

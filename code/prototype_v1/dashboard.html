@@ -35,6 +35,8 @@
       --success-quiet: rgba(127, 217, 172, 0.14);
       --success-border: rgba(127, 217, 172, 0.35);
       --warn: #f0bd7e;
+      --warn-quiet: rgba(240, 189, 126, 0.14);
+      --warn-border: rgba(240, 189, 126, 0.35);
       --focus-ring: rgba(142, 161, 255, 0.55);
       --radius-sm: 8px;
       --radius-md: 12px;
@@ -347,87 +349,6 @@
     @media (max-width: 899px) {
       .wrap {
         padding: 32px 20px 56px;
-      }
-    }
-
-    /* Phone: the sidebar and the main content column become two separate
-       full-screen views instead of a scaled-down desktop layout. The
-       sidebar (brand + New Project + Projects list) *is* the phone home
-       screen - .workspace-home (the desktop empty state) is redundant here
-       and hidden. Selecting a Project, or creating one, adds
-       .phone-nav-detail to .app-shell to swap to the detail view; the
-       "< Projects" back control (in the project header) removes it. This
-       is a pure view-state class over the exact same
-       workspaceSelectedProjectId/workspaceProjectsCache data already
-       fetched for desktop - no second data path. */
-    @media (max-width: 720px) {
-      .app-shell {
-        display: block;
-      }
-
-      .projects-sidebar {
-        position: static;
-        width: 100%;
-        min-height: 100vh;
-        border-right: 0;
-        padding: 20px 18px 32px;
-      }
-
-      .workspace-home {
-        display: none;
-      }
-
-      .app-main {
-        display: none;
-      }
-
-      .app-shell.phone-nav-detail .projects-sidebar {
-        display: none;
-      }
-
-      .app-shell.phone-nav-detail .app-main {
-        display: block;
-      }
-
-      .phone-back-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        border: 0;
-        background: transparent;
-        color: var(--ink-quiet);
-        font-size: 0.88rem;
-        font-weight: 600;
-        padding: 8px 0;
-        margin: 0 0 4px -2px;
-        cursor: pointer;
-        width: 100%;
-      }
-
-      .project-header-bar {
-        margin-bottom: 2px;
-      }
-
-      .sidebar-project-row {
-        padding: 13px 12px;
-        font-size: 0.98rem;
-      }
-
-      .sidebar-new-project-btn {
-        padding: 14px 14px;
-        font-size: 0.95rem;
-      }
-
-      .wrap {
-        padding: 22px 18px 48px;
-      }
-
-      .workspace-composer .workspace-ask-row {
-        flex-wrap: wrap;
-      }
-
-      .workspace-continuity {
-        grid-template-columns: 1fr;
       }
     }
 
@@ -1550,6 +1471,7 @@
     }
 
     .workspace-composer {
+      order: 0;
       margin: 22px 0 26px;
     }
 
@@ -1668,6 +1590,7 @@
     }
 
     .workspace-continuity {
+      order: 1;
       display: grid;
       gap: 16px;
       margin-bottom: 22px;
@@ -1722,6 +1645,7 @@
     }
 
     .workspace-recent {
+      order: 2;
       margin-top: 6px;
       padding-top: 24px;
       border-top: 1px solid var(--border-hairline);
@@ -1744,6 +1668,7 @@
     }
 
     .project-details {
+      order: 3;
       margin-top: 26px;
       padding-top: 18px;
       border-top: 1px solid var(--border-hairline);
@@ -1775,6 +1700,208 @@
 
     .project-details-body {
       margin-top: 14px;
+    }
+
+    /* Phone: the sidebar and the main content column become two separate
+       full-screen views instead of a scaled-down desktop layout. The
+       sidebar (brand + New Project + Projects list) *is* the phone home
+       screen - .workspace-home (the desktop empty state) is redundant here
+       and hidden. Selecting a Project, or creating one, adds
+       .phone-nav-detail to .app-shell to swap to the detail view; the
+       "< Projects" back control (in the project header) removes it. This
+       is a pure view-state class over the exact same
+       workspaceSelectedProjectId/workspaceProjectsCache data already
+       fetched for desktop - no second data path.
+
+       This block is placed last in the stylesheet, after every base
+       (non-media) rule, on purpose: several phone overrides below target
+       selectors (.workspace-composer, .workspace-continuity, .composer-chip,
+       etc.) that also have unconditional base rules defined further up the
+       file. CSS resolves equal-specificity ties by source order, so if this
+       media query sat earlier (as it originally did), those later base
+       rules would silently win at phone widths and the overrides below
+       would never actually render. Keeping this block last guarantees it
+       wins whenever its condition matches, without needing !important and
+       without touching any base rule's position or values. */
+    @media (max-width: 720px) {
+      .app-shell {
+        display: block;
+      }
+
+      .projects-sidebar {
+        position: static;
+        width: 100%;
+        min-height: 100vh;
+        border-right: 0;
+        padding: 20px 18px 32px;
+      }
+
+      .workspace-home {
+        display: none;
+      }
+
+      .app-main {
+        display: none;
+      }
+
+      .app-shell.phone-nav-detail .projects-sidebar {
+        display: none;
+      }
+
+      .app-shell.phone-nav-detail .app-main {
+        display: block;
+      }
+
+      .phone-back-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 0;
+        background: transparent;
+        color: var(--ink-quiet);
+        font-size: 0.88rem;
+        font-weight: 600;
+        padding: 8px 0;
+        margin: 0 0 4px -2px;
+        cursor: pointer;
+        width: 100%;
+      }
+
+      .project-header-bar {
+        margin-bottom: 2px;
+      }
+
+      /* Concept A ("Card hierarchy") is the approved visual source of truth
+         for phone width. Everything below is scoped to this media query
+         only - desktop keeps its existing rules untouched above. Same DOM,
+         same ids, same event handlers throughout; only presentation and
+         (via the .workspace-composer/.workspace-continuity/.workspace-recent/
+         .project-details `order` values set below) visual sequence change. */
+
+      .sidebar-project-row {
+        padding: 13px 12px;
+        font-size: 0.98rem;
+        background: var(--surface);
+        border-radius: var(--radius-md);
+        margin-bottom: 8px;
+        position: relative;
+        padding-right: 30px;
+      }
+
+      .sidebar-project-row::after {
+        content: "";
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        width: 7px;
+        height: 7px;
+        border-right: 1.5px solid var(--ink-faint);
+        border-bottom: 1.5px solid var(--ink-faint);
+        transform: translateY(-50%) rotate(-45deg);
+      }
+
+      .sidebar-project-row:hover {
+        background: var(--surface-raised);
+      }
+
+      .sidebar-project-row.selected {
+        background: var(--accent-quiet);
+      }
+
+      .sidebar-project-row-active-dot::after {
+        content: " Active";
+        font-weight: 600;
+      }
+
+      .sidebar-new-project-btn {
+        padding: 14px 14px;
+        font-size: 0.95rem;
+      }
+
+      .wrap {
+        padding: 22px 18px 48px;
+      }
+
+      /* Composer: a single tall rounded surface with the microphone and
+         send controls anchored inside its bottom corners, matching the
+         approved mockup, rather than a single-line row. Reuses the exact
+         same #workspaceAskInput/#workspaceComposerMicBtn/#workspaceAskAiBtn
+         elements and handlers - only their position changes. */
+      .workspace-composer .workspace-ask-row {
+        position: relative;
+        flex-direction: column;
+        align-items: stretch;
+        border-radius: 20px;
+        padding: 16px 16px 54px;
+      }
+
+      .workspace-composer .workspace-ask-input {
+        padding: 4px 2px;
+        font-size: 1rem;
+      }
+
+      #workspaceComposerMicBtn {
+        position: absolute;
+        left: 14px;
+        bottom: 12px;
+      }
+
+      #workspaceAskAiBtn {
+        position: absolute;
+        right: 14px;
+        bottom: 12px;
+      }
+
+      /* The evidence-capture and secondary actions sit directly beneath the
+         composer, tight enough to read as one connected capture surface
+         rather than a separate control cluster. */
+      .workspace-composer-actions {
+        margin-top: 8px;
+        padding-top: 0;
+        gap: 8px;
+      }
+
+      .composer-chip {
+        padding: 7px 12px;
+        font-size: 0.8rem;
+      }
+
+      /* Phone priority per the approved mockup: Where You Left Off / Next
+         must read before the composer, so continuity swaps ahead of it here
+         - desktop keeps composer first via the base rules earlier in the
+         file. */
+      .workspace-continuity {
+        order: 0;
+        grid-template-columns: 1fr;
+      }
+
+      .workspace-composer {
+        order: 1;
+      }
+
+      .workspace-recent {
+        order: 2;
+      }
+
+      .project-details {
+        order: 3;
+      }
+
+      /* Suggested Next Step reads as the mockup's amber callout card on
+         phone; desktop keeps its existing quieter left-accent-bar treatment
+         (see the base .workspace-proposal-item[data-status="pending"] rule
+         earlier in the file, unchanged). */
+      .workspace-proposal-item[data-status="pending"] {
+        background: var(--warn-quiet);
+        border: 1px solid var(--warn-border);
+        border-left: 1px solid var(--warn-border);
+        border-radius: var(--radius-md);
+        padding: 14px 16px;
+      }
+
+      .workspace-proposal-item[data-status="pending"] .workspace-captured-label {
+        color: var(--warn);
+      }
     }
   </style>
 </head>
@@ -1842,7 +1969,7 @@
         <div id="workspaceActiveProjectStatus" class="workspace-status-note"></div>
         <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
 
-          <div class="workspace-composer" style="order: 0;">
+          <div class="workspace-composer">
             <div class="composer-label">Capture / Ask</div>
             <p class="composer-subtitle">Add context, capture evidence, or ask for help.</p>
             <div class="workspace-ask-row">
@@ -1867,7 +1994,7 @@
             </div>
           </div>
 
-          <div class="workspace-continuity" style="order: 1;">
+          <div class="workspace-continuity">
             <div class="workspace-block">
               <h4>Where you left off</h4>
               <div id="workspaceNow" class="workspace-value muted">No project selected.</div>
@@ -1879,7 +2006,7 @@
             </div>
           </div>
 
-          <section class="workspace-recent" style="order: 2;">
+          <section class="workspace-recent">
             <h3>Recent</h3>
 
             <h4 class="workspace-recent-subhead">Suggested Next Steps</h4>
@@ -1907,7 +2034,7 @@
             <div id="workspaceHistory" class="workspace-value muted">No project selected.</div>
           </section>
 
-          <details class="project-details" id="projectDetailsDisclosure" style="order: 3;">
+          <details class="project-details" id="projectDetailsDisclosure">
             <summary>Project Details</summary>
             <div class="project-details-body">
 
