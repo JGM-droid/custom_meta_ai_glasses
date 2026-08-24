@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses UX Critic"
+  short_description: "Critique first-time-user clarity across the MVP"
+  default_prompt: "Use $custom-meta-ai-glasses-ux-critic to evaluate the complete MVP as an ordinary first-time user and return advisory UX findings without changing anything."

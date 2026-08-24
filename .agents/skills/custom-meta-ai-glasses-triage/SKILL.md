@@ -5,7 +5,7 @@ description: "Convert a Custom Meta AI Glasses User Tester report into one dedup
 
 # Custom Meta AI Glasses Triage
 
-Accept a complete User Tester report as input and produce one coherent repair batch for `$custom-meta-ai-glasses-development`.
+Accept complete specialist findings as input and produce one coherent repair batch for `$custom-meta-ai-glasses-development`.
 
 ## Context and boundaries
 
@@ -23,12 +23,15 @@ Accept a complete User Tester report as input and produce one coherent repair ba
 - Group related issues into journey-level batches. Prefer a coherent path such as `Project -> Start Working -> Capture -> Analyze` over isolated button edits when the same flow owns several defects.
 - Avoid one-bug-at-a-time planning unless batching would increase safety, ambiguity, or regression risk.
 - Treat `PHYSICAL VALIDATION REQUIRED` findings as unconfirmed unless other evidence proves them.
+- Preserve UX Critic classifications while mapping them for action: `FIX NOW` may enter the bounded batch; `IMPROVEMENT` becomes `DEFER` unless required to complete the same authorized journey; `PRODUCT IDEA` remains outside Development/current work/Roadmap unless a human explicitly promotes it; `DO NOT BUILD` remains excluded; and `BUG — REFER TO BUG HUNTER` must be corroborated as a defect rather than silently accepted.
+- UX Critic advice is not product authority. Do not turn terminology, shortcuts, automation, or new capabilities into Development work merely because the critic suggested them.
 
 ## Required output
 
 ### TRIAGE SUMMARY
 
 Show deduplicated findings with classification, severity rationale, evidence status, dependencies, and architecture risk.
+For UX Critic findings, explicitly show the resulting `FIX NOW`, `DEFER`, `PRODUCT IDEA`, or `DO NOT BUILD` disposition.
 
 ### REPAIR BATCH NOW
 
