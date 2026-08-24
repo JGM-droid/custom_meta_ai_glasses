@@ -113,9 +113,8 @@ def test_multiple_evidence_items_are_selected_deterministically_by_rule():
         evidence_records=[e1, e2, e3, e4, e5],
     )
 
-    # Rule with max=3: earliest, evenly distributed middle, latest.
-    assert manifest.selected_evidence_ids == [e1.evidence_id, e3.evidence_id, e5.evidence_id]
-    assert [item.selection_index for item in manifest.selected_evidence] == [0, 1, 2]
+    assert manifest.selected_evidence_ids == [e1.evidence_id, e2.evidence_id, e3.evidence_id, e4.evidence_id, e5.evidence_id]
+    assert [item.selection_index for item in manifest.selected_evidence] == [0, 1, 2, 3, 4]
 
 
 def test_input_order_changes_do_not_change_manifest_order():
@@ -304,6 +303,6 @@ def test_build_manifest_for_session_uses_store_evidence_without_persistence(tmp_
         analysis_attempt_id=str(uuid4()),
     )
 
-    assert manifest.evidence_count == 3
-    assert [item.selection_index for item in manifest.selected_evidence] == [0, 1, 2]
+    assert manifest.evidence_count == 4
+    assert [item.selection_index for item in manifest.selected_evidence] == [0, 1, 2, 3]
     assert manifest.selected_evidence_ids == [item.evidence_id for item in manifest.selected_evidence]

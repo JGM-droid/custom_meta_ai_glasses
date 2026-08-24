@@ -20,6 +20,7 @@ from .models import (
     InvestigationModelResult,
     InvestigationNormalizedRequest,
     InvestigationRetainedResult,
+    MAX_INVESTIGATION_IMAGE_COUNT,
 )
 
 
@@ -69,8 +70,8 @@ async def _normalize_images(images: list[UploadFile]) -> list[InvestigationImage
     image_count = len(images)
     if image_count < 2:
         raise HTTPException(status_code=400, detail="At least 2 images are required.")
-    if image_count > 3:
-        raise HTTPException(status_code=400, detail="At most 3 images are allowed.")
+    if image_count > MAX_INVESTIGATION_IMAGE_COUNT:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_INVESTIGATION_IMAGE_COUNT} images are allowed.")
 
     normalized_images: list[InvestigationImagePayload] = []
     for order_index, upload in enumerate(images):

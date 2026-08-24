@@ -17,6 +17,7 @@ from .models import (
     InvestigationEvidenceCreateRequest,
     InvestigationEvidenceType,
     InvestigationEvidenceValidationStatus,
+    MAX_INVESTIGATION_IMAGE_COUNT,
     InvestigationSession,
     InvestigationSessionStatus,
 )
@@ -58,6 +59,10 @@ class InvestigationEvidenceInvalidId(InvestigationEvidenceStoreError):
 
 
 class InvestigationEvidenceStateError(InvestigationEvidenceStoreError):
+    pass
+
+
+class InvestigationEvidenceCapacityError(InvestigationEvidenceStoreError):
     pass
 
 
@@ -416,6 +421,22 @@ class InvestigationEvidenceStore:
             duplicate = self._find_duplicate(normalized, evidence_type, content_hash)
             if duplicate is not None:
                 return duplicate, False
+
+            if evidence_type == InvestigationEvidenceType.IMAGE:
+                accepted_image_count = sum(
+                    1
+                    for item in self._list_evidence_unlocked(normalized)
+                    if item.evidence_type == InvestigationEvidenceType.IMAGE
+                    and item.validation_status
+                    in {
+                        InvestigationEvidenceValidationStatus.ACCEPTED,
+                        InvestigationEvidenceValidationStatus.DUPLICATE_ACCEPTED,
+                    }
+                )
+                if accepted_image_count >= MAX_INVESTIGATION_IMAGE_COUNT:
+                    raise InvestigationEvidenceCapacityError(
+                        f"Investigation full: at most {MAX_INVESTIGATION_IMAGE_COUNT} image evidence items are allowed."
+                    )
 
             evidence_id = str(uuid4())
             sequence_number = manifest.next_sequence

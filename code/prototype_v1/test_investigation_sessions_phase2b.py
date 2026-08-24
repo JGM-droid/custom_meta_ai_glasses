@@ -186,6 +186,35 @@ def test_evidence_upload_list_delete_and_layout(evidence_test_context):
     assert third.json()["sequence_number"] == 3
 
 
+def test_five_images_are_accepted_in_order_and_sixth_is_rejected(evidence_test_context):
+    client, _, _, _ = evidence_test_context
+    session_id = _create_collecting_session(client)
+
+    accepted = []
+    for index in range(1, 6):
+        response = client.post(
+            f"/investigation-sessions/{session_id}/evidence/image",
+            files={"file": _image_part(f"{index}.png", f"image-{index}".encode())},
+        )
+        assert response.status_code == 201
+        accepted.append(response.json())
+
+    rejected = client.post(
+        f"/investigation-sessions/{session_id}/evidence/image",
+        files={"file": _image_part("six.png", b"image-6")},
+    )
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == {
+        "category": "evidence_limit_reached",
+        "message": "Investigation full: at most 5 image evidence items are allowed.",
+    }
+
+    listed = client.get(f"/investigation-sessions/{session_id}/evidence")
+    assert listed.status_code == 200
+    assert [item["evidence_id"] for item in listed.json()] == [item["evidence_id"] for item in accepted]
+    assert [item["sequence_number"] for item in listed.json()] == [1, 2, 3, 4, 5]
+
+
 def test_evidence_state_gating_and_listing_rules(evidence_test_context):
     client, store, _, _ = evidence_test_context
 

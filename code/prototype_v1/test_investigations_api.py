@@ -135,18 +135,15 @@ def test_valid_two_image_request(monkeypatch):
     assert payload["required_next_action"] == "Capture one clearer image of the exact terminal error line."
 
 
-def test_valid_three_image_request(monkeypatch):
+@pytest.mark.parametrize("image_count", [2, 3, 4, 5])
+def test_valid_two_through_five_image_request(monkeypatch, image_count):
     _setup_fake_openai(monkeypatch)
     response = _post_investigation(
-        [
-            _image_part("one.png", b"1"),
-            _image_part("two.png", b"22"),
-            _image_part("three.png", b"333"),
-        ]
+        [_image_part(f"{index}.png", str(index).encode()) for index in range(1, image_count + 1)]
     )
 
     assert response.status_code == 200
-    assert response.json()["image_count"] == 3
+    assert response.json()["image_count"] == image_count
 
 
 def test_image_order_preserved(monkeypatch):
@@ -211,16 +208,11 @@ def test_too_few_images():
 
 def test_too_many_images():
     response = _post_investigation(
-        [
-            _image_part("one.png", b"1"),
-            _image_part("two.png", b"2"),
-            _image_part("three.png", b"3"),
-            _image_part("four.png", b"4"),
-        ]
+        [_image_part(f"{index}.png", str(index).encode()) for index in range(1, 7)]
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "At most 3 images are allowed."
+    assert response.json()["detail"] == "At most 5 images are allowed."
 
 
 def test_unsupported_mime_type():
@@ -341,6 +333,19 @@ def test_single_openai_invocation_for_three_images(monkeypatch):
 
     assert response.status_code == 200
     assert len(state["calls"]) == 1
+
+
+def test_single_openai_invocation_receives_five_images_in_order(monkeypatch):
+    state = _setup_fake_openai(monkeypatch)
+    response = _post_investigation(
+        [_image_part(f"{index}.png", f"payload-{index}".encode()) for index in range(1, 6)]
+    )
+
+    assert response.status_code == 200
+    content = _extract_outgoing_content(state)
+    assert [item["image_url"]["url"] for item in content if item["type"] == "image_url"] == [
+        f"data:image/jpeg;base64,encoded-payload-{index}" for index in range(1, 6)
+    ]
 
 
 def test_outgoing_multimodal_structure_and_order_for_two_images(monkeypatch):
@@ -823,18 +828,13 @@ def test_demo_investigation_rejects_zero_images():
     assert response.json()["detail"] == "At least 1 image is required."
 
 
-def test_demo_investigation_rejects_four_images():
+def test_demo_investigation_rejects_six_images():
     response = _post_demo_investigation(
-        [
-            _image_part("one.png", b"1"),
-            _image_part("two.png", b"2"),
-            _image_part("three.png", b"3"),
-            _image_part("four.png", b"4"),
-        ]
+        [_image_part(f"{index}.png", str(index).encode()) for index in range(1, 7)]
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "At most 3 images are allowed."
+    assert response.json()["detail"] == "At most 5 images are allowed."
 
 
 def test_demo_investigation_preserves_image_order():

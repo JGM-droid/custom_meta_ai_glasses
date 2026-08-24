@@ -216,7 +216,7 @@ def test_zero_images_rejected(monkeypatch: pytest.MonkeyPatch):
     assert stdout == ""
 
 
-def test_fourth_image_rejected(monkeypatch: pytest.MonkeyPatch):
+def test_sixth_image_rejected(monkeypatch: pytest.MonkeyPatch):
     outcome, _, stderr = _run(
         _success_argv(
             images=[
@@ -224,12 +224,14 @@ def test_fourth_image_rejected(monkeypatch: pytest.MonkeyPatch):
                 _image("133959575898717423.jpg"),
                 _image("133973540999428167.jpg"),
                 _image("134026336827829474.jpg"),
+                _image("test_image.png"),
+                _image("133959575898717423.jpg"),
             ],
         ),
         provider_factory=lambda *_: RecordingProvider(response=None),
     )
     assert outcome.exit_code != 0
-    assert "At most three --image values are allowed." in stderr
+    assert "At most five --image values are allowed." in stderr
 
 
 def test_missing_image_rejected(tmp_path: Path):

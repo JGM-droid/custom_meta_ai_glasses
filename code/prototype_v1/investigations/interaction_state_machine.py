@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .evidence_store import InvestigationEvidenceStore
-from .models import InvestigationEvidenceType, InvestigationSession, InvestigationSessionStatus
+from .models import MAX_INVESTIGATION_IMAGE_COUNT, InvestigationEvidenceType, InvestigationSession, InvestigationSessionStatus
 from .session_lifecycle import (
     InvestigationSessionLifecycleError,
     apply_analysis_started_transition,
@@ -19,7 +19,7 @@ from .session_lifecycle import (
 )
 
 INTERACTION_STATE_SCHEMA_VERSION = "1.0"
-_INTERACTION_MAX_CAPTURES = 3
+_INTERACTION_MAX_CAPTURES = MAX_INVESTIGATION_IMAGE_COUNT
 _INTERACTION_MAX_EXPLANATION_TEXT = 1000
 
 

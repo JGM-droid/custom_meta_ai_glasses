@@ -43,7 +43,8 @@ _MAX_SELECTION_POLICY_VERSION_LENGTH = 32
 _MAX_RENDERER_VERSION_LENGTH = 32
 _MAX_STRUCTURED_LIST_ITEMS = 12
 _MAX_STRUCTURED_TEXT_LENGTH = 1000
-_MAX_SELECTED_IMAGE_COUNT = 3
+MAX_INVESTIGATION_IMAGE_COUNT = 5
+_MAX_SELECTED_IMAGE_COUNT = MAX_INVESTIGATION_IMAGE_COUNT
 _MAX_REQUEST_INSTRUCTION_LENGTH = 6000
 _MAX_EXPLANATION_TEXT_LENGTH = 1000
 _MAX_ATTACHMENT_METADATA_ENTRIES = 8
@@ -1245,8 +1246,8 @@ class InvestigationRetainedResult(BaseModel):
     status: InvestigationAnalysisStatus
     diagnosis: str = Field(..., min_length=1)
     required_next_action: str = Field(..., min_length=1)
-    image_count: int = Field(..., ge=1, le=3)
-    image_order: list[str] = Field(..., min_length=1, max_length=3)
+    image_count: int = Field(..., ge=1, le=MAX_INVESTIGATION_IMAGE_COUNT)
+    image_order: list[str] = Field(..., min_length=1, max_length=MAX_INVESTIGATION_IMAGE_COUNT)
     used_user_explanation: str
     completed_at_utc: datetime
     context_used: bool

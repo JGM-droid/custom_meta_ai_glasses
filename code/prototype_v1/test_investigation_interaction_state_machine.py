@@ -184,7 +184,7 @@ def test_second_and_third_captures_succeed(tmp_path: Path):
     assert third.transition.capture_count == 3
 
 
-def test_fourth_capture_is_rejected(tmp_path: Path):
+def test_fourth_and_fifth_captures_are_accepted(tmp_path: Path):
     session_store, evidence_store, session_id = _create_session_store(tmp_path)
     machine = InvestigationInteractionStateMachine(evidence_store=evidence_store)
     session, interaction, _ = _start_interaction(machine, session_store, session_id)
@@ -193,13 +193,11 @@ def test_fourth_capture_is_rejected(tmp_path: Path):
     two = _capture(machine, session=one.session, interaction=one.interaction, evidence_id=_upload_image(evidence_store, session_id=session_id, index=2))
     three = _capture(machine, session=two.session, interaction=two.interaction, evidence_id=_upload_image(evidence_store, session_id=session_id, index=3))
 
-    with pytest.raises(InvestigationInteractionInvalidTransition):
-        _capture(
-            machine,
-            session=three.session,
-            interaction=three.interaction,
-            evidence_id=_upload_image(evidence_store, session_id=session_id, index=4),
-        )
+    four = _capture(machine, session=three.session, interaction=three.interaction, evidence_id=_upload_image(evidence_store, session_id=session_id, index=4))
+    five = _capture(machine, session=four.session, interaction=four.interaction, evidence_id=_upload_image(evidence_store, session_id=session_id, index=5))
+
+    assert four.transition.capture_count == 4
+    assert five.transition.capture_count == 5
 
 
 def test_done_capturing_with_zero_images_is_rejected(tmp_path: Path):

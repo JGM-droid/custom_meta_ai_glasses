@@ -13,9 +13,10 @@ from .models import (
     InvestigationEvidenceValidationStatus,
     InvestigationFrozenEvidenceItem,
     InvestigationFrozenEvidenceManifest,
+    MAX_INVESTIGATION_IMAGE_COUNT,
 )
 
-_DEFAULT_PROVIDER_MAX_IMAGES = 3
+_DEFAULT_PROVIDER_MAX_IMAGES = MAX_INVESTIGATION_IMAGE_COUNT
 _DEFAULT_SELECTION_POLICY_VERSION = "1.0"
 
 

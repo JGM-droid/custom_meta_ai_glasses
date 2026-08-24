@@ -160,13 +160,15 @@ def test_frozen_manifest_rejects_zero_images():
         _manifest_with_items([])
 
 
-def test_frozen_manifest_rejects_more_than_three_images():
+def test_frozen_manifest_rejects_more_than_five_images():
     with pytest.raises(ValidationError):
         _manifest_with_items([
             _frozen_item(selection_index=0, storage_ref="evidence/payloads/one.png"),
             _frozen_item(selection_index=1, storage_ref="evidence/payloads/two.png"),
             _frozen_item(selection_index=2, storage_ref="evidence/payloads/three.png"),
             _frozen_item(selection_index=3, storage_ref="evidence/payloads/four.png"),
+            _frozen_item(selection_index=4, storage_ref="evidence/payloads/five.png"),
+            _frozen_item(selection_index=5, storage_ref="evidence/payloads/six.png"),
         ])
 
 

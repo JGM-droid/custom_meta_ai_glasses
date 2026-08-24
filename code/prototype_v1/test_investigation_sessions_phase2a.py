@@ -499,7 +499,7 @@ def test_api_analyze_requires_at_least_one_image(session_test_context):
     assert response.json()["detail"]["category"] == "insufficient_evidence"
 
 
-def test_api_analyze_rejects_more_than_three_images(session_test_context):
+def test_session_analysis_accepts_four_ordered_images(session_test_context):
     client, _, _ = session_test_context
     session_id = _create_collecting_session(client)
 
@@ -508,9 +508,9 @@ def test_api_analyze_rejects_more_than_three_images(session_test_context):
     _upload_image(client, session_id, name="c.png", content=b"c")
     _upload_image(client, session_id, name="d.png", content=b"d")
 
-    response = client.post(f"/investigation-sessions/{session_id}/analyze", json={})
-    assert response.status_code == 422
-    assert response.json()["detail"]["category"] == "too_many_images"
+    session = api.SESSION_STORE.load_session(session_id)
+    ordered = api._ordered_images_for_session_analysis(session)
+    assert [item.filename for item in ordered] == ["a.png", "b.png", "c.png", "d.png"]
 
 
 def test_api_analyze_rejects_cancelled_session(session_test_context):

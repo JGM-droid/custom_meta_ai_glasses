@@ -219,7 +219,7 @@ class _PreparedImage:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Manual live investigation smoke-test runner")
-    parser.add_argument("--image", action="append", default=[], help="Local image path (repeat 1-3 times)")
+    parser.add_argument("--image", action="append", default=[], help="Local image path (repeat 1-5 times)")
     parser.add_argument("--explanation", help="User explanation for the investigation")
     parser.add_argument("--prompt-explanation", action="store_true", help="Prompt for the explanation interactively")
     parser.add_argument("--session-root", help="Override the demo session workspace root")
@@ -322,8 +322,8 @@ def _create_live_provider(*, api_key: str, session_root: Path, model_override: s
 def _prepare_images(image_paths: Sequence[str]) -> list[_PreparedImage]:
     if not image_paths:
         raise DemoInvestigationError("invalid_input", "At least one --image is required.")
-    if len(image_paths) > 3:
-        raise DemoInvestigationError("invalid_input", "At most three --image values are allowed.")
+    if len(image_paths) > 5:
+        raise DemoInvestigationError("invalid_input", "At most five --image values are allowed.")
 
     prepared: list[_PreparedImage] = []
     for raw_path in image_paths:

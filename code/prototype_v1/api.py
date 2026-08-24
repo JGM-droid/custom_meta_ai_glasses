@@ -37,6 +37,7 @@ from investigations import (
     InvestigationDesktopProjection,
     InvestigationEvidence,
     InvestigationEvidenceCreateRequest,
+    InvestigationEvidenceCapacityError,
     InvestigationEvidenceInvalidContentType,
     InvestigationEvidenceInvalidId,
     InvestigationEvidenceNotFound,
@@ -81,6 +82,7 @@ from investigations import (
     InvestigationStoreNotFound,
     InvestigationRetainedResult,
     InvestigationEvidenceValidationStatus,
+    MAX_INVESTIGATION_IMAGE_COUNT,
     MAX_AUDIO_UPLOAD_BYTES,
     MAX_IMAGE_UPLOAD_BYTES,
     UPLOAD_CHUNK_SIZE,
@@ -1502,8 +1504,8 @@ def _ordered_images_for_session_analysis(session: InvestigationSession) -> list[
 
     if len(images) < 1:
         _raise_session_http_error(status_code=422, category="insufficient_evidence", message="At least one image evidence item is required.")
-    if len(images) > 3:
-        _raise_session_http_error(status_code=422, category="too_many_images", message="At most three image evidence items are allowed per session analysis.")
+    if len(images) > MAX_INVESTIGATION_IMAGE_COUNT:
+        _raise_session_http_error(status_code=422, category="too_many_images", message=f"At most {MAX_INVESTIGATION_IMAGE_COUNT} image evidence items are allowed per session analysis.")
 
     allowed_states = {
         InvestigationEvidenceValidationStatus.ACCEPTED,
@@ -2425,8 +2427,8 @@ async def start_demo_investigation(
 
     if len(images) < 1:
         raise HTTPException(status_code=400, detail="At least 1 image is required.")
-    if len(images) > 3:
-        raise HTTPException(status_code=400, detail="At most 3 images are allowed.")
+    if len(images) > MAX_INVESTIGATION_IMAGE_COUNT:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_INVESTIGATION_IMAGE_COUNT} images are allowed.")
 
     prepared_images: list[tuple[bytes, str, str, InvestigationEvidenceCreateRequest]] = []
     for upload in images:
@@ -3654,6 +3656,8 @@ async def _upload_investigation_session_evidence(
         _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
     except InvestigationEvidenceStateError as exc:
         _raise_session_http_error(status_code=409, category="invalid_state_transition", message=str(exc))
+    except InvestigationEvidenceCapacityError as exc:
+        _raise_session_http_error(status_code=409, category="evidence_limit_reached", message=str(exc))
     except InvestigationEvidenceStoreError:
         _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
 

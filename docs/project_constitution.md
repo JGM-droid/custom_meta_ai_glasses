@@ -55,7 +55,7 @@ Current state relative to this vision:
 
 Canonical Investigation Session workflow (subsystem-level):
 1. User starts an investigation.
-2. User captures 1 to 3 ordered images.
+2. User captures up to 5 ordered images; Analyze availability follows the active flow's existing minimum (one for session orchestration, two for direct retained Analyze).
 3. User provides one spoken or typed explanation.
 4. Android submits one combined session.
 5. Backend validates and orchestrates analysis.
@@ -71,7 +71,7 @@ Workflow priority:
 Current implementation reality:
 - Implemented: Multi-image combined analysis at POST /investigations/analyze with ordered evidence and one normalized explanation.
 - Implemented: Session and evidence lifecycle APIs under /investigation-sessions/.
-- Partially implemented: Backend interaction/orchestration internals currently support one selected capture minimum in some flows, while retained canonical investigation output enforces 2 to 3 images.
+- Implemented: Backend Investigation analysis accepts up to five ordered image evidence items while preserving each existing flow's minimum (one for session orchestration, two for direct retained Analyze).
 - Planned: Android-side session submission and mobile polling as primary client behavior.
 
 ## 3. Repository Ownership
@@ -181,7 +181,7 @@ Current code alignment:
 ## 6. Investigation Session Rules
 
 Locked rules:
-- 1 to 3 images per investigation session workflow.
+- Up to 5 images per Investigation workflow; session orchestration retains its one-image minimum and direct retained Analyze retains its two-image minimum.
 - Capture order must be preserved.
 - One explanation per submitted session.
 - One stable session identifier.
@@ -197,15 +197,15 @@ Locked rules:
 Current implementation constraints versus target Android-facing contract:
 
 Current backend constraints (implemented now):
-- POST /investigations/analyze validates 2 to 3 images and requires schema_version 1.0.
+- POST /investigations/analyze validates 2 to 5 images and requires schema_version 1.0.
 - Session lifecycle and evidence APIs are live under /investigation-sessions/*.
 - Evidence ordering is server-managed and persisted per session.
-- Retained investigation result model requires image_count 2 to 3 for canonical retained projections.
+- Retained Investigation result models allow image_count up to 5; existing flow-specific minimums remain unchanged.
 - Atomic result write behavior is implemented so failed analysis does not overwrite previous retained result.
 
 Target Android-facing contract (to finalize before full Android integration):
 - Session-first submission and polling contract should be the canonical mobile path.
-- Mobile workflow must enforce 1 to 3 capture UX while preserving backend validation invariants.
+- Mobile workflow must enforce a dynamic Add Photo UX up to 5 accepted images while preserving the session flow's existing one-image Analyze minimum and backend validation invariants.
 - Session-specific status/result polling should replace dependence on global latest convenience routes for production mobile clients.
 
 ## 7. API Contract Principles
@@ -359,7 +359,7 @@ Locked architecture decisions may change only when:
 
 The first true demo is complete only when all are true:
 - Glasses are connected through Meta DAT.
-- User captures 1 to 3 images.
+- User dynamically adds useful evidence up to a maximum of 5 images; five is capacity, not a requirement.
 - Explanation is entered or spoken.
 - Android submits the session.
 - Backend analyzes it through the canonical Context Engine.
@@ -393,7 +393,7 @@ This wearable demo definition is an interface milestone and does not redefine to
 ### 17.2 Partially implemented
 
 - Session-centric orchestration and production Android session polling/analyze contracts are implemented as the canonical mobile path in this backend, and are now proven through a real Android client (not only backend tests); a dedicated mobile-first polling UX for slower analyses remains unproven separately from the synchronous path already validated.
-- Some internal/session-interaction flows support one selected capture during orchestration, while retained canonical projection model enforces 2 to 3 image results.
+- Session orchestration permits 1 to 5 ordered images; direct retained Analyze permits 2 to 5.
 - Legacy HUD endpoints (/latest, /glasses/latest) and investigation endpoints coexist; governance is needed so mobile clients rely on canonical session-scoped contracts.
 
 ### 17.3 Planned
@@ -411,8 +411,8 @@ This wearable demo definition is an interface milestone and does not redefine to
 
 - Conflict A:
   - docs/investigation_session_api_v1.md currently defines analyze image count as exactly 2 or 3.
-  - Target constitution workflow sets primary session UX to 1 to 3 captures.
-  - Current code reality is mixed: retained canonical results enforce 2 to 3, while some session-interaction/orchestration pathways can operate from one selected capture.
+  - Target constitution workflow uses dynamic evidence collection with a 5-image ceiling and no fixed-slot requirement.
+  - Session Analyze enforces 1 to 5 ordered images; direct retained Analyze enforces 2 to 5.
 
 - Conflict B:
   - architecture/Phase2_System_Design.md describes broader designed lifecycle states (ready, awaiting_more_evidence, archived and others) as full design.
