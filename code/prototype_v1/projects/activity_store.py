@@ -234,6 +234,47 @@ class ProjectActivityStore:
             self._atomic_write_json(path, payload)
             return activity
 
+    def create_activity_with_id(
+        self,
+        project_id: str,
+        activity_id: str,
+        request: ProjectActivityCreateRequest,
+    ) -> tuple[ProjectActivity, bool]:
+        """Create an application-identified Activity, converging on an existing record.
+
+        This is intentionally a single-process/file-store primitive. Callers own the
+        semantic identity and must validate an existing record before treating it as
+        equivalent.
+        """
+        normalized_project_id = self._ensure_project_exists(project_id)
+        normalized_activity_id = self.validate_activity_id(activity_id)
+        lock = self._get_project_lock(normalized_project_id)
+        with lock:
+            path = self._activity_path(normalized_project_id, normalized_activity_id)
+            if path.exists() and path.is_file():
+                return self._load_activity_from_path(normalized_project_id, path), False
+
+            now = datetime.now(timezone.utc)
+            occurred_at = request.occurred_at_utc or now
+            if occurred_at.tzinfo is None:
+                raise ProjectActivityStoreError("occurred_at_utc must be timezone-aware UTC.")
+            activity = ProjectActivity(
+                schema_version=PROJECT_ACTIVITY_SCHEMA_VERSION,
+                activity_id=normalized_activity_id,
+                project_id=normalized_project_id,
+                activity_type=request.activity_type,
+                source_type=request.source_type,
+                confirmation_status=request.confirmation_status,
+                summary=request.summary,
+                details=request.details,
+                occurred_at_utc=occurred_at.astimezone(timezone.utc),
+                created_at_utc=now,
+                metadata=request.metadata,
+            )
+            payload = json.dumps(activity.model_dump(mode="json"), ensure_ascii=False, indent=2)
+            self._atomic_write_json(path, payload)
+            return activity, True
+
     def load_activity(self, project_id: str, activity_id: str) -> ProjectActivity:
         normalized_project_id = self.project_store.validate_project_id(project_id)
         normalized_activity_id = self.validate_activity_id(activity_id)

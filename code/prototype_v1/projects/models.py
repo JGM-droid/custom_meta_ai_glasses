@@ -17,6 +17,8 @@ PROJECT_ORIENTATION_SCHEMA_VERSION = "1.0"
 PROJECT_TRUST_STATE_SCHEMA_VERSION = "1.0"
 PROJECT_KNOWLEDGE_SCHEMA_VERSION = "1.0"
 PROJECT_IDEA_LIST_SCHEMA_VERSION = "1.0"
+PROJECT_EXPLORE_SCHEMA_VERSION = "1.0"
+PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -339,6 +341,178 @@ class ProjectIdeaPromotionResponse(BaseModel):
     idea: ProjectActivity
     roadmap_activity: ProjectActivity
     created: bool
+
+
+class ProjectExploreDisposition(str, Enum):
+    KEEP = "keep"
+    DISMISS = "dismiss"
+    SELECT = "select"
+
+
+class ProjectExploreRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    user_intent: str = Field(..., min_length=1, max_length=1000)
+    input_refs: list[str] = Field(default_factory=list, max_length=5)
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("input_refs")
+    @classmethod
+    def _validate_input_refs(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            try:
+                ref = str(UUID(str(item or "").strip()))
+            except ValueError as exc:
+                raise ValueError("input_refs must contain valid Activity UUIDs.") from exc
+            if ref in seen:
+                raise ValueError("input_refs must not contain duplicates.")
+            seen.add(ref)
+            normalized.append(ref)
+        return normalized
+
+
+class ProjectExploreProviderOption(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    ordinal: int = Field(..., ge=1, le=3)
+    title: str = Field(..., min_length=1, max_length=200)
+    summary: str = Field(..., min_length=1, max_length=1000)
+    rationale: str | None = Field(default=None, max_length=800)
+    tradeoffs: str | None = Field(default=None, max_length=800)
+    source_refs: list[str] = Field(default_factory=list, max_length=5)
+
+
+class ProjectExploreOptionSet(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    result_type: str
+    title: str = Field(..., min_length=1, max_length=200)
+    summary: str = Field(..., min_length=1, max_length=1000)
+    source_refs: list[str] = Field(default_factory=list, max_length=5)
+    options: list[ProjectExploreProviderOption] = Field(..., min_length=3, max_length=3)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("result_type")
+    @classmethod
+    def _validate_type(cls, value: str) -> str:
+        if value != "OPTION_SET":
+            raise ValueError("result_type must be OPTION_SET.")
+        return value
+
+
+class ProjectExploreInformationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    result_type: str
+    title: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1, max_length=1000)
+    requested_inputs: list[str] = Field(..., min_length=1, max_length=5)
+    source_refs: list[str] = Field(default_factory=list, max_length=5)
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION:
+            raise ValueError(f"schema_version must be {PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION}.")
+        return value
+
+    @field_validator("requested_inputs")
+    @classmethod
+    def _validate_requested_inputs(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            text = str(item or "").strip()
+            if not text or len(text) > 300:
+                raise ValueError("requested_inputs entries must contain 1 to 300 characters.")
+            key = " ".join(text.lower().split())
+            if key in seen:
+                raise ValueError("requested_inputs must not contain duplicates.")
+            seen.add(key)
+            normalized.append(text)
+        return normalized
+
+    @field_validator("result_type")
+    @classmethod
+    def _validate_type(cls, value: str) -> str:
+        if value != "INFORMATION_REQUEST":
+            raise ValueError("result_type must be INFORMATION_REQUEST.")
+        return value
+
+
+class ProjectExploreDispositionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    disposition: ProjectExploreDisposition
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+
+
+class ProjectExploreOptionView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idea: ProjectActivity
+    interaction_id: str
+    result_item_id: str
+    ordinal: int
+    disposition: ProjectExploreDisposition | None = None
+    disposition_activity: ProjectActivity | None = None
+    disposition_history: list[ProjectActivity] = Field(default_factory=list)
+    promoted: bool = False
+    roadmap_activity: ProjectActivity | None = None
+    related_proposals: list[CheckpointProposal] = Field(default_factory=list)
+
+
+class ProjectExploreGroupView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    interaction_id: str
+    idempotency_key: str
+    complete: bool
+    options: list[ProjectExploreOptionView] = Field(default_factory=list)
+
+
+class ProjectExploreReadProjection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PROJECT_EXPLORE_SCHEMA_VERSION
+    project_id: str
+    option_sets: list[ProjectExploreGroupView] = Field(default_factory=list)
+    preferred_direction: ProjectExploreOptionView | None = None
+    canonical_checkpoint: ProjectCheckpoint
+    project_revision: int
+    next_action: str
+
+
+class ProjectExploreExecutionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = PROJECT_EXPLORE_SCHEMA_VERSION
+    project_id: str
+    interaction_id: str | None = None
+    result_type: str
+    suggestions_created: bool
+    message: str
+    option_set: ProjectExploreGroupView | None = None
+    information_request: ProjectExploreInformationRequest | None = None
+
+
+class ProjectExploreDispositionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idea: ProjectActivity
+    decision_activity: ProjectActivity
+    created: bool
+    projection: ProjectExploreReadProjection
 
 
 class ProjectRoadmap(BaseModel):

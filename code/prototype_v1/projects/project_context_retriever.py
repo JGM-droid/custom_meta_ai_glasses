@@ -219,6 +219,41 @@ class ProjectContextRetriever:
             recent_investigations=recent_investigations,
         )
 
+    def get_explore_context_activities(
+        self,
+        project_id: str,
+        input_refs: list[str],
+        *,
+        relevant_limit: int = 10,
+    ) -> tuple[Project, list[ProjectActivity], list[ProjectActivity]]:
+        """Deterministically select the bounded Explore context contract inputs."""
+        project = self.project_store.load_project(project_id)
+        explicit: list[ProjectActivity] = []
+        for activity_id in input_refs:
+            explicit.append(self.activity_store.load_activity(project_id, activity_id))
+
+        explicit_ids = set(input_refs)
+        relevant: list[ProjectActivity] = []
+        for activity in reversed(self.activity_store.list_activities(project_id)):
+            if activity.activity_id in explicit_ids:
+                continue
+            if activity.activity_type == ProjectActivityType.DECISION or (
+                activity.activity_type in {
+                    ProjectActivityType.OBSERVATION,
+                    ProjectActivityType.NOTE,
+                    ProjectActivityType.BLOCKER,
+                }
+                and activity.confirmation_status in {
+                    ProjectActivityConfirmationStatus.CONFIRMED,
+                    ProjectActivityConfirmationStatus.OBSERVED,
+                    ProjectActivityConfirmationStatus.REPORTED,
+                }
+            ):
+                relevant.append(activity)
+            if len(relevant) == relevant_limit:
+                break
+        return project, explicit, relevant
+
     def get_context_for_question(self, project_id: str, question: str) -> ProjectContextQueryPack:
         base_context = self.get_context(project_id)
         normalized_question = str(question or "").strip()

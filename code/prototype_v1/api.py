@@ -157,6 +157,21 @@ from projects import (
     ProjectIdeaNotFound,
     ProjectIdeaPromotionResponse,
     ProjectIdeaService,
+    OpenAIProjectExploreProvider,
+    ProjectExploreDispositionRequest,
+    ProjectExploreDispositionResponse,
+    ProjectExploreExecutionResponse,
+    ProjectExploreForeignReference,
+    ProjectExploreIdeaNotFound,
+    ProjectExploreIdempotencyConflict,
+    ProjectExploreInvalidResult,
+    ProjectExploreProviderUnavailable,
+    ProjectExploreProviderIdentity,
+    ProjectExploreReadProjection,
+    ProjectExploreRecoveryConflict,
+    ProjectExploreRequest,
+    ProjectExploreService,
+    load_project_explore_model_name,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -2912,6 +2927,29 @@ def _project_trust_service() -> ProjectInvestigationTrustService:
     )
 
 
+def _create_project_explore_service() -> ProjectExploreService:
+    api_key = _load_openai_api_key()
+    if not api_key:
+        raise ProjectExploreProviderUnavailable("OPENAI_API_KEY is required for Explore execution.")
+    return ProjectExploreService(
+        project_store=PROJECT_STORE,
+        activity_store=PROJECT_ACTIVITY_STORE,
+        proposal_store=CHECKPOINT_PROPOSAL_STORE,
+        context_retriever=_create_project_context_retriever(),
+        provider=OpenAIProjectExploreProvider(api_key=api_key, model=load_project_explore_model_name()),
+    )
+
+
+def _create_project_explore_read_service() -> ProjectExploreService:
+    return ProjectExploreService(
+        project_store=PROJECT_STORE,
+        activity_store=PROJECT_ACTIVITY_STORE,
+        proposal_store=CHECKPOINT_PROPOSAL_STORE,
+        context_retriever=_create_project_context_retriever(),
+        provider=None,
+    )
+
+
 @app.post("/projects/{project_id}/investigation-sessions/{session_id}/trust-decision", response_model=ProjectTrustDecisionResponse, status_code=201)
 async def create_project_investigation_trust_decision(project_id: str, session_id: str, payload: dict[str, object] | None = None) -> ProjectTrustDecisionResponse:
     normalized_project_id = _validate_project_id_or_422(project_id)
@@ -3119,6 +3157,61 @@ async def promote_project_idea(project_id: str, activity_id: str) -> ProjectIdea
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except (ProjectStoreError, ProjectActivityStoreError):
         _raise_project_http_error(status_code=500, category="project_idea_storage_error", message="Project Ideas are unavailable.")
+
+
+@app.post("/projects/{project_id}/interactions/explore", response_model=ProjectExploreExecutionResponse)
+async def execute_project_explore(project_id: str, payload: dict[str, object] | None = None) -> ProjectExploreExecutionResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectExploreRequest.model_validate(payload or {})
+        return _create_project_explore_service().execute(normalized_project_id, request)
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectExploreForeignReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="input_refs must belong to the target Project.")
+    except ProjectExploreIdempotencyConflict:
+        _raise_project_http_error(status_code=409, category="explore_idempotency_conflict", message="idempotency_key was already used with a different request.")
+    except ProjectExploreRecoveryConflict:
+        _raise_project_http_error(status_code=409, category="explore_recovery_conflict", message="Incomplete Explore options conflict with the validated recovery result.")
+    except ProjectExploreInvalidResult:
+        _raise_project_http_error(status_code=502, category="explore_invalid_result", message="Explore provider returned an invalid structured result; no new suggestions were recorded.")
+    except ProjectExploreProviderUnavailable:
+        _raise_project_http_error(status_code=503, category="explore_provider_unavailable", message="Explore provider is unavailable.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(status_code=500, category="project_explore_unavailable", message="Project Explore is unavailable.")
+
+
+@app.get("/projects/{project_id}/interactions/explore", response_model=ProjectExploreReadProjection)
+async def get_project_explore(project_id: str) -> ProjectExploreReadProjection:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return _create_project_explore_read_service().read_projection(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(status_code=500, category="project_explore_unavailable", message="Project Explore is unavailable.")
+
+
+@app.post("/projects/{project_id}/ideas/{idea_activity_id}/disposition", response_model=ProjectExploreDispositionResponse)
+async def set_project_explore_disposition(project_id: str, idea_activity_id: str,
+                                          payload: dict[str, object] | None = None) -> ProjectExploreDispositionResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    normalized_activity_id = _validate_activity_id_or_422(idea_activity_id)
+    try:
+        request = ProjectExploreDispositionRequest.model_validate(payload or {})
+        return _create_project_explore_read_service().disposition(normalized_project_id, normalized_activity_id, request)
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except (ProjectExploreIdeaNotFound, ProjectActivityNotFound):
+        _raise_project_http_error(status_code=404, category="idea_not_found", message="Explore Idea does not exist.")
+    except ProjectExploreIdempotencyConflict:
+        _raise_project_http_error(status_code=409, category="explore_idempotency_conflict", message="idempotency_key was already used with a different disposition.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(status_code=500, category="project_explore_unavailable", message="Project Explore is unavailable.")
 
 
 @app.get("/projects/{project_id}/context", response_model=ProjectContextPack)
