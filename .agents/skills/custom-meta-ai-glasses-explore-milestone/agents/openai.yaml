@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Explore Milestone"
+  short_description: "Run one finite Room Redesign EXPLORE workflow"
+  default_prompt: "Use $custom-meta-ai-glasses-explore-milestone to run the read-only EXPLORE sweep and stop for approval before implementation."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Explore Architect"
+  short_description: "Design the bounded EXPLORE technical contract"
+  default_prompt: "Use $custom-meta-ai-glasses-explore-architect to produce an implementation-ready read-only EXPLORE contract."

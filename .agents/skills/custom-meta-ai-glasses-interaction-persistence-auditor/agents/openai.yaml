@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Interaction Persistence Auditor"
+  short_description: "Audit EXPLORE durability without a new store"
+  default_prompt: "Use $custom-meta-ai-glasses-interaction-persistence-auditor to audit EXPLORE retries and reconstruction read-only."

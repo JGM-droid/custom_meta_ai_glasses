@@ -48,12 +48,16 @@ Product and experience:
 - `$custom-meta-ai-glasses-ux-critic`
 - `$custom-meta-ai-glasses-user-tester`
 - `$custom-meta-ai-glasses-demo-scenario-designer`
+- `$custom-meta-ai-glasses-explore-ux-tester`
 
 Architecture, memory, and contracts:
 
 - `$custom-meta-ai-glasses-architecture-guardian`
 - `$custom-meta-ai-glasses-project-memory-auditor`
 - `$custom-meta-ai-glasses-api-contract-watchdog`
+- `$custom-meta-ai-glasses-explore-architect`
+- `$custom-meta-ai-glasses-structured-output-validator`
+- `$custom-meta-ai-glasses-interaction-persistence-auditor`
 
 Quality and reliability:
 
@@ -69,8 +73,9 @@ Orchestration and implementation:
 - `$custom-meta-ai-glasses-development`
 - `$custom-meta-ai-glasses-mvp-usability-sweep`
 - `$custom-meta-ai-glasses-release-sweep`
+- `$custom-meta-ai-glasses-explore-milestone`
 
-Do not reference or simulate a specialist that does not exist under `.agents/skills/`. Until an Explore-specific orchestrator and technical-review skills are actually added, route Explore work through the applicable existing product, architecture, contract, persistence/recovery, triage, and development roles.
+Do not reference or simulate a specialist that does not exist under `.agents/skills/`.
 
 ### Authority and permissions
 
@@ -123,8 +128,6 @@ Project Memory Auditor -> Architecture Guardian -> Triage -> Development
 -> State/Recovery -> QA Breaker
 ```
 
-Until a dedicated interaction-persistence review skill exists, Project Memory Auditor, Architecture Guardian, and State/Recovery jointly cover that boundary without pretending a missing role ran.
-
 API or client contract change:
 
 ```text
@@ -153,7 +156,7 @@ Product Designer
 
 For a release sweep, use `$custom-meta-ai-glasses-release-sweep`. For the complete current MVP usability workflow, use `$custom-meta-ai-glasses-mvp-usability-sweep`.
 
-An Explore milestone currently follows the major-product-milestone route above. Do not claim a dedicated Explore orchestrator ran unless one actually exists in the repository.
+For the first generalized Project Interaction milestone, use `$custom-meta-ai-glasses-explore-milestone`.
 
 ### Mandatory product-role triggers
 

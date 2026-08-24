@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Structured Output Validator"
+  short_description: "Validate strict EXPLORE semantic outputs"
+  default_prompt: "Use $custom-meta-ai-glasses-structured-output-validator to audit OPTION_SET and INFORMATION_REQUEST contracts read-only."

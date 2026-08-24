@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses Explore UX Tester"
+  short_description: "Test Room Redesign EXPLORE user clarity"
+  default_prompt: "Use $custom-meta-ai-glasses-explore-ux-tester to audit the Room Redesign EXPLORE journey without changing anything."
