@@ -27,6 +27,15 @@
 - Wearable interaction patterns for concise, glanceable guidance.
 - Human-AI collaboration patterns for stateful workflow execution.
 
+## Implemented MVP Critical Path
+
+- Project-scoped, retry-safe **Record progress** on desktop and Android.
+- A required preview separates the user-authored note from any suggested Project change.
+- Save creates one append-only user Activity and zero provider calls.
+- Optional changes to Where We Left Off, Blockers, or Next create a separate pending Checkpoint Proposal; Apply/Reject remains explicit.
+- Deterministic Project-scoped identities make equivalent retries, concurrent requests, response loss, and restart reconstruction converge without duplicate Activity or Proposal records.
+- This capability reuses existing Project Memory owners and adds no Progress store, generic Interaction store, automatic Apply, or AI progress scoring. See ADR-058.
+
 ## Approved Post-MVP Direction - Persistent Goal-Oriented Project Assistant
 
 Status: APPROVED ROADMAP. This section records direction, not implemented functionality, and does not unfreeze the completed Universal Project Workspace MVP. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-052 through ADR-057 are authoritative. The focused foundation is `docs/PROJECT_INTERACTION_FOUNDATION.md`.

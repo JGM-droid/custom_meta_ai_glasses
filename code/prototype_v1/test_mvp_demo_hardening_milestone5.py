@@ -384,7 +384,8 @@ def test_project_assistant_invalidates_project_a_before_project_b_load(mvp_conte
     assert "function beginAssistantProjectLoad(selected)" in source
     assert 'for(const id of["where","now","next"])' in source
     assert 'beginAssistantProjectLoad(selected);try{await selectProjectAndLoadCanonicalState' in source
-    assert "if(projectId===selected&&selected)assistantCanonicalProjectId=selected" in source
+    assert "if(projectId===selected&&selected){const canonical=await request" in source
+    assert "assistantCanonicalProjectId=selected;canonicalProjectRevision=canonical.revision" in source
     assert 'if(assistantCanonicalProjectId!==projectId)return' in source
 
 
@@ -394,3 +395,46 @@ def test_project_switch_clears_pending_evidence_and_disables_analysis(mvp_contex
     assert 'const e=$("evidence").files?.length||0' in source
     assert '$("analyze").disabled=!t' in source
     assert "projection.project_id!==ownerProjectId" in source
+
+
+def test_record_progress_desktop_requires_preview_and_keeps_note_separate_from_project_change(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+
+    for label in ["Record progress", "What happened?", "Preview", "Save progress"]:
+        assert label in source
+    assert "Save what you did as a Project note." in source
+    assert "that change stays separate and requires Apply to Project" in source
+    assert "Suggested Project change — separate approval required" in source
+    assert "No Project-state change proposed" in source
+    assert 'labels={current_work:"Where we left off",blockers:"Blockers",next_action:"Next action"}' in source
+    assert 'current={current_work:$(\'now\').textContent' in source
+    assert '$("saveProgress").disabled=!matches||progressSaving' in source
+    assert "progressPreview&&progressOwnerProjectId===projectId" in source
+
+
+def test_record_progress_desktop_uses_explicit_project_revision_and_stable_retry_key(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+
+    assert "`/projects/${selected}/progress/preview`" in source
+    assert "`/projects/${selected}/progress`" in source
+    assert "expected_project_revision:revision" in source
+    assert "idempotency_key:progressIdempotencyKey" in source
+    assert "if(!progressIdempotencyKey||progressRequestFingerprint!==fingerprint)progressIdempotencyKey=crypto.randomUUID()" in source
+    assert "Retry uses the same operation key." in source
+    assert 'item.metadata?.interaction_type==="record_progress"' in source
+    assert "item.metadata?.idempotency_key===key" in source
+
+
+def test_record_progress_desktop_reloads_canonical_state_and_rejects_stale_project_results(mvp_context):
+    source = (Path(__file__).with_name("mvp_demo.html")).read_text(encoding="utf-8")
+
+    assert "projectId!==selected||generation!==progressGeneration" in source
+    assert "preview.project_id!==selected" in source
+    assert "progressOwnerProjectId!==selected" in source
+    assert "await load();const [canonical,activities,proposals]=await Promise.all" in source
+    assert "canonicalProjectRevision=canonical.revision" in source
+    assert "canonicalProposals=proposals;renderProposals(proposals)" in source
+    assert "resetProgressForm(true);" in source
+    assert 'if(clearInputs)progressFields.forEach(id=>$(id).value="")' in source
+    assert "revisionChanged=canonical.revision!==revision" in source
+    assert 'resetProgressForm(false);say("The Project changed after this preview. Preview again before saving."' in source

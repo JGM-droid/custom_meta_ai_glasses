@@ -171,6 +171,12 @@ from projects import (
     ProjectExploreRecoveryConflict,
     ProjectExploreRequest,
     ProjectExploreService,
+    ProjectProgressIdempotencyConflict,
+    ProjectProgressPreview,
+    ProjectProgressRecoveryConflict,
+    ProjectProgressRequest,
+    ProjectProgressResponse,
+    ProjectProgressService,
     load_project_explore_model_name,
     ProjectNotFound,
     ProjectRevisionConflict,
@@ -277,6 +283,10 @@ def _build_checkpoint_proposal_store() -> CheckpointProposalStore:
 
 
 CHECKPOINT_PROPOSAL_STORE = _build_checkpoint_proposal_store()
+
+
+def _project_progress_service() -> ProjectProgressService:
+    return ProjectProgressService(PROJECT_STORE, PROJECT_ACTIVITY_STORE, CHECKPOINT_PROPOSAL_STORE)
 
 
 class InvestigationDemoMode(str, Enum):
@@ -3280,6 +3290,76 @@ async def create_project_activity(project_id: str, payload: dict[str, object] | 
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
     except ProjectActivityStoreError:
         _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+
+
+@app.post("/projects/{project_id}/progress/preview", response_model=ProjectProgressPreview)
+async def preview_project_progress(
+    project_id: str, payload: dict[str, object] | None = None
+) -> ProjectProgressPreview:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectProgressRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(
+            status_code=422,
+            category="validation_error",
+            message=str(exc.errors()[0].get("msg", "Invalid request payload.")),
+        )
+    try:
+        return _project_progress_service().preview(normalized_project_id, request)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectRevisionConflict:
+        _raise_project_http_error(
+            status_code=409,
+            category="revision_conflict",
+            message="expected_project_revision does not match the current project revision.",
+        )
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(
+            status_code=500,
+            category="project_progress_storage_error",
+            message="Project progress preview is unavailable.",
+        )
+
+
+@app.post("/projects/{project_id}/progress", response_model=ProjectProgressResponse)
+async def save_project_progress(
+    project_id: str, payload: dict[str, object] | None = None
+) -> ProjectProgressResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectProgressRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(
+            status_code=422,
+            category="validation_error",
+            message=str(exc.errors()[0].get("msg", "Invalid request payload.")),
+        )
+    try:
+        return _project_progress_service().save(normalized_project_id, request)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectProgressIdempotencyConflict:
+        _raise_project_http_error(
+            status_code=409,
+            category="progress_idempotency_conflict",
+            message="idempotency_key was already used with different progress content.",
+        )
+    except ProjectProgressRecoveryConflict as exc:
+        _raise_project_http_error(status_code=409, category="progress_recovery_conflict", message=str(exc))
+    except (ProjectRevisionConflict, CheckpointProposalRevisionConflict):
+        _raise_project_http_error(
+            status_code=409,
+            category="revision_conflict",
+            message="expected_project_revision does not match the current project revision.",
+        )
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(
+            status_code=500,
+            category="project_progress_storage_error",
+            message="Project progress could not be recorded.",
+        )
 
 
 @app.get("/projects/{project_id}/activities", response_model=list[ProjectActivity])

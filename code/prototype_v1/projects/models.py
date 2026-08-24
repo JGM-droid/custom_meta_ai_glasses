@@ -662,6 +662,63 @@ class CheckpointProposalCreateRequest(BaseModel):
         return value
 
 
+class ProjectProgressCheckpointPatch(BaseModel):
+    """The deliberately small checkpoint surface a user may suggest while recording progress."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    current_work: str | None = Field(default=None, max_length=2000)
+    blockers: str | None = Field(default=None, max_length=2000)
+    next_action: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("current_work", "blockers", "next_action")
+    @classmethod
+    def _normalize_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    def to_update_fields(self) -> dict[str, str]:
+        return {key: value for key, value in self.model_dump(mode="python").items() if value is not None}
+
+
+class ProjectProgressRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+    summary: str = Field(..., min_length=1, max_length=_MAX_ACTIVITY_SUMMARY_LENGTH)
+    details: str | None = Field(default=None, max_length=_MAX_ACTIVITY_DETAILS_LENGTH)
+    expected_project_revision: int = Field(..., ge=0)
+    checkpoint_patch: ProjectProgressCheckpointPatch | None = None
+
+    @field_validator("idempotency_key", "summary", "details")
+    @classmethod
+    def _normalize_progress_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+
+class ProjectProgressPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str
+    idempotency_key: str
+    summary: str
+    details: str | None = None
+    base_project_revision: int = Field(..., ge=0)
+    effective_checkpoint_patch: ProjectProgressCheckpointPatch | None = None
+    proposal_required: bool
+
+
+class ProjectProgressResponse(ProjectProgressPreview):
+    activity: ProjectActivity
+    proposal: "CheckpointProposal | None" = None
+    reconstructed: bool = False
+
+
 class CheckpointProposal(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 

@@ -47,6 +47,10 @@ from .models import (
     ProjectExploreInformationRequest,
     ProjectExploreReadProjection,
     ProjectExploreRequest,
+    ProjectProgressCheckpointPatch,
+    ProjectProgressPreview,
+    ProjectProgressRequest,
+    ProjectProgressResponse,
     ProjectCheckpoint,
     ProjectCheckpointPatchRequest,
     ProjectCreateRequest,
@@ -92,6 +96,12 @@ from .project_orientation import (
     ROADMAP_STATUS_METADATA_KEY,
     ProjectOrientationError,
     ProjectOrientationReader,
+)
+from .project_progress import (
+    ProjectProgressError,
+    ProjectProgressIdempotencyConflict,
+    ProjectProgressRecoveryConflict,
+    ProjectProgressService,
 )
 from .checkpoint_proposal_store import (
     CheckpointProposalForeignActivityReference,
@@ -181,6 +191,14 @@ __all__ = [
     "ProjectExploreInformationRequest",
     "ProjectExploreReadProjection",
     "ProjectExploreRequest",
+    "ProjectProgressCheckpointPatch",
+    "ProjectProgressPreview",
+    "ProjectProgressRequest",
+    "ProjectProgressResponse",
+    "ProjectProgressError",
+    "ProjectProgressIdempotencyConflict",
+    "ProjectProgressRecoveryConflict",
+    "ProjectProgressService",
     "ProjectCheckpoint",
     "ProjectCheckpointPatchRequest",
     "ProjectCreateRequest",

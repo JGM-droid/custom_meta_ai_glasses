@@ -228,6 +228,39 @@ class CheckpointProposalStore:
             self._save_proposal_no_lock(proposal)
             return proposal
 
+    def create_proposal_with_id(
+        self,
+        project_id: str,
+        proposal_id: str,
+        request: CheckpointProposalCreateRequest,
+    ) -> tuple[CheckpointProposal, bool]:
+        """Create a caller-identified Proposal or return the existing record for reconciliation."""
+        normalized_project_id = self.project_store.validate_project_id(project_id)
+        normalized_proposal_id = self.validate_proposal_id(proposal_id)
+        project_lock = self.project_store._get_project_lock(normalized_project_id)
+
+        with project_lock:
+            project = self.project_store._load_project_no_lock(normalized_project_id)
+            path = self._proposal_path(normalized_project_id, normalized_proposal_id)
+            if path.exists() and path.is_file():
+                return self._load_proposal_no_lock(normalized_project_id, normalized_proposal_id), False
+            if request.expected_project_revision != project.revision:
+                raise CheckpointProposalRevisionConflict(
+                    "expected_project_revision does not match the current project revision."
+                )
+            self._validate_source_activities(normalized_project_id, request.source_activity_ids)
+            proposal = CheckpointProposal.build_new(
+                proposal_id=normalized_proposal_id,
+                project_id=normalized_project_id,
+                base_project_revision=project.revision,
+                source_activity_ids=request.source_activity_ids,
+                proposed_checkpoint_patch=request.proposed_checkpoint_patch,
+                reason=request.reason,
+                created_at_utc=datetime.now(timezone.utc),
+            )
+            self._save_proposal_no_lock(proposal)
+            return proposal, True
+
     def load_proposal(self, project_id: str, proposal_id: str) -> CheckpointProposal:
         normalized_project_id = self.project_store.validate_project_id(project_id)
         self.project_store.load_project(normalized_project_id)
