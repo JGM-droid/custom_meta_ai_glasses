@@ -1,0 +1,4 @@
+interface:
+  display_name: "Custom Meta AI Glasses MVP Completion"
+  short_description: "Drive the finite remaining MVP critical path"
+  default_prompt: "Use $custom-meta-ai-glasses-mvp-completion to continue the authorized MVP critical path until the next real human gate."

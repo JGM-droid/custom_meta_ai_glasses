@@ -69,6 +69,7 @@ Quality and reliability:
 
 Orchestration and implementation:
 
+- `$custom-meta-ai-glasses-mvp-completion`
 - `$custom-meta-ai-glasses-triage`
 - `$custom-meta-ai-glasses-development`
 - `$custom-meta-ai-glasses-mvp-usability-sweep`
@@ -155,6 +156,8 @@ Product Designer
 ```
 
 For a release sweep, use `$custom-meta-ai-glasses-release-sweep`. For the complete current MVP usability workflow, use `$custom-meta-ai-glasses-mvp-usability-sweep`.
+
+For the remaining approved MVP critical path, use `$custom-meta-ai-glasses-mvp-completion`. It coordinates completed-milestone closure, real acceptance Projects, retry-safe Record Project Progress, realistic acceptance, one bounded hardening batch, and release-candidate validation. It is not a production editor; it routes all production changes through Development and stops only at its explicit human gates.
 
 For the first generalized Project Interaction milestone, use `$custom-meta-ai-glasses-explore-milestone`.
 
