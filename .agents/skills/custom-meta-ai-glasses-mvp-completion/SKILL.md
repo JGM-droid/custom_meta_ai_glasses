@@ -10,11 +10,13 @@ Coordinate the finite remaining MVP critical path without asking the user to sup
 ## Authority and operating limits
 
 - Read `AGENTS.md`, `docs/PROJECT_MEMORY_ARCHITECTURE.md`, `docs/PROJECT_INTERACTION_FOUNDATION.md`, `docs/ROADMAP.md`, and `docs/project_constitution.md`, plus both repository statuses and the latest critical-path evidence.
+- Use the minimum number of agents necessary; do not automatically fan out to the full agent team. Small, clearly bounded issues stay on `Development + QA` unless a specialist decision is material.
 - Only `$custom-meta-ai-glasses-development` may edit production code, and only inside a human-authorized milestone or repair batch.
 - Preserve unrelated dirty files and already accepted capabilities. Do not rebuild completed Project, Investigation, Explore, Ideas, Assistant, or HUD foundations.
 - Permit at most one coherent implementation/repair batch per milestone. A genuinely second major batch is a human gate.
 - Never commit, push, deploy, install, mutate configuration, or destructively change Project data without explicit authority.
 - Continue automatically through successful tests, reviews, small in-batch blocker corrections, and one affected-validation rerun.
+- Reuse prior validated findings rather than rerunning the same reviews; avoid broad rereads and overlapping specialist coverage.
 - Do not start Research, media/video, Compare, richer glasses navigation, DAT upgrades, new persistence, generic routing/workflow infrastructure, or other post-MVP work.
 
 ## Human gates
