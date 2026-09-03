@@ -175,6 +175,30 @@ This capability gate blocks only productizing Band-triggered glasses capture on 
 
 Immediate local captured-photo HUD preview is blocked on DAT 0.8 because its public Display image component accepts a supported HTTPS URI, not `PhotoData`, bitmap, bytes, `content://`, or `file://`. An already-accepted HTTPS evidence source could support a later presentation prototype without creating another image store.
 
+### Status Update - 2026-09-02: HUD/Band Capture Reinstated as an Explicit MVP Requirement
+
+Human product decision (explicit, informed): despite the reliability finding above being unchanged and unresolved - still DAT 0.8.0, no DAT 0.9 evaluation performed - HUD/Band-triggered photo capture is now a required part of the MVP wearable workflow (`New Project -> Use glasses -> capture visual context from glasses -> continue Project workflow`).
+
+This is **not** a reversal of the reliability finding and **not** a resurrection of the rejected `feature/glasses-display-capture` branch/spike (which predated Project attribution entirely). It is a fresh implementation inside the current Project-aware architecture:
+
+- The Capture action lives in `ProjectContinuityHudController`'s existing Ready/Stale render states (Android) - the same single Display this controller already owns via `attachTo(session)`; no second Display attachment was added.
+- A tap only *requests* a capture; `StreamViewModel` (the existing single DeviceSession/Stream owner) performs the actual `capturePhoto()` call and reports success/failure back. The HUD never calls the capture API directly.
+- Explicit `project_id` attribution is inherited for free: the HUD only offers Capture once attached to a specific explicit Project's session, and the request routes through that same already-attributed session - there is no second, parallel capture path to keep in sync.
+- Failures are shown honestly on the HUD (`Capture failed: <message>`) with a manual retry button. No automatic retries, polling, or other workarounds mask the known reliability gap - a real capture attempt can still fail, and the user will see that plainly rather than the HUD silently doing nothing or looping.
+- The phone-side Capture button (`StreamScreen`'s existing `CaptureButton` -> the same `capturePhoto()`) remains available as the reliable fallback; HUD capture is additive, not a replacement.
+
+Known residual risk: the underlying `Stream.capturePhoto()` reliability issue this gate documented (4 of 7 physical attempts succeeded) is unchanged. Accepting HUD/Band capture as MVP scope means accepting that some fraction of glasses-triggered captures will visibly fail and need a retry tap, not that the SDK-level issue has been fixed.
+
+### Physical Validation - 2026-09-02
+
+The above was extended with a text-only Use/Retake confirmation step (`Photo captured — use this image?` / Use / Retake) so a HUD capture is never silently appended to Investigation evidence - it stays pending until an explicit Use tap, mirroring how a phone-side capture already stays pending until the user acts on it.
+
+**Known limitation, not a bug**: this confirmation is text-only - the captured image's pixels are previewed on the phone (the existing live video/share flow), never on the glasses' own Display. DAT 0.8's Display image component only accepts a supported HTTPS URI (confirmed at the protobuf wire-format level: `ViewImage.image_uri`), never `PhotoData`/`Bitmap`/bytes/`content://`/`file://`, so a real on-lens photo preview would require uploading the pending capture to a new backend endpoint before Use/Retake is even decided - explicitly out of scope for this MVP milestone (no backend upload/persistence was added).
+
+A second physical issue surfaced during device testing: a transient DAT Display `sendContent()` failure/timeout during an in-flight capture (DAT's own `HeartbeatMonitor`/`DisplaySession` logs showed a ~5-10s connectivity stall overlapping the capture) could leave the HUD screen permanently stale - bound to an older render generation than the state machine had already advanced past, so every subsequent tap (Capture, Refresh, Continue on phone alike) was silently rejected by the existing replay-protection check. Fixed with a bounded one-retry resync of the Display's *current* state (`ProjectContinuityHudController.renderCurrentStateWithOneRetry`/`retryOnceThenReport`) - never a capture retry, never an unbounded loop.
+
+Full physical acceptance passed on real glasses: first capture failed and the HUD recovered and stayed usable; subsequent captures succeeded; Capturing / AwaitingConfirmation (Use / Retake) states all rendered correctly; Use correctly added the photo to Investigation evidence; Retake correctly discarded it without consuming a slot; repeated captures kept working without a session restart.
+
 ## Next Isolated Research Task - DAT 0.9 Capability Evaluation
 
 Do not upgrade as part of the max-five production batch. A separately authorized, read-only-first evaluation should determine:

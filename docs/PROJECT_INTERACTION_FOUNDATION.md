@@ -219,7 +219,13 @@ The canonical result is semantic and device-independent.
 
 Layout, colors, icons, route names, carousel position, truncation, local media paths, and SDK callbacks are renderer state, not canonical result fields. Glasses remain a lossy projection/controller over the same backend state and never own memory.
 
-The failed DAT 0.8 Display/Band capture handoff is not part of this foundation and remains `NOT PRODUCT-READY` as a capture mechanism.
+The original DAT 0.8 Display/Band capture *spike* (pre-Project-aware, abandoned on
+`feature/glasses-display-capture`) is not part of this foundation. As of 2026-09-02, HUD/Band
+photo capture is an explicit approved MVP requirement implemented fresh inside this foundation's
+Project-aware architecture (see docs/ROADMAP.md's "Status Update - 2026-09-02" under the DAT 0.8
+Capture Capability Gate) - the underlying `Stream.capturePhoto()` reliability risk that gate
+documented remains `NOT PRODUCT-READY` as a *guarantee*, and is surfaced honestly rather than
+hidden.
 
 ## Room Redesign Architecture Test
 
@@ -294,7 +300,7 @@ Rejected for the foundation:
 - universal trust or workflow engines;
 - device-specific canonical schemas;
 - vector/graph retrieval;
-- DAT 0.8 Display/Band capture code.
+- the abandoned pre-Project-aware DAT 0.8 Display/Band capture *spike* (`feature/glasses-display-capture`) specifically - not HUD/Band capture as a capability, which is approved MVP scope as of 2026-09-02 (see Cross-Device Rendering above and docs/ROADMAP.md).
 
 Deferred:
 

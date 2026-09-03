@@ -220,7 +220,14 @@ Core rules:
 - Do not hard-code device rendering into canonical schemas.
 - Do not silently change the Active Project.
 - Do not bypass Proposal/Apply for canonical Project changes.
-- Do not reintroduce the rejected DAT 0.8 Display/Band capture spike.
+- Do not reintroduce the rejected DAT 0.8 Display/Band capture *spike* (its abandoned
+  `feature/glasses-display-capture` branch/implementation, pre-Project-aware, with no `project_id`
+  attribution). HUD/Band-triggered photo capture itself is, as of 2026-09-02, an explicit MVP
+  requirement approved despite the known DAT 0.8 `capturePhoto()` reliability risk (see
+  docs/ROADMAP.md's "DAT 0.8 Capture Capability Gate" status update) - implemented fresh inside the
+  current Project-aware `ProjectContinuityHudController`/single-Display architecture, with honest
+  (non-retrying) failure display and the phone-side Capture button retained as fallback. Do not
+  mask that known reliability gap with automatic capture retries or other workarounds.
 - Do not use unsupported Meta internal APIs or interception workarounds.
 - Do not rewrite historical architecture decisions as though they never existed.
 
