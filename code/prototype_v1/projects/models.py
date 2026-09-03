@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from investigations.models import InvestigationDesktopProjection
 
 
 PROJECT_SCHEMA_VERSION = "1.0"
@@ -18,7 +22,8 @@ PROJECT_TRUST_STATE_SCHEMA_VERSION = "1.0"
 PROJECT_KNOWLEDGE_SCHEMA_VERSION = "1.0"
 PROJECT_IDEA_LIST_SCHEMA_VERSION = "1.0"
 PROJECT_EXPLORE_SCHEMA_VERSION = "1.0"
-PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION = "1.0"
+PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION = "1.1"
+PROJECT_AI_RESULT_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -27,6 +32,21 @@ _MAX_ACTIVITY_METADATA_KEY_LENGTH = 64
 _MAX_ACTIVITY_METADATA_STRING_LENGTH = 256
 _MAX_ACTIVITY_METADATA_TOTAL_TEXT = 2048
 _MAX_CHECKPOINT_PROPOSAL_REASON_LENGTH = 1000
+
+_MAX_EXPLORE_CONCEPT_LENGTH = 800
+_MAX_EXPLORE_PROPOSED_CHANGES_LENGTH = 800
+_MAX_EXPLORE_ESTIMATED_COST_QUALIFIER_LENGTH = 120
+_MAX_EXPLORE_RECOMMENDATION_REASON_LENGTH = 800
+_MAX_EXPLORE_OBSERVATION_LENGTH = 200
+_MAX_EXPLORE_OBSERVATIONS = 4
+_MAX_EXPLORE_NEXT_STEP_LENGTH = 200
+_MAX_EXPLORE_NEXT_STEPS = 5
+_MAX_EXPLORE_FOLLOW_UP_QUESTION_LENGTH = 200
+_MAX_EXPLORE_FOLLOW_UP_QUESTIONS = 4
+
+# Must match project_explore.py's _FIELD_DELIMITER exactly - reserved for
+# lossless Activity text encoding, never valid in provider-supplied text.
+_RESERVED_FIELD_DELIMITER = chr(0xE000)
 
 
 class ProjectStatus(str, Enum):
@@ -373,6 +393,66 @@ class ProjectExploreRequest(BaseModel):
         return normalized
 
 
+class ExplorePlanEstimatedCost(BaseModel):
+    """A small, optional, structured cost estimate for one Explore option.
+
+    Encoded as one delimited scalar Activity metadata value (see
+    project_explore.py's encode/decode helpers), never as nested JSON.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    currency: str = Field(..., min_length=3, max_length=3)
+    min_amount: float | None = Field(default=None, ge=0)
+    max_amount: float | None = Field(default=None, ge=0)
+    qualifier: str | None = Field(default=None, max_length=_MAX_EXPLORE_ESTIMATED_COST_QUALIFIER_LENGTH)
+
+    @field_validator("currency")
+    @classmethod
+    def _validate_currency(cls, value: str) -> str:
+        text = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", text):
+            raise ValueError("currency must be a 3-letter ISO 4217 code.")
+        return text
+
+    @field_validator("qualifier")
+    @classmethod
+    def _validate_qualifier(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        if _RESERVED_FIELD_DELIMITER in text:
+            raise ValueError("qualifier must not contain the reserved delimiter character.")
+        if "|" in text:
+            raise ValueError("qualifier must not contain '|'.")
+        return text
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "ExplorePlanEstimatedCost":
+        if self.min_amount is not None and self.max_amount is not None and self.min_amount > self.max_amount:
+            raise ValueError("min_amount must not exceed max_amount.")
+        return self
+
+
+def _validate_bounded_text_list(value: list[str], *, item_max_length: int, field_name: str) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = str(item or "").strip()
+        if not text or len(text) > item_max_length:
+            raise ValueError(f"{field_name} entries must contain 1 to {item_max_length} characters.")
+        if _RESERVED_FIELD_DELIMITER in text:
+            raise ValueError(f"{field_name} entries must not contain the reserved delimiter character.")
+        key = " ".join(text.lower().split())
+        if key in seen:
+            raise ValueError(f"{field_name} must not contain duplicates.")
+        seen.add(key)
+        normalized.append(text)
+    return normalized
+
+
 class ProjectExploreProviderOption(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -382,17 +462,32 @@ class ProjectExploreProviderOption(BaseModel):
     rationale: str | None = Field(default=None, max_length=800)
     tradeoffs: str | None = Field(default=None, max_length=800)
     source_refs: list[str] = Field(default_factory=list, max_length=5)
+    concept: str | None = Field(default=None, max_length=_MAX_EXPLORE_CONCEPT_LENGTH)
+    proposed_changes: str | None = Field(default=None, max_length=_MAX_EXPLORE_PROPOSED_CHANGES_LENGTH)
+    estimated_cost: ExplorePlanEstimatedCost | None = None
+
+    @field_validator("title", "summary", "rationale", "tradeoffs", "concept", "proposed_changes")
+    @classmethod
+    def _reject_reserved_delimiter(cls, value: str | None) -> str | None:
+        if value is not None and _RESERVED_FIELD_DELIMITER in value:
+            raise ValueError("Field must not contain the reserved delimiter character.")
+        return value
 
 
 class ProjectExploreOptionSet(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    schema_version: str
-    result_type: str
+    schema_version: Literal["1.1"]
+    result_type: Literal["OPTION_SET"] = "OPTION_SET"
     title: str = Field(..., min_length=1, max_length=200)
     summary: str = Field(..., min_length=1, max_length=1000)
     source_refs: list[str] = Field(default_factory=list, max_length=5)
     options: list[ProjectExploreProviderOption] = Field(..., min_length=3, max_length=3)
+    observations: list[str] = Field(..., min_length=1, max_length=_MAX_EXPLORE_OBSERVATIONS)
+    recommended_ordinal: int = Field(..., ge=1, le=3)
+    recommendation_reason: str = Field(..., min_length=1, max_length=_MAX_EXPLORE_RECOMMENDATION_REASON_LENGTH)
+    next_steps: list[str] = Field(..., min_length=1, max_length=_MAX_EXPLORE_NEXT_STEPS)
+    follow_up_questions: list[str] = Field(default_factory=list, max_length=_MAX_EXPLORE_FOLLOW_UP_QUESTIONS)
 
     @field_validator("schema_version")
     @classmethod
@@ -401,19 +496,40 @@ class ProjectExploreOptionSet(BaseModel):
             raise ValueError(f"schema_version must be {PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION}.")
         return value
 
-    @field_validator("result_type")
+    @field_validator("observations", mode="after")
     @classmethod
-    def _validate_type(cls, value: str) -> str:
-        if value != "OPTION_SET":
-            raise ValueError("result_type must be OPTION_SET.")
+    def _validate_observations(cls, value: list[str]) -> list[str]:
+        return _validate_bounded_text_list(value, item_max_length=_MAX_EXPLORE_OBSERVATION_LENGTH, field_name="observations")
+
+    @field_validator("next_steps", mode="after")
+    @classmethod
+    def _validate_next_steps(cls, value: list[str]) -> list[str]:
+        return _validate_bounded_text_list(value, item_max_length=_MAX_EXPLORE_NEXT_STEP_LENGTH, field_name="next_steps")
+
+    @field_validator("follow_up_questions", mode="after")
+    @classmethod
+    def _validate_follow_up_questions(cls, value: list[str]) -> list[str]:
+        return _validate_bounded_text_list(value, item_max_length=_MAX_EXPLORE_FOLLOW_UP_QUESTION_LENGTH, field_name="follow_up_questions")
+
+    @field_validator("title", "summary", "recommendation_reason")
+    @classmethod
+    def _reject_reserved_delimiter(cls, value: str) -> str:
+        if _RESERVED_FIELD_DELIMITER in value:
+            raise ValueError("Field must not contain the reserved delimiter character.")
         return value
+
+    @model_validator(mode="after")
+    def _validate_recommended_ordinal_references_an_option(self) -> "ProjectExploreOptionSet":
+        if self.recommended_ordinal not in {option.ordinal for option in self.options}:
+            raise ValueError("recommended_ordinal must reference one of the returned options.")
+        return self
 
 
 class ProjectExploreInformationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    schema_version: str
-    result_type: str
+    schema_version: Literal["1.1"]
+    result_type: Literal["INFORMATION_REQUEST"] = "INFORMATION_REQUEST"
     title: str = Field(..., min_length=1, max_length=200)
     prompt: str = Field(..., min_length=1, max_length=1000)
     requested_inputs: list[str] = Field(..., min_length=1, max_length=5)
@@ -442,13 +558,6 @@ class ProjectExploreInformationRequest(BaseModel):
             normalized.append(text)
         return normalized
 
-    @field_validator("result_type")
-    @classmethod
-    def _validate_type(cls, value: str) -> str:
-        if value != "INFORMATION_REQUEST":
-            raise ValueError("result_type must be INFORMATION_REQUEST.")
-        return value
-
 
 class ProjectExploreDispositionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -470,6 +579,10 @@ class ProjectExploreOptionView(BaseModel):
     promoted: bool = False
     roadmap_activity: ProjectActivity | None = None
     related_proposals: list[CheckpointProposal] = Field(default_factory=list)
+    concept: str | None = None
+    proposed_changes: str | None = None
+    estimated_cost: ExplorePlanEstimatedCost | None = None
+    recommended: bool = False
 
 
 class ProjectExploreGroupView(BaseModel):
@@ -479,6 +592,14 @@ class ProjectExploreGroupView(BaseModel):
     idempotency_key: str
     complete: bool
     options: list[ProjectExploreOptionView] = Field(default_factory=list)
+    title: str | None = None
+    summary: str | None = None
+    observations: list[str] = Field(default_factory=list)
+    recommended_ordinal: int | None = None
+    recommendation_reason: str | None = None
+    next_steps: list[str] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
+    result_activity: ProjectActivity | None = None
 
 
 class ProjectExploreReadProjection(BaseModel):
@@ -1281,3 +1402,72 @@ def to_project_summary(project: Project) -> ProjectSummary:
         current_objective=project.checkpoint.current_objective,
         next_action=project.checkpoint.next_action,
     )
+
+
+# --- Rich Project Intelligence V1 (ADR-059): ProjectAIResult presentation envelope ---
+#
+# This is a read/presentation composition, never a persisted entity of its
+# own. TROUBLESHOOT/EXPLORE_PLAN/GENERAL_GUIDANCE each keep their existing
+# domain owner (Investigation, evolved Explore, Project Q&A); the payload
+# fields below reuse those services' existing typed responses unchanged
+# rather than duplicating their shape.
+
+class ProjectAIResultType(str, Enum):
+    TROUBLESHOOT = "TROUBLESHOOT"
+    EXPLORE_PLAN = "EXPLORE_PLAN"
+    GENERAL_GUIDANCE = "GENERAL_GUIDANCE"
+
+
+_MAX_AI_RESULT_HEADLINE_LENGTH = 280
+_MAX_AI_RESULT_NEXT_LENGTH = 280
+_MAX_AI_RESULT_SUMMARY_LENGTH = 1000
+
+
+class ProjectAIResultHudProjection(BaseModel):
+    """The concise, bounded glasses projection - never the full rich result."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    headline: str = Field(..., min_length=1, max_length=_MAX_AI_RESULT_HEADLINE_LENGTH)
+    next: str | None = Field(default=None, max_length=_MAX_AI_RESULT_NEXT_LENGTH)
+    uncertainty_flag: bool = False
+
+
+class ProjectAIResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str = PROJECT_AI_RESULT_SCHEMA_VERSION
+    result_id: str
+    project_id: str
+    result_type: ProjectAIResultType
+    summary: str = Field(..., min_length=1, max_length=_MAX_AI_RESULT_SUMMARY_LENGTH)
+    hud_projection: ProjectAIResultHudProjection
+    evidence_refs: list[str] = Field(default_factory=list)
+    suggested_project_updates: bool = False
+    # True only for GENERAL_GUIDANCE: this result is not persisted anywhere
+    # and cannot be reconstructed after restart. Clients must not imply
+    # durability (e.g. no "saved to your project" copy, no HUD reference
+    # that survives a reconnect) when this is True.
+    ephemeral: bool = False
+
+    troubleshoot: InvestigationDesktopProjection | None = None
+    explore_plan: ProjectExploreGroupView | None = None
+    general_guidance: ProjectGroundedAnswerResponse | None = None
+
+    @model_validator(mode="after")
+    def _validate_exactly_one_payload_matches_result_type(self) -> "ProjectAIResult":
+        payload_by_type = {
+            ProjectAIResultType.TROUBLESHOOT: self.troubleshoot,
+            ProjectAIResultType.EXPLORE_PLAN: self.explore_plan,
+            ProjectAIResultType.GENERAL_GUIDANCE: self.general_guidance,
+        }
+        for result_type, payload in payload_by_type.items():
+            present = payload is not None
+            should_be_present = result_type == self.result_type
+            if present != should_be_present:
+                raise ValueError("Exactly one payload field must be set, matching result_type.")
+        if self.result_type == ProjectAIResultType.GENERAL_GUIDANCE and not self.ephemeral:
+            raise ValueError("GENERAL_GUIDANCE results must be marked ephemeral.")
+        if self.result_type != ProjectAIResultType.GENERAL_GUIDANCE and self.ephemeral:
+            raise ValueError("Only GENERAL_GUIDANCE results may be marked ephemeral.")
+        return self

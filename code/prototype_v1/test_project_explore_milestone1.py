@@ -18,12 +18,19 @@ from projects import (
 
 
 def option_set(suffix=""):
-    return {"schema_version": "1.0", "result_type": "OPTION_SET", "title": "Room directions", "summary": "Three possible directions.",
+    return {"schema_version": "1.1", "result_type": "OPTION_SET", "title": "Room directions", "summary": "Three possible directions.",
             "source_refs": [], "options": [
-                {"ordinal": 1, "title": f"Warm Modern{suffix}", "summary": "Warm wood and soft neutral layers.", "rationale": "Supports a welcoming room.", "tradeoffs": "Needs material samples.", "source_refs": []},
+                {"ordinal": 1, "title": f"Warm Modern{suffix}", "summary": "Warm wood and soft neutral layers.", "rationale": "Supports a welcoming room.", "tradeoffs": "Needs material samples.", "source_refs": [],
+                 "concept": "Layer warm wood tones with soft neutral textiles.", "proposed_changes": "Add oak accents and warm-white lighting.",
+                 "estimated_cost": {"currency": "USD", "min_amount": 500, "max_amount": 1200, "qualifier": "rough estimate"}},
                 {"ordinal": 2, "title": f"Dark Contemporary{suffix}", "summary": "Deep contrast with restrained accents.", "source_refs": []},
                 {"ordinal": 3, "title": f"Minimal Natural{suffix}", "summary": "Natural textures and a quiet palette.", "source_refs": []},
-            ]}
+            ],
+            "observations": ["The room currently reads as cold and under-furnished."],
+            "recommended_ordinal": 1,
+            "recommendation_reason": "Warm Modern best matches the stated goal of a warmer, welcoming room.",
+            "next_steps": ["Confirm budget range with the user.", "Select material samples for the recommended direction."],
+            "follow_up_questions": ["Is there an existing color palette to keep?"]}
 
 
 class FakeProvider:
@@ -89,10 +96,20 @@ def test_success_projects_exactly_three_ai_inferred_ideas_and_context(explore_co
     body = response.json()
     assert body["result_type"] == "OPTION_SET" and body["suggestions_created"] is True
     assert [item["ordinal"] for item in body["option_set"]["options"]] == [1, 2, 3]
-    ideas = activity_store.list_activities(project["project_id"])
-    assert len(ideas) == 3
+    all_activities = activity_store.list_activities(project["project_id"])
+    ideas = [item for item in all_activities if item.activity_type.value == "idea"]
+    results = [item for item in all_activities if item.activity_type.value == "result"]
+    assert len(all_activities) == 4
+    assert len(ideas) == 3 and len(results) == 1
     assert {(item.activity_type.value, item.source_type.value, item.confirmation_status.value) for item in ideas} == {("idea", "ai", "inferred")}
-    assert len({item.metadata["interaction_id"] for item in ideas}) == 1
+    assert (results[0].source_type.value, results[0].confirmation_status.value) == ("ai", "inferred")
+    assert len({item.metadata["interaction_id"] for item in all_activities}) == 1
+    assert results[0].metadata["recommended_ordinal"] == 1
+    group = body["option_set"]
+    assert group["recommended_ordinal"] == 1 and group["options"][0]["recommended"] is True
+    assert group["options"][1]["recommended"] is False
+    assert group["options"][0]["concept"] and group["options"][0]["estimated_cost"]["currency"] == "USD"
+    assert group["observations"] and group["next_steps"] and group["recommendation_reason"]
     assert provider.calls == 1 and provider.contexts[0].contract_id == "explore_option_generation_v1"
     assert provider.contexts[0].project_id == project["project_id"]
     assert project_store.load_project(project["project_id"]).revision == project["revision"]
@@ -116,7 +133,7 @@ def test_complete_sequential_and_concurrent_retries_converge_without_provider_re
     with ThreadPoolExecutor(max_workers=3) as pool:
         responses = list(pool.map(lambda _: run_explore(client, project["project_id"]), range(3)))
     assert all(item.status_code == 200 for item in responses)
-    assert provider.calls == 1 and len(activities.list_activities(project["project_id"])) == 3
+    assert provider.calls == 1 and len(activities.list_activities(project["project_id"])) == 4
 
 
 def test_changed_request_same_key_conflicts(explore_context):
@@ -149,7 +166,7 @@ def test_information_request_is_explicit_transient_and_nonmutating(explore_conte
     client, _service, provider, projects, activities, sessions = explore_context
     project = create_project(client)
     before = projects.load_project(project["project_id"])
-    provider.result = {"schema_version": "1.0", "result_type": "INFORMATION_REQUEST", "title": "Need constraints",
+    provider.result = {"schema_version": "1.1", "result_type": "INFORMATION_REQUEST", "title": "Need constraints",
                        "prompt": "What must remain?", "requested_inputs": ["Existing furniture"], "source_refs": []}
     first = run_explore(client, project["project_id"])
     second = run_explore(client, project["project_id"])
@@ -193,7 +210,7 @@ def test_partial_group_is_hidden_and_matching_recovery_only_adds_missing(explore
     monkeypatch.setattr(activities, "create_activity_with_id", original)
     recovered = run_explore(client, project["project_id"])
     assert recovered.status_code == 200 and provider.calls == 2
-    assert len(activities.list_activities(project["project_id"])) == 3
+    assert len(activities.list_activities(project["project_id"])) == 4
 
 
 def test_divergent_partial_recovery_returns_precise_conflict(explore_context, monkeypatch):

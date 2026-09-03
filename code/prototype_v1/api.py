@@ -178,6 +178,11 @@ from projects import (
     ProjectProgressResponse,
     ProjectProgressService,
     load_project_explore_model_name,
+    ProjectAIResult,
+    ProjectAIResultError,
+    ProjectAIResultExplorePlanNotFound,
+    ProjectAIResultPlanner,
+    ProjectAIResultTroubleshootNotFound,
     ProjectNotFound,
     ProjectRevisionConflict,
     ProjectStore,
@@ -2960,6 +2965,16 @@ def _create_project_explore_read_service() -> ProjectExploreService:
     )
 
 
+def _create_project_ai_result_planner(*, explore_service: ProjectExploreService | None = None) -> ProjectAIResultPlanner:
+    return ProjectAIResultPlanner(
+        project_store=PROJECT_STORE,
+        explore_service=explore_service if explore_service is not None else _create_project_explore_read_service(),
+        qa_service=_create_project_question_answering_service(),
+        session_store=SESSION_STORE,
+        investigation_store_root=_canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+    )
+
+
 @app.post("/projects/{project_id}/investigation-sessions/{session_id}/trust-decision", response_model=ProjectTrustDecisionResponse, status_code=201)
 async def create_project_investigation_trust_decision(project_id: str, session_id: str, payload: dict[str, object] | None = None) -> ProjectTrustDecisionResponse:
     normalized_project_id = _validate_project_id_or_422(project_id)
@@ -3264,6 +3279,93 @@ async def ask_project_question(project_id: str, payload: dict[str, object] | Non
     try:
         service = _create_project_question_answering_service()
         return service.ask(project_id=normalized_project_id, question=request.question)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectReasoningProviderMissingApiKeyError:
+        _raise_project_http_error(status_code=503, category="project_qa_provider_unavailable", message="Project Q&A provider is unavailable.")
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+    except ProjectReasoningError:
+        _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
+
+
+# --- Rich Project Intelligence V1 (ADR-059): Response Planner / ProjectAIResult boundary ---
+#
+# One thin presentation/API boundary composing ProjectAIResult from the
+# existing, unchanged domain services below. It introduces no new canonical
+# store: TROUBLESHOOT reads the existing Investigation canonical result,
+# EXPLORE_PLAN reads/creates through the evolved (still Activity-backed)
+# Explore service, and GENERAL_GUIDANCE wraps the existing ephemeral /ask.
+
+@app.post("/projects/{project_id}/ai-results/explore-plan")
+async def create_project_ai_result_explore_plan(project_id: str, payload: dict[str, object] | None = None) -> ProjectAIResult:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectExploreRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        planner = _create_project_ai_result_planner(explore_service=_create_project_explore_service())
+        result = planner.create_explore_plan(normalized_project_id, request)
+        if result is None:
+            raise HTTPException(status_code=422, detail={
+                "category": "explore_plan_needs_more_information",
+                "message": "More information is needed before an EXPLORE_PLAN result can be created.",
+            })
+        return result
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectExploreForeignReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="input_refs must belong to the target Project.")
+    except ProjectExploreIdempotencyConflict:
+        _raise_project_http_error(status_code=409, category="explore_idempotency_conflict", message="idempotency_key was already used with a different request.")
+    except ProjectExploreRecoveryConflict:
+        _raise_project_http_error(status_code=409, category="explore_recovery_conflict", message="Incomplete Explore options conflict with the validated recovery result.")
+    except ProjectExploreInvalidResult:
+        _raise_project_http_error(status_code=502, category="explore_invalid_result", message="Explore provider returned an invalid structured result; no new suggestions were recorded.")
+    except ProjectExploreProviderUnavailable:
+        _raise_project_http_error(status_code=503, category="explore_provider_unavailable", message="Explore provider is unavailable.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(status_code=500, category="project_explore_unavailable", message="Project Explore is unavailable.")
+
+
+@app.get("/projects/{project_id}/ai-results/explore-plan/{interaction_id}", response_model=ProjectAIResult)
+async def get_project_ai_result_explore_plan(project_id: str, interaction_id: str) -> ProjectAIResult:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return _create_project_ai_result_planner().read_explore_plan(normalized_project_id, interaction_id)
+    except ProjectAIResultExplorePlanNotFound:
+        _raise_project_http_error(status_code=404, category="explore_plan_not_found", message="Explore plan does not exist for this Project.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):
+        _raise_project_http_error(status_code=500, category="project_explore_unavailable", message="Project Explore is unavailable.")
+
+
+@app.get("/projects/{project_id}/ai-results/troubleshoot/{session_id}", response_model=ProjectAIResult)
+async def get_project_ai_result_troubleshoot(project_id: str, session_id: str) -> ProjectAIResult:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return _create_project_ai_result_planner().read_troubleshoot(normalized_project_id, session_id)
+    except ProjectAIResultTroubleshootNotFound:
+        _raise_project_http_error(status_code=404, category="investigation_not_found", message="Investigation does not exist for this Project.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except (ProjectStoreError, ProjectActivityStoreError):
+        _raise_project_http_error(status_code=500, category="project_ai_result_unavailable", message="Project AI result is unavailable.")
+
+
+@app.post("/projects/{project_id}/ai-results/general-guidance", response_model=ProjectAIResult)
+async def create_project_ai_result_general_guidance(project_id: str, payload: dict[str, object] | None = None) -> ProjectAIResult:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectAskRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        return _create_project_ai_result_planner().create_general_guidance(normalized_project_id, request.question)
     except ProjectNotFound:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except ProjectReasoningProviderMissingApiKeyError:
