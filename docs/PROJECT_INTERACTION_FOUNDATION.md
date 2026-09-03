@@ -2,7 +2,7 @@
 
 Status: Authoritative design for the approved Project Interaction foundation. No production implementation is authorized by this document.
 
-Last updated: 2026-08-23
+Last updated: 2026-09-03
 
 Authority: This document refines ADR-052, ADR-054, and ADR-057 in `PROJECT_MEMORY_ARCHITECTURE.md`. If it conflicts with that document, `PROJECT_MEMORY_ARCHITECTURE.md` wins.
 
@@ -262,6 +262,8 @@ All remain within the same Project continuity without sharing an artificial univ
 A future Project Guidance Engine selects an interaction type, retrieval contract, provider/tool capability, structured result family, authorized actions, and device projection.
 
 It does not own Project Memory, a universal workflow state machine, Investigation evidence/trust, provider-specific core schemas, device UI state, or automatic Project mutation. Initial routing should be explicit service dispatch, not autonomous intent classification.
+
+ADR-059 in `PROJECT_MEMORY_ARCHITECTURE.md` names and scopes the first approved realization of this engine as the Response Planner, selecting exactly one of three V1 response families (`TROUBLESHOOT`, `EXPLORE_PLAN`, `GENERAL_GUIDANCE`) - `TROUBLESHOOT` maps to the existing `INVESTIGATE` interaction/Investigation lifecycle above unchanged, and `EXPLORE_PLAN` evolves this document's `OPTION_SET` result (below) with a richer payload. Exact schemas remain a future design milestone; see ADR-059 and `docs/ROADMAP.md`'s "Rich Project Intelligence V1" entry for current status and non-goals.
 
 ## Media and External Tool Boundary
 

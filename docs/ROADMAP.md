@@ -78,6 +78,55 @@ NEXT
 Choose seating and finalize furniture placement.
 ```
 
+### Rich Project Intelligence V1 - ADR-059
+
+Status: APPROVED ROADMAP, next after the current glasses Investigation + trust UX milestone (see "Physical Validation - 2026-09-03" below). Not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-059 is authoritative; this entry summarizes sequencing.
+
+Problem: the existing Investigation result contract (evidence + context -> hypothesis -> recommended next action) is correct for diagnosis but produces low-value output for design/planning/creative Project tasks - e.g. Room Redesign currently returns generic guidance such as "declutter surfaces, add wall art" instead of reasoned alternatives.
+
+Goal: AI responses appropriate to the Project task, while preserving application-owned Project Memory, explicit trust, Project isolation, and provider-neutral architecture - rich ChatGPT-like intelligence on phone/desktop, concise orientation/execution projection on glasses.
+
+Approved direction:
+
+```text
+Project Memory
+-> deterministic/selective Context Retriever
+-> bounded Response Planner
+-> typed structured AI result (ProjectAIResult)
+-> rich phone/desktop renderer
+-> user selection/trust
+-> proposed Project Memory update (existing Idea/Decision/Checkpoint Proposal mechanism)
+-> explicit validation/apply where required
+-> concise HUD projection
+```
+
+The Response Planner is the named realization of the "Project Guidance Engine" boundary `docs/PROJECT_INTERACTION_FOUNDATION.md` already describes. It selects, from explicit user intent and Project context, exactly one of three V1 response families - `TROUBLESHOOT` (existing Investigation, unchanged), `EXPLORE_PLAN` (evolves the existing `EXPLORE`/`OPTION_SET` foundation with observations, multiple options each carrying rationale/tradeoffs/proposed changes, a recommended option and reason, next steps, and follow-up questions), `GENERAL_GUIDANCE` (new minimal safe fallback). No larger taxonomy is approved yet, and the Planner must not itself execute mutations.
+
+`ProjectAIResult` is the shared envelope (`result_id`, `project_id`, `result_type`, `summary`, `hud_projection`, `evidence_refs`, `suggested_project_updates`, typed payload) rather than one large mostly-nullable schema. Exact per-family payload schemas, the Planner's internal selection mechanism, and intent/router persistence are explicitly deferred to a focused design milestone.
+
+Selecting a rich option must never silently become canonical truth: AI proposal -> user selection/trust -> the existing Idea/Decision/Checkpoint Proposal mechanism -> validated canonical state, exactly as Investigation/Explore already require. The selected direction then influences future retrieval and guidance, the same way a selected Room Redesign style already does above.
+
+Glasses remain a concise Project Navigator/execution interface and must not render the entire rich response - e.g. before selection: "3 design ideas ready. AI recommends Warm Modern. Review on phone."; after selection: "Plan: Warm Modern. Next: Measure wall behind bed." A direct "See details on phone" path remains distinct from trust actions (Looks right/Add more info/Not quite).
+
+On-demand rich media ("Visualize this option", using Project evidence images as generation context for a selected option) is a separately gated later slice - not automatic, not V1.
+
+First vertical-slice acceptance target (proves the architecture before generalizing): Room Redesign - multiple Project photos + user context -> `EXPLORE_PLAN` selected -> rich structured response with approximately 3 meaningful options -> rich phone UI renders options/reasoning -> one option selected -> selection creates the appropriate Project proposal/decision using existing trust architecture -> canonical Project state records the validated direction -> Project Navigator subsequently shows the selected direction plus a useful Next -> glasses show only the concise projection. At the same time, verify AC Repair still receives an appropriate `TROUBLESHOOT`-shaped response rather than room-design-style alternatives, from the same Planner.
+
+Requires an evaluation set of roughly 20-40 representative Project scenarios (troubleshooting, design/planning, general guidance) assessing response-family selection correctness, grounding in supplied evidence/context, usefulness/specificity, hallucination/unsupported assumptions, option differentiation, next-step quality, Project isolation, structured-output validation, and latency/token/cost behavior. Passing unit tests alone does not prove AI quality.
+
+Sequencing (extends the "Implemented MVP Critical Path" above and the Glasses foundation sequence below; does not reopen the frozen Universal Project Workspace MVP):
+
+1. Physically accept the current glasses Investigation + trust UX milestone (below).
+2. Commit/checkpoint the proven cross-device flow.
+3. Rich Project Intelligence V1 architecture/contracts (this entry) - focused design milestone for exact schemas.
+4. Room Redesign vertical slice: Response Planner selection -> rich structured result -> rich phone UI -> selection -> Project Memory -> HUD projection.
+5. Validate AC Repair troubleshooting behavior against the same Planner.
+6. Rich Project Intelligence evaluation/hardening against the scenario set above.
+7. Optional on-demand rich media/visualization slice.
+8. Continue remaining bounded MVP/release hardening per existing roadmap priority, including the separately tracked DAT capture reliability issue below.
+
+Not part of this direction: building the feature now; a universal chat transcript as canonical memory; model output directly mutating Project state; bypassing Proposal/Apply/trust controls; a vector/graph database without demonstrated need; a large response-family taxonomy; automatic image generation for every result; replacing deterministic Project orientation with AI; overloading the HUD with phone/desktop content; solving DAT capture reliability as part of this milestone; or deleting the existing Investigation/Explore mechanisms.
+
 ## Glasses-Native Project Workspace
 
 The Meta Ray-Ban Display is a first-class glanceable/actionable projection and controller for the same application-owned Project Memory. The phone remains the richer secondary field interface.
@@ -136,7 +185,7 @@ Glasses foundation:
 4. Evidence count/status.
 5. Analyze action.
 6. Concise structured AI result.
-7. Trust actions: Keep as hypothesis, Add evidence, Return.
+7. Trust actions: Looks right, Add more info, Not quite.
 8. Refreshed Project state.
 
 Only after that foundation:
@@ -151,6 +200,32 @@ Only after that foundation:
 16. Richer Project navigation.
 
 Project-level Apply/Reject may remain on the phone initially. Until Meta exposes supported glasses microphone/voice-command access, open-ended spoken context remains phone-assisted. Near term, glasses own navigation, Now/Next, evidence actions, Analyze, concise guidance, and supported trust/navigation actions; phone owns open-ended context, detailed review, rich approvals, and complex media/search controls.
+
+### Physical Validation - 2026-09-03: Investigation + Trust Loop
+
+The full glasses <-> phone Investigation MVP cross-device loop (foundation items 1-8 above) is now physically proven:
+
+```text
+Glasses Project Navigator
+-> Capture
+-> Use / Retake
+-> Continue on phone
+-> existing active Investigation panel opens directly
+-> add typed/voice context
+-> Analyze on phone
+-> canonical Investigation result
+-> return/reconnect to glasses
+-> concise AI suggestion / suggested next step / trust flow
+```
+
+Two implementation refinements are part of this milestone, both preserving existing architecture/trust semantics rather than changing them:
+
+- The Continue-on-phone destination decision no longer depends on the Investigation ViewModel's asynchronous eligibility signal, which proved unreliable to time against a real physical tap. It now depends on the glasses HUD controller's own synchronous capture-accepted event, reset at explicit Project/session boundaries - a deterministic fix, not a new architecture.
+- Trust-action wording was simplified for both surfaces (glasses HUD and phone): "Keep as hypothesis / Add evidence / Return" -> "Looks right / Add more info / Not quite" (see foundation item 7 above, refining ADR-049's provisional CONTINUE/DISAGREE/MORE EVIDENCE terminology). Underlying trust decisions, persistence, and the Idea/Decision/Checkpoint Proposal mechanism are unchanged - only user-facing copy and confirmation visibility changed. Phone Analyze (via the existing Investigation panel) is now the primary Analyze trigger; HUD-initiated Analyze remains available as secondary, not required for the primary path.
+
+This validates the loop's interaction path end to end. It does **not** mark the overall product MVP/release complete, and it does not change the DAT 0.8 Capture Capability Gate finding below: `Stream.capturePhoto()` reliability remains a separate, known, unresolved hardening issue tracked independently of this loop's completion.
+
+The HUD Project Navigator requirement (foundation items 2-6, 8 above) is preserved unchanged by this milestone: the glasses provide bounded orientation over the active Project only - where we are now/where we left off, recent important progress, current guidance/finding where useful, Next, limited evidence/activity, and actions for continuing work (Capture, Continue on phone, See details) - never a full Project Detail surface.
 
 ## DAT 0.8 Capture Capability Gate - 2026-08-23
 
