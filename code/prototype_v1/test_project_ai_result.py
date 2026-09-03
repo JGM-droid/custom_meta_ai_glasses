@@ -137,6 +137,15 @@ def test_explore_plan_create_returns_project_ai_result_envelope(ai_result_contex
     assert body["hud_projection"]["next"] == "Confirm budget range with the user."
     assert body["evidence_refs"] == []
 
+    # Android must receive these as typed fields through the ProjectAIResult
+    # envelope, never by parsing the backend-private PUA-delimited encoding
+    # inside idea.details.
+    recommended_option = body["explore_plan"]["options"][0]
+    assert recommended_option["summary"] == "Warm wood and soft neutral layers."
+    assert recommended_option["rationale"] == "Supports a welcoming room."
+    assert recommended_option["tradeoffs"] == "Needs material samples."
+    assert "" not in (recommended_option["summary"] + recommended_option["rationale"] + recommended_option["tradeoffs"])
+
 
 def test_explore_plan_read_reconstructs_the_same_envelope(ai_result_context):
     client, *_rest = ai_result_context

@@ -253,7 +253,7 @@ def test_dispositions_latest_wins_selection_is_noncanonical_and_promotion_stays_
     assert selected.status_code == 200
     projection = client.get(f"/projects/{project['project_id']}/interactions/explore").json()
     assert projection["preferred_direction"]["idea"]["activity_id"] == first_id
-    assert projection["next_action"] == "Preferred direction recorded. Create or review a suggested Project change when ready."
+    assert projection["next_action"] == "Review the pending suggested Project change."
     assert projection["option_sets"][0]["options"][0]["disposition"] == "select"
     assert [item["metadata"]["explore_disposition"] for item in projection["option_sets"][0]["options"][0]["disposition_history"]] == ["keep", "select"]
     assert client.post(f"/projects/{project['project_id']}/ideas/{second_id}/disposition",
@@ -274,9 +274,10 @@ def test_dispositions_latest_wins_selection_is_noncanonical_and_promotion_stays_
     assert projection["preferred_direction"] is None
     assert projection["option_sets"][0]["options"][0]["disposition"] == "select"
     assert projection["option_sets"][0]["options"][1]["disposition"] == "dismiss"
-    assert projection["next_action"] == "Review the AI suggestions and choose what to keep, dismiss, or prefer."
+    assert projection["next_action"] == "Review the pending suggested Project change."
     assert projects.load_project(project["project_id"]) == checkpoint_before
-    assert client.get(f"/projects/{project['project_id']}/checkpoint-proposals").json() == []
+    proposals = client.get(f"/projects/{project['project_id']}/checkpoint-proposals").json()
+    assert len(proposals) == 2 and all(item["status"] == "pending" for item in proposals)
     assert not any((a.metadata or {}).get("promoted_from_activity_id") for a in activities.list_activities(project["project_id"]))
     promoted = client.post(f"/projects/{project['project_id']}/ideas/{first_id}/promote").json()
     assert promoted["created"] is True
@@ -346,5 +347,7 @@ def test_restart_reconstruction_and_project_isolation(explore_context):
     assert forbidden_provider.calls == 0
     assert restarted.read_projection(project_b["project_id"]).option_sets == []
     cross = client.post(f"/projects/{project_b['project_id']}/ideas/{idea_id}/disposition",
-                        json={"disposition": "dismiss", "idempotency_key": "cross"})
+                        json={"disposition": "select", "idempotency_key": "cross"})
     assert cross.status_code == 404
+    assert client.get(f"/projects/{project_a['project_id']}/checkpoint-proposals").json() == []
+    assert client.get(f"/projects/{project_b['project_id']}/checkpoint-proposals").json() == []

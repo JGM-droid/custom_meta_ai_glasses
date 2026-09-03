@@ -15,7 +15,16 @@ from projects import (
     ProjectExploreService,
     ProjectStore,
 )
-from projects.models import ExplorePlanEstimatedCost, ProjectExploreOptionSet
+from projects.models import (
+    CheckpointProposalCreateRequest,
+    CheckpointProposalPatch,
+    ExplorePlanEstimatedCost,
+    ProjectActivityConfirmationStatus,
+    ProjectActivityCreateRequest,
+    ProjectActivitySourceType,
+    ProjectActivityType,
+    ProjectExploreOptionSet,
+)
 from projects.project_explore import (
     ProjectExploreRecoveryConflict,
     _ProjectExploreProviderResponse,
@@ -230,10 +239,109 @@ def test_lossless_reconstruction_of_rich_fields_after_restart(explore_context):
     # Per-option fields owned by each IDEA Activity.
     for live_option, reconstructed_option in zip(live_body["options"], reconstructed_body["options"]):
         assert reconstructed_option["idea"]["summary"] == live_option["idea"]["summary"]
+        assert reconstructed_option["summary"] == live_option["summary"]
+        assert reconstructed_option["rationale"] == live_option["rationale"]
+        assert reconstructed_option["tradeoffs"] == live_option["tradeoffs"]
         assert reconstructed_option["concept"] == live_option["concept"]
         assert reconstructed_option["proposed_changes"] == live_option["proposed_changes"]
         assert reconstructed_option["estimated_cost"] == live_option["estimated_cost"]
         assert reconstructed_option["recommended"] == live_option["recommended"]
+
+
+def test_select_creates_one_revision_bound_proposal_and_apply_updates_only_direction(explore_context):
+    client, _service, _provider, projects, activities, _sessions = explore_context
+    project = create_project(client)
+    project_id = project["project_id"]
+    generated = run_explore(client, project_id).json()["option_set"]
+    selected = generated["options"][0]
+    idea_id = selected["idea"]["activity_id"]
+
+    # An AI recommendation alone is neither a user selection nor a Project mutation.
+    before = projects.load_project(project_id)
+    assert generated["options"][0]["recommended"] is True
+    assert client.get(f"/projects/{project_id}/checkpoint-proposals").json() == []
+    assert not any(a.activity_type.value == "decision" for a in activities.list_activities(project_id))
+
+    payload = {"disposition": "select", "idempotency_key": "select-room-direction"}
+    first = client.post(f"/projects/{project_id}/ideas/{idea_id}/disposition", json=payload)
+    retry = client.post(f"/projects/{project_id}/ideas/{idea_id}/disposition", json=payload)
+    assert first.status_code == retry.status_code == 200
+    first_body, retry_body = first.json(), retry.json()
+    assert first_body["created"] is True and retry_body["created"] is False
+    assert first_body["decision_activity"]["source_type"] == "user"
+    assert first_body["decision_activity"]["confirmation_status"] == "reported"
+    proposal = first_body["checkpoint_proposal"]
+    assert proposal["proposal_id"] == retry_body["checkpoint_proposal"]["proposal_id"]
+    assert proposal["status"] == "pending"
+    assert proposal["base_project_revision"] == before.revision
+    assert proposal["source_activity_ids"] == [
+        idea_id,
+        generated["result_activity"]["activity_id"],
+        first_body["decision_activity"]["activity_id"],
+    ]
+    assert proposal["proposed_checkpoint_patch"] == {
+        "current_objective": None,
+        "completed_summary": None,
+        "discoveries_summary": None,
+        "current_work": (
+            "Selected direction: Warm Modern. Warm wood and soft neutral layers. "
+            "Concept: Layer warm wood tones with soft neutral textiles. "
+            "Planned changes: Add oak accents and warm-white lighting."
+        ),
+        "stopped_at": None,
+        "blockers": None,
+        "next_action": "Confirm budget range with the user.",
+    }
+    assert len(client.get(f"/projects/{project_id}/checkpoint-proposals").json()) == 1
+    assert projects.load_project(project_id) == before
+
+    applied = client.post(f"/projects/{project_id}/checkpoint-proposals/{proposal['proposal_id']}/apply")
+    assert applied.status_code == 200 and applied.json()["status"] == "applied"
+    after = projects.load_project(project_id)
+    assert after.revision == before.revision + 1
+    assert after.checkpoint.current_objective == before.checkpoint.current_objective
+    assert after.checkpoint.current_work == proposal["proposed_checkpoint_patch"]["current_work"]
+    assert after.checkpoint.next_action == "Confirm budget range with the user."
+    assert after.checkpoint.completed_summary == before.checkpoint.completed_summary
+    assert after.checkpoint.discoveries_summary == before.checkpoint.discoveries_summary
+    assert after.checkpoint.blockers == before.checkpoint.blockers
+
+
+def test_divergent_selection_proposal_is_a_409_conflict_not_a_500(explore_context):
+    """A conflicting stored proposal for the same Explore selection must
+    surface as a structured 409 (client can retry/reload), not an unhandled
+    500 - the endpoint previously did not catch ProjectExploreRecoveryConflict
+    at all, so this would have propagated as a raw, unstructured 500."""
+    client, service, _provider, projects, activities, _sessions = explore_context
+    project = create_project(client)
+    project_id = project["project_id"]
+    generated = run_explore(client, project_id).json()["option_set"]
+    idea_id = generated["options"][0]["idea"]["activity_id"]
+    result_activity_id = generated["result_activity"]["activity_id"]
+
+    # Seed a DECISION + CheckpointProposal that _selection_proposal's own
+    # "caused by this Explore selection" matcher will find, but whose patch
+    # deliberately does not match what a fresh reconstruction would compute.
+    forged_decision = activities.create_activity(project_id, ProjectActivityCreateRequest(
+        activity_type=ProjectActivityType.DECISION, source_type=ProjectActivitySourceType.USER,
+        confirmation_status=ProjectActivityConfirmationStatus.REPORTED,
+        summary="Choose as preferred direction", details="Forged prior decision for conflict testing.",
+        metadata={"interaction_type": "explore", "interaction_id": generated["interaction_id"],
+                  "source_activity_id": idea_id, "explore_disposition": "select",
+                  "idempotency_key": "forged", "request_fingerprint": "forged"},
+    ))
+    project_before = projects.load_project(project_id)
+    service.proposal_store.create_proposal(project_id, CheckpointProposalCreateRequest(
+        expected_project_revision=project_before.revision,
+        source_activity_ids=[idea_id, result_activity_id, forged_decision.activity_id],
+        proposed_checkpoint_patch=CheckpointProposalPatch(current_work="A deliberately different direction."),
+        reason="Forged conflicting proposal for conflict testing.",
+    ))
+
+    response = client.post(f"/projects/{project_id}/ideas/{idea_id}/disposition",
+        json={"disposition": "select", "idempotency_key": "select-real"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["category"] == "explore_recovery_conflict"
 
 
 # --- Partial 4-activity group recovery: 3 Ideas written, RESULT missing (the QA-found gap) ---

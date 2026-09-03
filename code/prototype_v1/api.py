@@ -3233,6 +3233,12 @@ async def set_project_explore_disposition(project_id: str, idea_activity_id: str
         _raise_project_http_error(status_code=404, category="idea_not_found", message="Explore Idea does not exist.")
     except ProjectExploreIdempotencyConflict:
         _raise_project_http_error(status_code=409, category="explore_idempotency_conflict", message="idempotency_key was already used with a different disposition.")
+    except ProjectExploreRecoveryConflict:
+        _raise_project_http_error(status_code=409, category="explore_recovery_conflict", message="Existing Explore selection proposal conflicts with the reconstructed option.")
+    except CheckpointProposalRevisionConflict:
+        _raise_project_http_error(status_code=409, category="revision_conflict", message="expected_project_revision does not match the current project revision.")
+    except CheckpointProposalForeignActivityReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="source_activity_ids must belong to the target Project.")
     except ProjectNotFound:
         _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
     except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError):

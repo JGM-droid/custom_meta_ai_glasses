@@ -579,6 +579,9 @@ class ProjectExploreOptionView(BaseModel):
     promoted: bool = False
     roadmap_activity: ProjectActivity | None = None
     related_proposals: list[CheckpointProposal] = Field(default_factory=list)
+    summary: str | None = None
+    rationale: str | None = None
+    tradeoffs: str | None = None
     concept: str | None = None
     proposed_changes: str | None = None
     estimated_cost: ExplorePlanEstimatedCost | None = None
@@ -634,6 +637,7 @@ class ProjectExploreDispositionResponse(BaseModel):
     decision_activity: ProjectActivity
     created: bool
     projection: ProjectExploreReadProjection
+    checkpoint_proposal: "CheckpointProposal | None" = None
 
 
 class ProjectRoadmap(BaseModel):

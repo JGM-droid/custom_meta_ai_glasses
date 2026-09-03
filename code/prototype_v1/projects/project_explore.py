@@ -17,6 +17,10 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from .activity_store import ProjectActivityNotFound, ProjectActivityStore
 from .checkpoint_proposal_store import CheckpointProposalStore
 from .models import (
+    CheckpointProposal,
+    CheckpointProposalCreateRequest,
+    CheckpointProposalPatch,
+    CheckpointProposalStatus,
     ExplorePlanEstimatedCost,
     ProjectActivity,
     ProjectActivityConfirmationStatus,
@@ -637,8 +641,89 @@ class ProjectExploreService:
                               "idempotency_key": request.idempotency_key, "request_fingerprint": fingerprint}))
             if not created and (decision.metadata or {}).get("request_fingerprint") != fingerprint:
                 raise ProjectExploreIdempotencyConflict("idempotency_key was already used with a different disposition.")
+            proposal = None
+            if request.disposition == ProjectExploreDisposition.SELECT:
+                proposal = self._selection_proposal(normalized_project_id, idea, decision, request.idempotency_key)
             return ProjectExploreDispositionResponse(idea=idea, decision_activity=decision, created=created,
-                                                       projection=self.read_projection(normalized_project_id))
+                                                       projection=self.read_projection(normalized_project_id),
+                                                       checkpoint_proposal=proposal)
+
+    def _selection_proposal(self, project_id: str, idea: ProjectActivity, decision: ProjectActivity,
+                            idempotency_key: str) -> CheckpointProposal:
+        """Create/reconstruct the one revision-bound proposal caused by this explicit selection.
+
+        The selected direction is durable working state only after a separate Apply. AI
+        observations are intentionally excluded: selecting one direction does not confirm every
+        inferred statement in the generated plan.
+        """
+        def caused_by_explore_selection(proposal: CheckpointProposal) -> bool:
+            if idea.activity_id not in proposal.source_activity_ids:
+                return False
+            for source_id in proposal.source_activity_ids:
+                if source_id == idea.activity_id:
+                    continue
+                try:
+                    source = self.activity_store.load_activity(project_id, source_id)
+                except ProjectActivityNotFound:
+                    continue
+                source_metadata = source.metadata or {}
+                if (source.activity_type == ProjectActivityType.DECISION
+                        and source_metadata.get("source_activity_id") == idea.activity_id
+                        and source_metadata.get("explore_disposition") == ProjectExploreDisposition.SELECT.value):
+                    return True
+            return False
+
+        interaction_id = str((idea.metadata or {}).get("interaction_id") or "")
+        projection = self.read_projection(project_id)
+        group = next((item for item in projection.option_sets if item.interaction_id == interaction_id), None)
+        option = next((item for item in (group.options if group else []) if item.idea.activity_id == idea.activity_id), None)
+        if group is None or option is None or group.result_activity is None or not group.complete:
+            raise ProjectExploreIdeaNotFound("Selected Explore option could not be reconstructed.")
+
+        direction_parts = [f"Selected direction: {idea.summary}"]
+        if option.summary:
+            direction_parts.append(option.summary)
+        if option.concept and option.concept != option.summary:
+            direction_parts.append(f"Concept: {option.concept}")
+        if option.proposed_changes:
+            direction_parts.append(f"Planned changes: {option.proposed_changes}")
+        current_work = ". ".join(part.rstrip(". ") for part in direction_parts) + "."
+        patch = CheckpointProposalPatch(
+            current_work=current_work[:2000],
+            next_action=group.next_steps[0][:1000] if group.next_steps else None,
+        )
+        reason = (
+            f'User selected "{idea.summary}" as the preferred direction; '
+            "applying this proposal records that direction and its next step in canonical Project state."
+        )
+        existing = [
+            proposal for proposal in self.proposal_store.list_proposals(project_id)
+            if proposal.status in {CheckpointProposalStatus.PENDING, CheckpointProposalStatus.APPLIED}
+            and caused_by_explore_selection(proposal)
+        ]
+        if existing:
+            proposal = existing[-1]
+            if (proposal.proposed_checkpoint_patch.to_update_fields() != patch.to_update_fields()
+                    or proposal.reason != reason
+                    or group.result_activity.activity_id not in proposal.source_activity_ids):
+                raise ProjectExploreRecoveryConflict(
+                    "Existing Explore selection proposal conflicts with the reconstructed option."
+                )
+            return proposal
+
+        project = self.project_store.load_project(project_id)
+        proposal_id = str(uuid5(UUID(decision.activity_id), "explore-selection-checkpoint-proposal"))
+        proposal, _created = self.proposal_store.create_proposal_with_id(
+            project_id,
+            proposal_id,
+            CheckpointProposalCreateRequest(
+                expected_project_revision=project.revision,
+                source_activity_ids=[idea.activity_id, group.result_activity.activity_id, decision.activity_id],
+                proposed_checkpoint_patch=patch,
+                reason=reason,
+            ),
+        )
+        return proposal
 
     def read_projection(self, project_id: str) -> ProjectExploreReadProjection:
         normalized_project_id = self.project_store.validate_project_id(project_id)
@@ -741,6 +826,7 @@ class ProjectExploreService:
                 disposition_activity=latest, disposition_history=linked,
                 promoted=idea.activity_id in roadmaps,
                 roadmap_activity=roadmaps.get(idea.activity_id), related_proposals=related,
+                summary=decoded["summary"], rationale=decoded["rationale"], tradeoffs=decoded["tradeoffs"],
                 concept=decoded["concept"], proposed_changes=decoded["proposed_changes"],
                 estimated_cost=_decode_estimated_cost(metadata.get("estimated_cost")),
                 recommended=metadata.get("result_item_id") == recommended_result_item_id))
