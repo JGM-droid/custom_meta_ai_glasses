@@ -80,7 +80,7 @@ Choose seating and finalize furniture placement.
 
 ### Rich Project Intelligence V1 - ADR-059
 
-Status: APPROVED ROADMAP, next after the current glasses Investigation + trust UX milestone (see "Physical Validation - 2026-09-03" below). Not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-059 is authoritative; this entry summarizes sequencing.
+Status: APPROVED ROADMAP, next after the current glasses Investigation + trust UX milestone (see "Physical Validation - 2026-09-03" below). Not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-059 is authoritative; this entry summarizes sequencing. **The dispatch mechanism this entry originally described (explicit user/client choice of response family) is amended by ADR-060 - see "Bounded Response Planner Correction" below.**
 
 Problem: the existing Investigation result contract (evidence + context -> hypothesis -> recommended next action) is correct for diagnosis but produces low-value output for design/planning/creative Project tasks - e.g. Room Redesign currently returns generic guidance such as "declutter surfaces, add wall art" instead of reasoned alternatives.
 
@@ -126,6 +126,30 @@ Sequencing (extends the "Implemented MVP Critical Path" above and the Glasses fo
 8. Continue remaining bounded MVP/release hardening per existing roadmap priority, including the separately tracked DAT capture reliability issue below.
 
 Not part of this direction: building the feature now; a universal chat transcript as canonical memory; model output directly mutating Project state; bypassing Proposal/Apply/trust controls; a vector/graph database without demonstrated need; a large response-family taxonomy; automatic image generation for every result; replacing deterministic Project orientation with AI; overloading the HUD with phone/desktop content; solving DAT capture reliability as part of this milestone; or deleting the existing Investigation/Explore mechanisms.
+
+### Bounded Response Planner Correction - ADR-060 (2026-09-04)
+
+Status: APPROVED ROADMAP direction only; not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-060 is authoritative; this entry summarizes the correction and sequencing.
+
+**Why this changed:** the physical Room Redesign acceptance test run against the uncommitted Android implementation of the sequencing above surfaced a product/architecture defect in ADR-059's original dispatch rule, not an implementation bug. The natural physical flow (glasses Capture -> Use -> Continue on phone -> add explanation/context -> Analyze) always produced a basic diagnostic `TROUBLESHOOT` "AI suggestion," never the newly built `EXPLORE_PLAN` rich options, because reaching `EXPLORE_PLAN` required the user to notice and tap a separate explicit "Or explore design/planning ideas instead" alternative next to Analyze, or find an independent, always-visible "DESIGN & PLANNING GUIDANCE" composer elsewhere on the same screen. Exposing the response-family choice to the user this way required them to understand internal application architecture (TROUBLESHOOT vs. EXPLORE_PLAN vs. GENERAL_GUIDANCE) that ADR-059 never intended to surface, and it defeated the point of building Rich Project Intelligence in the first place.
+
+**What changes:** response-family selection becomes application-owned bounded intelligent routing instead of explicit user/client dispatch. The user experience becomes one natural conversational action - Project context + current evidence + a natural typed request -> a bounded Response Planner -> the appropriate one of `TROUBLESHOOT` / `EXPLORE_PLAN` / `GENERAL_GUIDANCE` (no larger taxonomy) -> the existing typed result renderer. The primary action's label becomes neutral ("Get guidance," replacing "Analyze investigation" wherever it is the entry point). The explicit "Or explore design/planning ideas instead" button and the separate always-visible "DESIGN & PLANNING GUIDANCE" composer are removed from the intended architecture - there is exactly one natural guidance entry point per Project Interaction. A Project is never permanently typed to one family: the same Project can receive different families for different requests over time (e.g. a Room Redesign Project can still receive `TROUBLESHOOT` for "this drawer won't close").
+
+**What does not change:** the three ADR-059 response families, the `ProjectAIResult` envelope, the Select -> Proposal -> Apply trust boundary, the bounded phone-rich/glasses-concise HUD split, Project Memory ownership, explicit `project_id`, Project isolation, provider neutrality, the existing Investigation/`TROUBLESHOOT`, `EXPLORE_PLAN`, and `GENERAL_GUIDANCE` implementations, and the already-validated stale-HUD Capture/Use/Retake repair (an unrelated defect, not reconsidered by this correction).
+
+**Planner contract (see ADR-060 for the full decision):** narrow deterministic Context Pack in (Project identity/goal, checkpoint, recent relevant Activities/Investigations/Explore interactions, evidence presence, current request text - never full Project history, never a chat transcript store); typed routing metadata out only (`response_family`, `confidence`, `brief_reason`, `needs_clarification`) that is never persisted and never mutates canonical Project state. A technical planner failure is a retryable routing failure, never silently downgraded to `GENERAL_GUIDANCE`; `GENERAL_GUIDANCE` is chosen only when the Planner positively determines it is appropriate, or after one concise clarifying question when genuinely uncertain. The confidence policy governing proceed / clarify / `GENERAL_GUIDANCE` is intentionally not fixed yet - it must come from the routing evaluation set (extending ADR-059's existing 20-40 scenario requirement to also score family-selection accuracy), not an arbitrary constant. `TROUBLESHOOT` selected with no existing Investigation session is backend-owned session creation/reuse; Android must not invent this lifecycle. Glasses/HUD-initiated Analyze remains `TROUBLESHOOT`-only for V1 (no open-ended glasses intent composer exists yet); intelligent routing applies to the phone's single unified entry point only.
+
+**Bounded sequencing (supersedes this milestone's earlier numbered sequencing above where they conflict):**
+
+1. ADR-060 and this documentation update.
+2. Backend planner/router contract (extends `ProjectAIResultPlanner`; no new canonical store).
+3. Routing evaluation set and confidence policy (extends the existing ADR-059 evaluation requirement).
+4. Android unified "Get guidance" flow (replaces the explicit-choice UX).
+5. Automated and instrumented QA, including regression coverage that the existing Investigation/`TROUBLESHOOT` path and the stale-HUD repair remain intact.
+6. One realistic physical Room Redesign acceptance retest.
+7. Checkpoint only after that acceptance succeeds.
+
+Not part of this direction: implementation now; expanding the response family list beyond these three; a universal chat-transcript memory; the Planner mutating Project state; a fixed/guessed confidence threshold; or any change to ADR-059's three response families, `ProjectAIResult` envelope, or trust boundary.
 
 ## Glasses-Native Project Workspace
 
