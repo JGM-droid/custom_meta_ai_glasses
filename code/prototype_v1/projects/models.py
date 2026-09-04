@@ -1437,6 +1437,22 @@ class ProjectAIResultHudProjection(BaseModel):
     uncertainty_flag: bool = False
 
 
+class ProjectTroubleshootTextResult(BaseModel):
+    """ADR-060 Path B: text/context-grounded TROUBLESHOOT execution, used only when no usable
+    Investigation session/evidence exists yet for this request (see
+    ProjectAIResultPlanner._dispatch_troubleshoot). Deliberately NOT session-shaped - no
+    session_id, image_count, or copilot_prompt - this is not, and must never render as, a
+    completed Investigation. Always paired with ProjectAIResult.ephemeral=True: nothing durable
+    was created, so it cannot be reconstructed after a reload the way an evidence-backed
+    troubleshoot (InvestigationDesktopProjection) can."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    diagnosis: str = Field(..., min_length=1, max_length=1000)
+    recommended_next_action: str = Field(..., min_length=1, max_length=280)
+    uncertain: bool
+
+
 class ProjectAIResult(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -1448,20 +1464,41 @@ class ProjectAIResult(BaseModel):
     hud_projection: ProjectAIResultHudProjection
     evidence_refs: list[str] = Field(default_factory=list)
     suggested_project_updates: bool = False
-    # True only for GENERAL_GUIDANCE: this result is not persisted anywhere
-    # and cannot be reconstructed after restart. Clients must not imply
-    # durability (e.g. no "saved to your project" copy, no HUD reference
-    # that survives a reconnect) when this is True.
+    # True for GENERAL_GUIDANCE and text-only TROUBLESHOOT (troubleshoot_text, ADR-060 Path B):
+    # neither is persisted anywhere and neither can be reconstructed after restart. Clients must
+    # not imply durability (e.g. no "saved to your project" copy, no HUD reference that survives
+    # a reconnect) when this is True.
     ephemeral: bool = False
 
     troubleshoot: InvestigationDesktopProjection | None = None
+    # ADR-060 Path B alternative to `troubleshoot` above - set instead of it, never alongside it,
+    # only for TROUBLESHOOT results with no backing Investigation session/evidence.
+    troubleshoot_text: ProjectTroubleshootTextResult | None = None
     explore_plan: ProjectExploreGroupView | None = None
     general_guidance: ProjectGroundedAnswerResponse | None = None
 
     @model_validator(mode="after")
     def _validate_exactly_one_payload_matches_result_type(self) -> "ProjectAIResult":
+        if self.result_type == ProjectAIResultType.TROUBLESHOOT:
+            if (self.troubleshoot is not None) == (self.troubleshoot_text is not None):
+                raise ValueError("TROUBLESHOOT results must set exactly one of troubleshoot or troubleshoot_text.")
+            if self.explore_plan is not None or self.general_guidance is not None:
+                raise ValueError("Only the payload matching result_type may be set.")
+            # Evidence-backed (troubleshoot) is reconstructable via the Investigation session/
+            # result and must not claim to be ephemeral; text-only (troubleshoot_text) creates
+            # nothing durable and must be marked ephemeral so clients never imply it survives a
+            # reconnect.
+            expected_ephemeral = self.troubleshoot_text is not None
+            if self.ephemeral != expected_ephemeral:
+                raise ValueError(
+                    "TROUBLESHOOT ephemeral flag must be True for troubleshoot_text (text-only) "
+                    "and False for troubleshoot (evidence-backed)."
+                )
+            return self
+
+        if self.troubleshoot is not None or self.troubleshoot_text is not None:
+            raise ValueError("Only the payload matching result_type may be set.")
         payload_by_type = {
-            ProjectAIResultType.TROUBLESHOOT: self.troubleshoot,
             ProjectAIResultType.EXPLORE_PLAN: self.explore_plan,
             ProjectAIResultType.GENERAL_GUIDANCE: self.general_guidance,
         }
@@ -1470,8 +1507,75 @@ class ProjectAIResult(BaseModel):
             should_be_present = result_type == self.result_type
             if present != should_be_present:
                 raise ValueError("Exactly one payload field must be set, matching result_type.")
-        if self.result_type == ProjectAIResultType.GENERAL_GUIDANCE and not self.ephemeral:
-            raise ValueError("GENERAL_GUIDANCE results must be marked ephemeral.")
-        if self.result_type != ProjectAIResultType.GENERAL_GUIDANCE and self.ephemeral:
-            raise ValueError("Only GENERAL_GUIDANCE results may be marked ephemeral.")
+        expected_ephemeral = self.result_type == ProjectAIResultType.GENERAL_GUIDANCE
+        if self.ephemeral != expected_ephemeral:
+            raise ValueError("Only GENERAL_GUIDANCE and text-only TROUBLESHOOT results may be marked ephemeral.")
+        return self
+
+
+# --- ADR-060: Bounded Response Planner intent inference (amends ADR-059's dispatch mechanism) ---
+#
+# ProjectAIRoutingRequest/ProjectAIResultRoutingDecision exist only to let the Response Planner
+# infer which of the three existing ProjectAIResultType families answers one natural user request.
+# ProjectAIResultRoutingDecision is never persisted as Project Memory and never returned to a
+# client as its own API response - it is consumed internally by ProjectAIResultPlanner.route() and
+# discarded once dispatch has happened. It carries no canonical-state mutation of any kind.
+
+class ProjectAIRoutingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    user_request: str = Field(..., min_length=1, max_length=1000)
+    # When supplied, TROUBLESHOOT dispatch reuses this session's existing evidence/analysis
+    # pipeline unchanged. When absent and the Planner selects TROUBLESHOOT, the backend owns
+    # finding-or-creating one project-scoped session (see ProjectAIResultPlanner.route) - the
+    # client never has to manufacture this id itself.
+    investigation_session_id: str | None = None
+    idempotency_key: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("user_request")
+    @classmethod
+    def _normalize_user_request(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("user_request is required.")
+        return text
+
+    @field_validator("investigation_session_id")
+    @classmethod
+    def _validate_investigation_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = UUID(text)
+        except ValueError as exc:
+            raise ValueError("investigation_session_id must be a valid UUID.") from exc
+        return str(parsed)
+
+
+class ProjectAIResultRoutingDecision(BaseModel):
+    """The Planner's typed, ephemeral routing decision - see module note above. Exactly one of
+    three approved response families (or none, paired with needs_clarification) - no larger
+    taxonomy, per ADR-059/ADR-060."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    response_family: ProjectAIResultType | None = None
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    brief_reason: str = Field(..., min_length=1, max_length=280)
+    needs_clarification: bool = False
+    clarifying_question: str | None = Field(default=None, max_length=280)
+
+    @model_validator(mode="after")
+    def _validate_family_or_clarification(self) -> "ProjectAIResultRoutingDecision":
+        if self.needs_clarification:
+            if not self.clarifying_question or not self.clarifying_question.strip():
+                raise ValueError("clarifying_question is required when needs_clarification is true.")
+        else:
+            if self.response_family is None:
+                raise ValueError("response_family is required when needs_clarification is false.")
+            if self.clarifying_question is not None:
+                raise ValueError("clarifying_question must be omitted when needs_clarification is false.")
         return self

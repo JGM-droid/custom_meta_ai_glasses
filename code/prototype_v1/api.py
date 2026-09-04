@@ -50,6 +50,7 @@ from investigations import (
     InvestigationSessionStatus,
     InvestigationSessionPollingError,
     InvestigationSessionPollingResponse,
+    InvestigationSessionAnalysisRejected,
     InvestigationSessionAnalyzeRequest,
     InvestigationSessionAnalyzeResponse,
     InvestigationSessionCreateRequest,
@@ -178,12 +179,24 @@ from projects import (
     ProjectProgressResponse,
     ProjectProgressService,
     load_project_explore_model_name,
+    load_project_response_router_model_name,
+    load_project_response_router_timeout_seconds,
+    load_project_text_troubleshoot_model_name,
+    load_project_text_troubleshoot_timeout_seconds,
+    OpenAIProjectResponseRoutingProvider,
+    OpenAIProjectTextTroubleshootProvider,
     ProjectAIResult,
+    ProjectAIResultClarificationNeeded,
     ProjectAIResultError,
     ProjectAIResultExplorePlanNotFound,
     ProjectAIResultPlanner,
+    ProjectAIResultRoutingUnavailable,
     ProjectAIResultTroubleshootNotFound,
+    ProjectAIRoutingRequest,
     ProjectNotFound,
+    ProjectTextTroubleshootError,
+    ProjectTextTroubleshootProviderMissingApiKeyError,
+    ProjectTextTroubleshootService,
     ProjectRevisionConflict,
     ProjectStore,
     ProjectStoreError,
@@ -2965,13 +2978,49 @@ def _create_project_explore_read_service() -> ProjectExploreService:
     )
 
 
-def _create_project_ai_result_planner(*, explore_service: ProjectExploreService | None = None) -> ProjectAIResultPlanner:
+def _create_project_ai_result_planner(
+    *, explore_service: ProjectExploreService | None = None, include_routing: bool = False
+) -> ProjectAIResultPlanner:
+    # include_routing wires route()'s own dependencies (ADR-060) - only the new unified
+    # /ai-results endpoint passes True. The three existing explicit endpoints leave it False, so
+    # their planner construction and error surface are byte-for-byte unchanged.
+    context_retriever = None
+    routing_provider = None
+    analyze_session_fn = None
+    text_troubleshoot_service = None
+    if include_routing:
+        api_key = _load_openai_api_key()
+        if not api_key:
+            raise ProjectAIResultRoutingUnavailable("OPENAI_API_KEY is required for response routing.")
+        context_retriever = _create_project_context_retriever()
+        routing_provider = OpenAIProjectResponseRoutingProvider(
+            api_key=api_key,
+            model=load_project_response_router_model_name(),
+            timeout_seconds=load_project_response_router_timeout_seconds(),
+        )
+        analyze_session_fn = _execute_investigation_session_analysis
+        # ADR-060 Path B: text/context-grounded TROUBLESHOOT execution when no usable
+        # Investigation evidence exists yet. Reuses the SAME context_retriever built above.
+        text_troubleshoot_service = ProjectTextTroubleshootService(
+            context_retriever=context_retriever,
+            provider=OpenAIProjectTextTroubleshootProvider(
+                api_key=api_key,
+                model=load_project_text_troubleshoot_model_name(),
+                timeout_seconds=load_project_text_troubleshoot_timeout_seconds(),
+            ),
+        )
+
     return ProjectAIResultPlanner(
         project_store=PROJECT_STORE,
         explore_service=explore_service if explore_service is not None else _create_project_explore_read_service(),
         qa_service=_create_project_question_answering_service(),
         session_store=SESSION_STORE,
         investigation_store_root=_canonical_investigation_store_root(INVESTIGATION_LATEST_JSON),
+        context_retriever=context_retriever,
+        evidence_store=EVIDENCE_STORE,
+        routing_provider=routing_provider,
+        analyze_session_fn=analyze_session_fn,
+        text_troubleshoot_service=text_troubleshoot_service,
     )
 
 
@@ -3382,6 +3431,64 @@ async def create_project_ai_result_general_guidance(project_id: str, payload: di
         _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
 
 
+# --- ADR-060: Bounded Response Planner intent inference (amends ADR-059's dispatch mechanism) ---
+#
+# One unified entrypoint: the caller no longer names a response family. The Planner infers exactly
+# one of the three families above from a bounded Context Pack and the current request, then
+# dispatches to the SAME existing family logic the explicit endpoints above already use - no new
+# canonical store, no new mutation path. The three explicit endpoints above are unchanged and
+# remain available.
+
+@app.post("/projects/{project_id}/ai-results", response_model=ProjectAIResult)
+async def create_project_ai_result_routed(project_id: str, payload: dict[str, object] | None = None) -> ProjectAIResult:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ProjectAIRoutingRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+
+    try:
+        planner = _create_project_ai_result_planner(explore_service=_create_project_explore_service(), include_routing=True)
+        result = planner.route(normalized_project_id, request)
+        if isinstance(result, ProjectAIResultClarificationNeeded):
+            raise HTTPException(status_code=422, detail={
+                "category": "routing_needs_clarification",
+                "message": result.clarifying_question,
+                "brief_reason": result.brief_reason,
+            })
+        return result
+    except ProjectAIResultRoutingUnavailable as exc:
+        _raise_project_http_error(status_code=503, category="routing_unavailable", message=str(exc) or "Response routing is unavailable.")
+    except ProjectTextTroubleshootProviderMissingApiKeyError:
+        _raise_project_http_error(status_code=503, category="text_troubleshoot_provider_unavailable", message="Text-only troubleshoot provider is unavailable.")
+    except ProjectTextTroubleshootError as exc:
+        _raise_project_http_error(status_code=503, category="text_troubleshoot_unavailable", message=str(exc) or "Text-only troubleshoot execution is unavailable.")
+    except ProjectExploreProviderUnavailable:
+        _raise_project_http_error(status_code=503, category="explore_provider_unavailable", message="Explore provider is unavailable.")
+    except InvestigationSessionAnalysisRejected as exc:
+        _raise_session_http_error(status_code=exc.status_code, category=exc.category, message=exc.message)
+    except InvestigationSessionNotFound:
+        _raise_project_http_error(status_code=404, category="session_not_found", message="Investigation session does not exist for this Project.")
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectExploreForeignReference:
+        _raise_project_http_error(status_code=409, category="foreign_activity_reference", message="input_refs must belong to the target Project.")
+    except ProjectExploreIdempotencyConflict:
+        _raise_project_http_error(status_code=409, category="explore_idempotency_conflict", message="idempotency_key was already used with a different request.")
+    except ProjectExploreRecoveryConflict:
+        _raise_project_http_error(status_code=409, category="explore_recovery_conflict", message="Incomplete Explore options conflict with the validated recovery result.")
+    except ProjectExploreInvalidResult:
+        _raise_project_http_error(status_code=502, category="explore_invalid_result", message="Explore provider returned an invalid structured result; no new suggestions were recorded.")
+    except ProjectReasoningProviderMissingApiKeyError:
+        _raise_project_http_error(status_code=503, category="project_qa_provider_unavailable", message="Project Q&A provider is unavailable.")
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+    except ProjectReasoningError:
+        _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
+    except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationEvidenceStoreError):
+        _raise_project_http_error(status_code=500, category="project_ai_result_unavailable", message="Project AI result routing is unavailable.")
+
+
 @app.post("/projects/{project_id}/activities", response_model=ProjectActivity, status_code=201)
 async def create_project_activity(project_id: str, payload: dict[str, object] | None = None) -> ProjectActivity:
     normalized_project_id = _validate_project_id_or_422(project_id)
@@ -3668,6 +3775,95 @@ async def poll_investigation_session(
         _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
 
 
+def _execute_investigation_session_analysis(
+    session_id: str,
+    expected_revision: int | None,
+) -> InvestigationSessionAnalyzeResponse:
+    """The complete existing analyze pipeline (validation -> evidence -> orchestration ->
+    canonical result), extracted unchanged from the route below so the Response Planner's
+    TROUBLESHOOT dispatch (ADR-060) can reuse it internally rather than duplicating
+    session/evidence/orchestration rules in a second place. Raises
+    InvestigationSessionAnalysisRejected with the exact (status_code, category, message) the
+    route has always mapped to an HTTP error - both callers map it identically."""
+    try:
+        session = SESSION_STORE.load_session(session_id)
+    except InvestigationSessionNotFound:
+        raise InvestigationSessionAnalysisRejected(404, "session_not_found", "Session does not exist.")
+    except InvestigationSessionInvalidId:
+        raise InvestigationSessionAnalysisRejected(422, "invalid_session_id", "session_id must be a valid UUID.")
+    except InvestigationSessionStoreError:
+        raise InvestigationSessionAnalysisRejected(500, "session_storage_error", "Session storage is unavailable.")
+
+    if session.status == InvestigationSessionStatus.CANCELLED:
+        raise InvestigationSessionAnalysisRejected(409, "invalid_state_transition", "Cancelled sessions cannot begin analysis.")
+    if session.status == InvestigationSessionStatus.COMPLETED:
+        _project_completed_investigation_activity(session)
+        return _build_session_analyze_response(session, accepted=True)
+    if session.status in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
+        raise InvestigationSessionAnalysisRejected(409, "analysis_attempt_conflict", "Session analysis is already in progress.")
+    if session.status != InvestigationSessionStatus.COLLECTING:
+        raise InvestigationSessionAnalysisRejected(409, "invalid_state_transition", "Session must be collecting before analysis can begin.")
+
+    if expected_revision is not None and expected_revision != session.revision:
+        raise InvestigationSessionAnalysisRejected(409, "revision_conflict", "expected_revision does not match the current session revision.")
+
+    try:
+        records = EVIDENCE_STORE.list_evidence_for_analysis(session.session_id)
+        ordered_images = _ordered_images_for_session_analysis(session)
+    except InvestigationSessionNotFound:
+        raise InvestigationSessionAnalysisRejected(404, "session_not_found", "Session does not exist.")
+    except InvestigationSessionInvalidId:
+        raise InvestigationSessionAnalysisRejected(422, "invalid_session_id", "session_id must be a valid UUID.")
+    except InvestigationEvidenceStoreError:
+        raise InvestigationSessionAnalysisRejected(500, "evidence_storage_error", "Evidence storage is unavailable.")
+
+    explanation = _normalize_session_explanation(records)
+    if not explanation:
+        raise InvestigationSessionAnalysisRejected(422, "missing_explanation", "A non-empty normalized explanation is required before analysis.")
+
+    interaction_context = _build_session_interaction_context(
+        session=session,
+        ordered_image_evidence=ordered_images,
+        explanation_text=explanation,
+    )
+
+    try:
+        orchestrator = _create_session_orchestrator()
+    except Exception:
+        raise InvestigationSessionAnalysisRejected(500, "orchestration_unavailable", "Analysis orchestration is unavailable.")
+
+    try:
+        orchestrator.run_confirmed_investigation(
+            session_id=session.session_id,
+            expected_revision=expected_revision if expected_revision is not None else session.revision,
+            interaction_context=interaction_context,
+        )
+    except InvestigationOrchestrationError as exc:
+        status_code, category, safe_message, retryable = _map_orchestration_error(exc)
+        _safe_mark_session_failed(
+            session_id=session.session_id,
+            error_category=category,
+            safe_message=safe_message,
+            retryable=retryable,
+        )
+        raise InvestigationSessionAnalysisRejected(status_code, category, safe_message)
+    except Exception:
+        _safe_mark_session_failed(
+            session_id=session.session_id,
+            error_category="unexpected_orchestration_failure",
+            safe_message="Unexpected orchestration failure.",
+            retryable=True,
+        )
+        raise InvestigationSessionAnalysisRejected(500, "unexpected_orchestration_failure", "Unexpected orchestration failure.")
+
+    try:
+        updated = SESSION_STORE.load_session(session.session_id)
+    except InvestigationSessionStoreError:
+        raise InvestigationSessionAnalysisRejected(500, "session_storage_error", "Session storage is unavailable.")
+    _project_completed_investigation_activity(updated)
+    return _build_session_analyze_response(updated, accepted=True)
+
+
 @app.post("/investigation-sessions/{session_id}/analyze", response_model=InvestigationSessionAnalyzeResponse)
 async def analyze_investigation_session(
     session_id: str,
@@ -3684,83 +3880,9 @@ async def analyze_investigation_session(
     analyze_request = _parse_session_analyze_payload(payload)
 
     try:
-        session = SESSION_STORE.load_session(normalized_session_id)
-    except InvestigationSessionNotFound:
-        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
-    except InvestigationSessionInvalidId:
-        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
-    except InvestigationSessionStoreError:
-        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
-
-    if session.status == InvestigationSessionStatus.CANCELLED:
-        _raise_session_http_error(status_code=409, category="invalid_state_transition", message="Cancelled sessions cannot begin analysis.")
-    if session.status == InvestigationSessionStatus.COMPLETED:
-        _project_completed_investigation_activity(session)
-        return _build_session_analyze_response(session, accepted=True)
-    if session.status in {InvestigationSessionStatus.FINALIZING, InvestigationSessionStatus.ANALYZING}:
-        _raise_session_http_error(status_code=409, category="analysis_attempt_conflict", message="Session analysis is already in progress.")
-    if session.status != InvestigationSessionStatus.COLLECTING:
-        _raise_session_http_error(status_code=409, category="invalid_state_transition", message="Session must be collecting before analysis can begin.")
-
-    expected_revision = analyze_request.expected_revision
-    if expected_revision is not None and expected_revision != session.revision:
-        _raise_session_http_error(status_code=409, category="revision_conflict", message="expected_revision does not match the current session revision.")
-
-    try:
-        records = EVIDENCE_STORE.list_evidence_for_analysis(session.session_id)
-        ordered_images = _ordered_images_for_session_analysis(session)
-    except InvestigationSessionNotFound:
-        _raise_session_http_error(status_code=404, category="session_not_found", message="Session does not exist.")
-    except InvestigationSessionInvalidId:
-        _raise_session_http_error(status_code=422, category="invalid_session_id", message="session_id must be a valid UUID.")
-    except InvestigationEvidenceStoreError:
-        _raise_session_http_error(status_code=500, category="evidence_storage_error", message="Evidence storage is unavailable.")
-
-    explanation = _normalize_session_explanation(records)
-    if not explanation:
-        _raise_session_http_error(status_code=422, category="missing_explanation", message="A non-empty normalized explanation is required before analysis.")
-
-    interaction_context = _build_session_interaction_context(
-        session=session,
-        ordered_image_evidence=ordered_images,
-        explanation_text=explanation,
-    )
-
-    try:
-        orchestrator = _create_session_orchestrator()
-    except Exception:
-        _raise_session_http_error(status_code=500, category="orchestration_unavailable", message="Analysis orchestration is unavailable.")
-
-    try:
-        orchestrator.run_confirmed_investigation(
-            session_id=session.session_id,
-            expected_revision=expected_revision if expected_revision is not None else session.revision,
-            interaction_context=interaction_context,
-        )
-    except InvestigationOrchestrationError as exc:
-        status_code, category, safe_message, retryable = _map_orchestration_error(exc)
-        _safe_mark_session_failed(
-            session_id=session.session_id,
-            error_category=category,
-            safe_message=safe_message,
-            retryable=retryable,
-        )
-        _raise_session_http_error(status_code=status_code, category=category, message=safe_message)
-    except Exception:
-        _safe_mark_session_failed(
-            session_id=session.session_id,
-            error_category="unexpected_orchestration_failure",
-            safe_message="Unexpected orchestration failure.",
-            retryable=True,
-        )
-        _raise_session_http_error(status_code=500, category="unexpected_orchestration_failure", message="Unexpected orchestration failure.")
-
-    try:
-        updated = SESSION_STORE.load_session(session.session_id)
-    except InvestigationSessionStoreError:
-        _raise_session_http_error(status_code=500, category="session_storage_error", message="Session storage is unavailable.")
-    _project_completed_investigation_activity(updated)
-    return _build_session_analyze_response(updated, accepted=True)
+        return _execute_investigation_session_analysis(normalized_session_id, analyze_request.expected_revision)
+    except InvestigationSessionAnalysisRejected as exc:
+        _raise_session_http_error(status_code=exc.status_code, category=exc.category, message=exc.message)
 
 
 @app.post("/investigation-sessions/{session_id}/pause", response_model=InvestigationSession)

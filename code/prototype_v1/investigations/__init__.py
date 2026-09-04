@@ -80,6 +80,7 @@ from .interaction_state_machine import (
     new_interaction_context,
 )
 from .session_store import (
+    InvestigationSessionAnalysisRejected,
     InvestigationSessionInvalidId,
     InvestigationSessionNotFound,
     InvestigationSessionStore,
@@ -242,6 +243,7 @@ __all__ = [
     "InvestigationSessionStoreError",
     "InvestigationSessionNotFound",
     "InvestigationSessionInvalidId",
+    "InvestigationSessionAnalysisRejected",
     "InvestigationAnalysisAttemptStore",
     "InvestigationAnalysisAttemptStoreError",
     "InvestigationAnalysisAttemptNotFound",

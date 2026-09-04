@@ -27,6 +27,24 @@ class InvestigationSessionInvalidId(InvestigationSessionStoreError):
     pass
 
 
+class InvestigationSessionAnalysisRejected(RuntimeError):
+    """A typed, non-retryable-vs-retryable-labeled rejection of one analyze attempt.
+
+    Carries the exact (status_code, category, message) the existing
+    `/investigation-sessions/{id}/analyze` route has always mapped to an
+    HTTP error, so the extracted analysis logic in `api.py` can be reused
+    unchanged by both that route and the Response Planner's TROUBLESHOOT
+    dispatch (ADR-060) without duplicating validation/orchestration rules
+    or their HTTP mapping in two places.
+    """
+
+    def __init__(self, status_code: int, category: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.category = category
+        self.message = message
+
+
 T = TypeVar("T")
 
 
