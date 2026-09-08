@@ -16,6 +16,7 @@ from investigations import (
 )
 
 from .assistant_provider import (
+    AssistantCapabilityIntent,
     AssistantContextTurn,
     AssistantImageInput,
     AssistantProvider,
@@ -35,6 +36,7 @@ from .project_conversation import (
     ConversationTextPart,
     ConversationTurn,
     ConversationTurnStatus,
+    ConversationVisualArtifactReferencePart,
     ProjectConversation,
 )
 from .activity_store import ProjectActivityStoreError
@@ -46,6 +48,12 @@ from .project_explore import (
 )
 from .project_store import ProjectStore, ProjectStoreError
 from .models import ProjectExploreRequest
+from .visual_artifacts import (
+    VisualArtifactCreateRequest,
+    VisualArtifactError,
+    VisualArtifactService,
+    VisualArtifactStatus,
+)
 
 
 MAX_PRIOR_CONVERSATION_TURNS = 8
@@ -55,22 +63,33 @@ class ConversationEvidenceUnavailable(RuntimeError):
     pass
 
 
+class VisualArtifactBridgeError(VisualArtifactError):
+    """Phase 3B: bridge-level resolution failure - no recent Explore result in this conversation to
+    visualize, or the requested ordinal does not exist in it. Distinct from VisualArtifactService's
+    own store/provider failures, but deliberately subclasses the same base VisualArtifactError so
+    the conversation endpoint handles both with one categorized HTTP response, exactly like
+    ProjectExploreError's single base-type handling for the Explore bridge."""
+
+
 class AssistantOrchestrator:
     def __init__(self, *, project_store: ProjectStore, conversation_store: ProjectConversationStore,
                  context_retriever: ProjectContextRetriever, provider: AssistantProvider,
                  session_store: InvestigationSessionStore | None = None,
                  evidence_store: InvestigationEvidenceStore | None = None,
-                 explore_service: ProjectExploreService | None = None):
+                 explore_service: ProjectExploreService | None = None,
+                 visual_artifact_service: VisualArtifactService | None = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
         self.provider = provider
         self.session_store = session_store
         self.evidence_store = evidence_store
-        # Phase 3A: reuses the existing Explore capability as-is - never a second, parallel
-        # implementation. None (the default) means Explore intent is never advertised to the
-        # provider and a tool-call can never be produced - see AssistantRequest.allow_explore_intent.
+        # Phase 3A/3B: reuses the existing Explore/VisualArtifact capabilities as-is - never a
+        # second, parallel implementation of either. None (the default) means that capability is
+        # never advertised to the provider and its tool-call can never be produced - see
+        # _allowed_capability_intents.
         self.explore_service = explore_service
+        self.visual_artifact_service = visual_artifact_service
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -149,12 +168,13 @@ class AssistantOrchestrator:
             prior_turns = self._bounded_prior_turns(conversation, before_sequence=user_turn.sequence_number)
             context_pack = self.context_retriever.get_context_for_question(
                 normalized_project_id, request.text)
+            allowed_intents = self._allowed_capability_intents()
             provider_request = AssistantRequest(
                 user_text=request.text,
                 project_context=self._project_context_payload(context_pack),
                 prior_turns=prior_turns,
                 images=image_inputs,
-                allow_explore_intent=self.explore_service is not None,
+                allowed_capability_intents=allowed_intents,
             )
             try:
                 result = self.provider.respond(provider_request)
@@ -167,15 +187,17 @@ class AssistantOrchestrator:
                 )
                 raise
 
-            if result.wants_explore and self.explore_service is None:
+            if (result.capability_intent != AssistantCapabilityIntent.NONE
+                    and result.capability_intent not in allowed_intents):
                 # Provider-boundary contract violation: a conforming AssistantProvider must never
-                # set wants_explore unless allow_explore_intent was true, which this orchestrator
-                # only ever sets when explore_service is configured (see
-                # AssistantRequest.allow_explore_intent's doc). Treated exactly like any other
-                # provider-contract failure - never a silently empty completed turn, never an
-                # Explore execution, never a Project Memory mutation.
+                # return a capability_intent that was not in allowed_capability_intents, which this
+                # orchestrator only ever advertises when the matching service is configured (see
+                # _allowed_capability_intents). Treated exactly like any other provider-contract
+                # failure - never a silently empty completed turn, never a capability execution,
+                # never a Project Memory mutation.
                 exc = AssistantProviderError(
-                    "Assistant provider requested Explore, but Explore is not available for this Project.")
+                    f"Assistant provider requested {result.capability_intent.value}, but that "
+                    "capability is not available for this Project.")
                 self._fail_assistant_turn(
                     conversation, assistant_turn,
                     failure_category="provider_failure",
@@ -184,7 +206,7 @@ class AssistantOrchestrator:
                 )
                 raise exc
 
-            if result.wants_explore:
+            if result.capability_intent == AssistantCapabilityIntent.EXPLORE:
                 try:
                     content_parts = self._run_explore_bridge(
                         normalized_project_id, request, image_inputs)
@@ -194,6 +216,18 @@ class AssistantOrchestrator:
                         failure_category="explore_failure",
                         failure_message=str(exc),
                         user_facing_text="Could not generate ideas right now. Retry this message.",
+                    )
+                    raise
+            elif result.capability_intent == AssistantCapabilityIntent.VISUALIZE_OPTION:
+                try:
+                    content_parts = self._run_visualize_bridge(
+                        normalized_project_id, conversation, user_turn, request, result.visualize_option_ordinal)
+                except VisualArtifactError as exc:
+                    self._fail_assistant_turn(
+                        conversation, assistant_turn,
+                        failure_category="visualize_failure",
+                        failure_message=str(exc),
+                        user_facing_text="Could not create that visualization right now. Retry this message.",
                     )
                     raise
             else:
@@ -215,6 +249,14 @@ class AssistantOrchestrator:
                 turns=[user_turn, completed],
                 reconstructed=False,
             )
+
+    def _allowed_capability_intents(self) -> frozenset[AssistantCapabilityIntent]:
+        intents: set[AssistantCapabilityIntent] = set()
+        if self.explore_service is not None:
+            intents.add(AssistantCapabilityIntent.EXPLORE)
+        if self.visual_artifact_service is not None:
+            intents.add(AssistantCapabilityIntent.VISUALIZE_OPTION)
+        return frozenset(intents)
 
     def _fail_assistant_turn(
         self,
@@ -287,6 +329,61 @@ class AssistantOrchestrator:
             lines.append("")
             lines.append(f"Recommended: option {group.recommended_ordinal} — {group.recommendation_reason}")
         return "\n".join(lines).strip()
+
+    def _run_visualize_bridge(
+        self,
+        project_id: str,
+        conversation: ProjectConversation,
+        user_turn: ConversationTurn,
+        request: ConversationSendRequest,
+        ordinal: int | None,
+    ) -> list[ConversationTextPart | ConversationVisualArtifactReferencePart]:
+        """Phase 3B bridge: reuses the existing VisualArtifact capability exactly as its own direct
+        API caller does (prepare() then generate(), synchronously within this same request - a
+        conversation turn already always resolves to a final COMPLETED/FAILED state within one
+        request/response, so this does not introduce a new PROCESSING-then-poll shape). The option
+        ordinal always comes from the model's own typed tool-call argument, never parsed from
+        assistant prose. The Explore interaction it belongs to is always the most recently
+        referenced one already in THIS conversation's own history, resolved from the application's
+        own typed ConversationExploreReferencePart - never re-derived from prose, and never
+        requiring the user to repeat the interaction id, the photo, or the original description.
+        """
+        if ordinal is None:
+            raise VisualArtifactBridgeError("I couldn't tell which option to visualize.")
+        reference = self._most_recent_explore_reference(conversation, before_sequence=user_turn.sequence_number)
+        if reference is None:
+            raise VisualArtifactBridgeError("There are no recent ideas in this conversation to visualize yet.")
+        projection = self.explore_service.read_projection(project_id)
+        group = next((item for item in projection.option_sets if item.interaction_id == reference.interaction_id), None)
+        if group is None:
+            raise VisualArtifactBridgeError("Those ideas are no longer available.")
+        option = next((item for item in group.options if item.ordinal == ordinal), None)
+        if option is None:
+            raise VisualArtifactBridgeError(f"There's no option {ordinal} in that result.")
+        create_request = VisualArtifactCreateRequest(idempotency_key=request.idempotency_key)
+        artifact = self.visual_artifact_service.prepare(
+            project_id, reference.interaction_id, option.idea.activity_id, create_request)
+        if artifact.status != VisualArtifactStatus.READY:
+            artifact = self.visual_artifact_service.generate(project_id, artifact.artifact_id)
+        return [
+            ConversationTextPart(text=f"Here's a visualization of option {ordinal}."),
+            ConversationVisualArtifactReferencePart(
+                project_ai_result_id=reference.interaction_id,
+                option_id=option.idea.activity_id,
+                artifact_id=artifact.artifact_id,
+            ),
+        ]
+
+    @staticmethod
+    def _most_recent_explore_reference(
+        conversation: ProjectConversation, *, before_sequence: int,
+    ) -> ConversationExploreReferencePart | None:
+        candidates = [item for item in conversation.turns if item.sequence_number < before_sequence]
+        for turn in reversed(candidates):
+            for part in turn.content_parts:
+                if isinstance(part, ConversationExploreReferencePart):
+                    return part
+        return None
 
     def _replace_turn(self, conversation: ProjectConversation, replacement: ConversationTurn) -> None:
         now = datetime.now(timezone.utc)
