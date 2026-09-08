@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import hashlib
 import json
 import os
+from time import perf_counter
 from typing import Literal, Protocol
 from uuid import UUID, uuid5
 
@@ -98,13 +100,27 @@ class ProjectExploreContextPack:
     user_intent: str
     input_activities: tuple[dict[str, object], ...]
     relevant_context: tuple[dict[str, object], ...]
+    evidence_refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProjectExploreImageEvidence:
+    """Ephemeral provider input. Bytes never enter the Context Pack or Project Memory."""
+
+    evidence_id: str
+    media_type: str
+    image_bytes: bytes
 
 
 class ProjectExploreProvider(Protocol):
     def identity(self) -> "ProjectExploreProviderIdentity":
         ...
 
-    def explore(self, context_pack: ProjectExploreContextPack) -> str | dict[str, object]:
+    def explore(
+        self,
+        context_pack: ProjectExploreContextPack,
+        image_evidence: tuple[ProjectExploreImageEvidence, ...] = (),
+    ) -> str | dict[str, object]:
         ...
 
 
@@ -113,6 +129,12 @@ class ProjectExploreProviderIdentity:
     provider: str
     model: str
     tool: str
+
+
+@dataclass(frozen=True)
+class ProjectExploreExecutionMetrics:
+    provider_ms: int
+    reconstructed: bool
 
 
 class _ProjectExploreProviderResponse(BaseModel):
@@ -174,18 +196,38 @@ class OpenAIProjectExploreProvider:
     def identity(self) -> ProjectExploreProviderIdentity:
         return ProjectExploreProviderIdentity(provider="openai", model=self._model, tool="responses.parse")
 
-    def explore(self, context_pack: ProjectExploreContextPack) -> ProjectExploreOptionSet | ProjectExploreInformationRequest:
+    def explore(
+        self,
+        context_pack: ProjectExploreContextPack,
+        image_evidence: tuple[ProjectExploreImageEvidence, ...] = (),
+    ) -> ProjectExploreOptionSet | ProjectExploreInformationRequest:
         if self._client_factory is None:
             raise ProjectExploreProviderUnavailable("OpenAI SDK is unavailable.")
         instructions = (
             "You are a Project-scoped Explore assistant. Return one wrapper with result_type and EXACTLY "
             "one matching payload: option_set for OPTION_SET, or information_request for INFORMATION_REQUEST. "
             "Set the unused payload to null. Never invent Project facts or source "
-            "references; use only supplied source reference activity IDs. Do not prescribe mutations or "
+            "references; use only supplied source-reference Activity IDs or evidence IDs. Do not prescribe mutations or "
             "device actions. An OPTION_SET must contain exactly three distinct, meaningfully different "
             "options (ordinals 1, 2, 3), grounded observations, one recommended option with a reason, and "
             "concrete next steps."
+            " When images are supplied, observations must include 2-3 concise, concrete visible facts; "
+            "distinguish those observed facts from user-stated goals and from inferred recommendations. "
+            "Make options respond to relevant visible room details rather than generic style advice."
         )
+        context_payload = dict(context_pack.__dict__)
+        # Evidence IDs are provenance, while image bytes travel only as separate multimodal
+        # content items below.
+        content: list[dict[str, object]] = [{
+            "type": "input_text",
+            "text": json.dumps({"context_pack": context_payload}, ensure_ascii=False, default=list),
+        }]
+        for evidence in image_evidence:
+            encoded = base64.b64encode(evidence.image_bytes).decode("ascii")
+            content.append({
+                "type": "input_image",
+                "image_url": f"data:{evidence.media_type};base64,{encoded}",
+            })
         client = self._client_factory(api_key=self._api_key)
         try:
             response = client.responses.parse(
@@ -193,10 +235,7 @@ class OpenAIProjectExploreProvider:
                 instructions=instructions,
                 input=[{
                     "role": "user",
-                    "content": [{
-                        "type": "input_text",
-                        "text": json.dumps({"context_pack": context_pack.__dict__}, ensure_ascii=False, default=list),
-                    }],
+                    "content": content,
                 }],
                 text_format=_ProjectExploreProviderResponse,
                 timeout=self._timeout_seconds,
@@ -323,6 +362,7 @@ class ProjectExploreService:
         self.proposal_store = proposal_store
         self.context_retriever = context_retriever
         self.provider = provider
+        self.last_execution_metrics: ProjectExploreExecutionMetrics | None = None
 
     @staticmethod
     def _interaction_id(project_id: str, idempotency_key: str) -> str:
@@ -364,7 +404,12 @@ class ProjectExploreService:
                                 and (a.metadata or {}).get("interaction_id") == interaction_id), None)
         return ideas, result_activity
 
-    def _build_context(self, project_id: str, request: ProjectExploreRequest) -> ProjectExploreContextPack:
+    def _build_context(
+        self,
+        project_id: str,
+        request: ProjectExploreRequest,
+        evidence_refs: tuple[str, ...] = (),
+    ) -> ProjectExploreContextPack:
         try:
             project, explicit, relevant = self.context_retriever.get_explore_context_activities(
                 project_id, request.input_refs, relevant_limit=10
@@ -405,6 +450,7 @@ class ProjectExploreService:
             user_intent=request.user_intent,
             input_activities=tuple(bounded(item) for item in explicit),
             relevant_context=tuple(bounded(item) for item in relevant),
+            evidence_refs=evidence_refs,
         )
 
     @staticmethod
@@ -447,7 +493,13 @@ class ProjectExploreService:
             raise ProjectExploreInvalidResult("Explore provider invented or used a foreign source reference.")
         return result
 
-    def execute(self, project_id: str, request: ProjectExploreRequest) -> ProjectExploreExecutionResponse:
+    def execute(
+        self,
+        project_id: str,
+        request: ProjectExploreRequest,
+        image_evidence: tuple[ProjectExploreImageEvidence, ...] = (),
+    ) -> ProjectExploreExecutionResponse:
+        self.last_execution_metrics = None
         normalized_project_id = self.project_store.validate_project_id(project_id)
         interaction_id = self._interaction_id(normalized_project_id, request.idempotency_key)
         fingerprint = self._request_fingerprint(request)
@@ -463,11 +515,13 @@ class ProjectExploreService:
                 if len(existing_ideas) > 3 or any(not isinstance(item, int) or item not in {1, 2, 3} for item in ordinals) or len(set(ordinals)) != len(ordinals):
                     raise ProjectExploreRecoveryConflict("Incomplete Explore options have invalid projection identities.")
                 if self._is_complete_group(existing_ideas, existing_result):
+                    self.last_execution_metrics = ProjectExploreExecutionMetrics(provider_ms=0, reconstructed=True)
                     group = self._project_group(normalized_project_id, interaction_id, existing_ideas, existing_result)
                     return ProjectExploreExecutionResponse(project_id=normalized_project_id, interaction_id=interaction_id,
                         result_type="OPTION_SET", suggestions_created=True, message="An AI plan with three options is available and remains unconfirmed.", option_set=group)
 
-            context = self._build_context(normalized_project_id, request)
+            evidence_refs = tuple(item.evidence_id for item in image_evidence)
+            context = self._build_context(normalized_project_id, request, evidence_refs)
             if self.provider is None:
                 raise ProjectExploreProviderUnavailable("Explore provider is unavailable.")
             provider_identity = self.provider.identity()
@@ -490,9 +544,21 @@ class ProjectExploreService:
                 )}:
                     raise ProjectExploreRecoveryConflict("Incomplete Explore options were created from a different execution context.")
 
-            allowed_refs = {a["activity_id"] for a in context.input_activities} | {a["activity_id"] for a in context.relevant_context}
-            result = self._parse_result(self.provider.explore(context), allowed_refs)
+            allowed_refs = (
+                {a["activity_id"] for a in context.input_activities}
+                | {a["activity_id"] for a in context.relevant_context}
+                | set(context.evidence_refs)
+            )
+            provider_started = perf_counter()
+            provider_result = (
+                self.provider.explore(context, image_evidence)
+                if image_evidence
+                else self.provider.explore(context)
+            )
+            provider_ms = int((perf_counter() - provider_started) * 1000)
+            result = self._parse_result(provider_result, allowed_refs)
             if isinstance(result, ProjectExploreInformationRequest):
+                self.last_execution_metrics = ProjectExploreExecutionMetrics(provider_ms=provider_ms, reconstructed=False)
                 if existing_ideas or existing_result:
                     raise ProjectExploreRecoveryConflict("Incomplete Explore options could not be recovered from a non-option result.")
                 return ProjectExploreExecutionResponse(project_id=normalized_project_id, interaction_id=None,
@@ -517,7 +583,8 @@ class ProjectExploreService:
                             "context_contract": EXPLORE_CONTEXT_CONTRACT,
                             "context_fingerprint": context_fingerprint,
                             "provider": provider_identity.provider, "provider_model": provider_identity.model,
-                            "provider_tool": provider_identity.tool, "source_refs": refs_csv}
+                            "provider_tool": provider_identity.tool, "source_refs": refs_csv,
+                            "evidence_refs": ",".join(evidence_refs)}
                 if cost_encoded is not None:
                     metadata["estimated_cost"] = cost_encoded
                 request_activity = ProjectActivityCreateRequest(
@@ -537,6 +604,7 @@ class ProjectExploreService:
                 result=result, interaction_id=interaction_id, idempotency_key=request.idempotency_key,
                 fingerprint=fingerprint, context_fingerprint=context_fingerprint,
                 provider_identity=provider_identity, recommended_result_item_id=recommended_result_item_id,
+                evidence_refs=evidence_refs,
             )
             result_activity, result_created = self.activity_store.create_activity_with_id(
                 normalized_project_id, result_activity_id, result_request)
@@ -544,6 +612,7 @@ class ProjectExploreService:
                 raise ProjectExploreRecoveryConflict("Existing Explore result projection conflicts with the validated recovery result.")
 
             complete_ideas, complete_result = self._group_activities(normalized_project_id, interaction_id)
+            self.last_execution_metrics = ProjectExploreExecutionMetrics(provider_ms=provider_ms, reconstructed=False)
             return ProjectExploreExecutionResponse(project_id=normalized_project_id, interaction_id=interaction_id,
                 result_type="OPTION_SET", suggestions_created=True,
                 message="An AI plan with three options was created and remains unconfirmed.",
@@ -570,13 +639,15 @@ class ProjectExploreService:
     def _build_result_activity_request(self, *, result: ProjectExploreOptionSet, interaction_id: str, idempotency_key: str,
                                        fingerprint: str, context_fingerprint: str,
                                        provider_identity: "ProjectExploreProviderIdentity",
-                                       recommended_result_item_id: str) -> ProjectActivityCreateRequest:
+                                       recommended_result_item_id: str,
+                                       evidence_refs: tuple[str, ...] = ()) -> ProjectActivityCreateRequest:
         metadata: dict[str, str | int | float | bool | None] = {
             "interaction_id": interaction_id, "interaction_type": INTERACTION_TYPE,
             "idempotency_key": idempotency_key, "request_fingerprint": fingerprint,
             "context_contract": EXPLORE_CONTEXT_CONTRACT, "context_fingerprint": context_fingerprint,
             "provider": provider_identity.provider, "provider_model": provider_identity.model,
             "provider_tool": provider_identity.tool,
+            "evidence_refs": ",".join(evidence_refs),
             "recommended_ordinal": result.recommended_ordinal,
             "recommended_result_item_id": recommended_result_item_id,
         }

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 import io
+import logging
 from pathlib import Path
 import json
 import os
@@ -17,8 +18,10 @@ import tempfile
 import threading
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+logger = logging.getLogger(__name__)
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -203,6 +206,30 @@ from projects import (
     ProjectSummary,
     to_project_summary,
 )
+from projects.visual_artifacts import (
+    OpenAIVisualArtifactProvider,
+    VisualArtifact,
+    VisualArtifactConflict,
+    VisualArtifactCreateRequest,
+    VisualArtifactError,
+    VisualArtifactNotFound,
+    VisualArtifactProviderError,
+    VisualArtifactService,
+    VisualArtifactStatus,
+    VisualArtifactStore,
+)
+from projects.assistant_orchestrator import AssistantOrchestrator, ConversationEvidenceUnavailable
+from projects.assistant_provider import AssistantProviderError, OpenAIAssistantProvider, UnavailableAssistantProvider
+from projects.conversation_store import (
+    ConversationIdempotencyConflict,
+    ConversationStoreError,
+    ProjectConversationStore,
+)
+from projects.project_conversation import (
+    ConversationReadResponse,
+    ConversationSendRequest,
+    ConversationSendResponse,
+)
 
 try:
     from openai import OpenAI
@@ -287,6 +314,7 @@ def _build_project_store() -> ProjectStore:
 
 
 PROJECT_STORE = _build_project_store()
+PROJECT_CONVERSATION_STORE = ProjectConversationStore(PROJECT_STORE)
 
 
 def _build_project_activity_store() -> ProjectActivityStore:
@@ -301,6 +329,7 @@ def _build_checkpoint_proposal_store() -> CheckpointProposalStore:
 
 
 CHECKPOINT_PROPOSAL_STORE = _build_checkpoint_proposal_store()
+VISUAL_ARTIFACT_STORE = VisualArtifactStore(PROJECT_STORE)
 
 
 def _project_progress_service() -> ProjectProgressService:
@@ -2978,6 +3007,53 @@ def _create_project_explore_read_service() -> ProjectExploreService:
     )
 
 
+def _create_assistant_orchestrator() -> AssistantOrchestrator:
+    api_key = _load_openai_api_key()
+    provider = UnavailableAssistantProvider()
+    if api_key:
+        provider = OpenAIAssistantProvider(
+            api_key=api_key,
+            model=str(os.environ.get("PROJECT_CONVERSATION_OPENAI_MODEL") or load_project_qa_model_name()),
+            timeout_seconds=load_project_qa_timeout_seconds(),
+        )
+    return AssistantOrchestrator(
+        project_store=PROJECT_STORE,
+        conversation_store=PROJECT_CONVERSATION_STORE,
+        context_retriever=_create_project_context_retriever(),
+        provider=provider,
+        session_store=SESSION_STORE,
+        evidence_store=EVIDENCE_STORE,
+    )
+
+
+def _create_visual_artifact_service(*, with_provider: bool) -> VisualArtifactService:
+    provider = None
+    if with_provider:
+        api_key = _load_openai_api_key()
+        if not api_key:
+            raise VisualArtifactProviderError("OPENAI_API_KEY is required for visualization.")
+        provider = OpenAIVisualArtifactProvider(
+            api_key=api_key,
+            model=str(os.environ.get("PROJECT_VISUAL_ARTIFACT_OPENAI_MODEL") or "gpt-image-2"),
+        )
+    return VisualArtifactService(
+        project_store=PROJECT_STORE,
+        explore_service=_create_project_explore_read_service(),
+        session_store=SESSION_STORE,
+        evidence_store=EVIDENCE_STORE,
+        artifact_store=VISUAL_ARTIFACT_STORE,
+        provider=provider,
+    )
+
+
+def _run_visual_artifact_generation(service: VisualArtifactService, project_id: str, artifact_id: str) -> None:
+    try:
+        service.generate(project_id, artifact_id)
+    except VisualArtifactError:
+        # generate() has already persisted FAILED. The client observes it through polling.
+        return
+
+
 def _create_project_ai_result_planner(
     *, explore_service: ProjectExploreService | None = None, include_routing: bool = False
 ) -> ProjectAIResultPlanner:
@@ -3275,7 +3351,19 @@ async def set_project_explore_disposition(project_id: str, idea_activity_id: str
     normalized_activity_id = _validate_activity_id_or_422(idea_activity_id)
     try:
         request = ProjectExploreDispositionRequest.model_validate(payload or {})
-        return _create_project_explore_read_service().disposition(normalized_project_id, normalized_activity_id, request)
+        response = _create_project_explore_read_service().disposition(normalized_project_id, normalized_activity_id, request)
+        if request.disposition.value == "select":
+            try:
+                _create_visual_artifact_service(with_provider=False).retain_selected_option(
+                    normalized_project_id, normalized_activity_id)
+            except VisualArtifactError:
+                logger.warning(
+                    "visual_artifact_retain_after_select_failed project_id=%s option_id=%s",
+                    normalized_project_id,
+                    normalized_activity_id,
+                    exc_info=True,
+                )
+        return response
     except ValidationError as exc:
         _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
     except (ProjectExploreIdeaNotFound, ProjectActivityNotFound):
@@ -3342,6 +3430,73 @@ async def ask_project_question(project_id: str, payload: dict[str, object] | Non
         _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
     except ProjectReasoningError:
         _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
+
+
+# --- ADR-061 Phase 1A: persistent provider-neutral Project conversation ---
+
+@app.post("/projects/{project_id}/conversation", response_model=ConversationReadResponse)
+async def create_or_get_project_conversation(project_id: str) -> ConversationReadResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return _create_assistant_orchestrator().get_or_create(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except AssistantProviderError:
+        _raise_project_http_error(status_code=503, category="conversation_provider_unavailable", message="Conversation provider is unavailable.")
+    except ConversationStoreError:
+        _raise_project_http_error(status_code=500, category="conversation_storage_error", message="Project conversation is unavailable.")
+
+
+@app.get("/projects/{project_id}/conversation", response_model=ConversationReadResponse)
+async def read_project_conversation(project_id: str) -> ConversationReadResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        # V1's single primary conversation is lazily created for a valid Project.
+        return _create_assistant_orchestrator().read(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except AssistantProviderError:
+        _raise_project_http_error(status_code=503, category="conversation_provider_unavailable", message="Conversation provider is unavailable.")
+    except ConversationStoreError:
+        _raise_project_http_error(status_code=500, category="conversation_storage_error", message="Project conversation is unavailable.")
+
+
+@app.get("/projects/{project_id}/conversation/turns", response_model=ConversationReadResponse)
+async def read_project_conversation_turns(project_id: str) -> ConversationReadResponse:
+    return await read_project_conversation(project_id)
+
+
+@app.post("/projects/{project_id}/conversation/messages", response_model=ConversationSendResponse)
+async def send_project_conversation_message(
+    project_id: str, payload: dict[str, object] | None = None,
+) -> ConversationSendResponse:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        request = ConversationSendRequest.model_validate(payload or {})
+    except ValidationError as exc:
+        _raise_project_http_error(
+            status_code=422, category="validation_error",
+            message=str(exc.errors()[0].get("msg", "Invalid request payload.")),
+        )
+    try:
+        return _create_assistant_orchestrator().send(normalized_project_id, request)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ConversationIdempotencyConflict as exc:
+        _raise_project_http_error(status_code=409, category="conversation_idempotency_conflict", message=str(exc))
+    except ConversationEvidenceUnavailable as exc:
+        _raise_project_http_error(status_code=422, category="conversation_evidence_unavailable", message=str(exc))
+    except AssistantProviderError:
+        _raise_project_http_error(
+            status_code=503, category="conversation_provider_unavailable",
+            message="The assistant could not respond. Retry with the same idempotency key.",
+        )
+    except ProjectContextRetrieverError:
+        _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")
+    except ConversationStoreError:
+        _raise_project_http_error(status_code=500, category="conversation_storage_error", message="Project conversation is unavailable.")
+    except ProjectStoreError:
+        _raise_project_http_error(status_code=500, category="project_unavailable", message="Project is unavailable.")
 
 
 # --- Rich Project Intelligence V1 (ADR-059): Response Planner / ProjectAIResult boundary ---
@@ -3487,6 +3642,95 @@ async def create_project_ai_result_routed(project_id: str, payload: dict[str, ob
         _raise_project_http_error(status_code=500, category="project_qa_unavailable", message="Project Q&A is unavailable.")
     except (ProjectStoreError, ProjectActivityStoreError, CheckpointProposalStoreError, InvestigationEvidenceStoreError):
         _raise_project_http_error(status_code=500, category="project_ai_result_unavailable", message="Project AI result routing is unavailable.")
+
+
+_VISUAL_BASE = "/projects/{project_id}/ai-results/explore-plan/{result_id}/options/{option_id}/visual-artifacts"
+
+
+@app.post(_VISUAL_BASE, response_model=VisualArtifact, status_code=202)
+async def create_visual_artifact(project_id: str, result_id: str, option_id: str,
+                                 background_tasks: BackgroundTasks,
+                                 payload: dict[str, object] | None = None) -> VisualArtifact:
+    try:
+        request = VisualArtifactCreateRequest.model_validate(payload or {})
+        service = _create_visual_artifact_service(with_provider=True)
+        artifact = service.prepare(project_id, result_id, option_id, request)
+        if artifact.status != VisualArtifactStatus.READY:
+            background_tasks.add_task(_run_visual_artifact_generation, service, project_id, artifact.artifact_id)
+        return artifact
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Result, option, evidence, or artifact does not exist for this Project.")
+    except VisualArtifactConflict as exc:
+        _raise_project_http_error(status_code=409, category="visual_artifact_conflict", message=str(exc))
+    except VisualArtifactProviderError:
+        _raise_project_http_error(status_code=503, category="visual_artifact_provider_unavailable", message="Visualization provider is unavailable.")
+    except VisualArtifactError:
+        _raise_project_http_error(status_code=500, category="visual_artifact_unavailable", message="Visualization is unavailable.")
+
+
+@app.get(_VISUAL_BASE + "/{artifact_id}", response_model=VisualArtifact)
+async def get_visual_artifact(project_id: str, result_id: str, option_id: str, artifact_id: str) -> VisualArtifact:
+    try:
+        return _create_visual_artifact_service(with_provider=False).read(project_id, result_id, option_id, artifact_id)
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Visualization does not exist for this Project result option.")
+    except VisualArtifactConflict as exc:
+        _raise_project_http_error(status_code=409, category="visual_artifact_conflict", message=str(exc))
+
+
+@app.get(_VISUAL_BASE + "/{artifact_id}/content")
+async def get_visual_artifact_content(project_id: str, result_id: str, option_id: str, artifact_id: str) -> FileResponse:
+    try:
+        service = _create_visual_artifact_service(with_provider=False)
+        service.read(project_id, result_id, option_id, artifact_id)
+        artifact, path = VISUAL_ARTIFACT_STORE.content_path(project_id, artifact_id)
+        return FileResponse(path=path, media_type=artifact.mime_type or "image/webp")
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Visualization content is unavailable.")
+
+
+@app.get(_VISUAL_BASE + "/{artifact_id}/source")
+async def get_visual_artifact_source(project_id: str, result_id: str, option_id: str, artifact_id: str) -> FileResponse:
+    try:
+        evidence, path = _create_visual_artifact_service(with_provider=False).source_content_path(
+            project_id, result_id, option_id, artifact_id)
+        return FileResponse(path=path, media_type=evidence.mime_type)
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Visualization source is unavailable.")
+    except VisualArtifactConflict as exc:
+        _raise_project_http_error(status_code=409, category="visual_artifact_conflict", message=str(exc))
+
+
+@app.post(_VISUAL_BASE + "/{artifact_id}/retry", response_model=VisualArtifact)
+async def retry_visual_artifact(project_id: str, result_id: str, option_id: str, artifact_id: str,
+                                payload: dict[str, object] | None = None) -> VisualArtifact:
+    try:
+        request = VisualArtifactCreateRequest.model_validate(payload or {})
+        service = _create_visual_artifact_service(with_provider=True)
+        service.read(project_id, result_id, option_id, artifact_id)
+        return service.retry(project_id, artifact_id, request.idempotency_key)
+    except ValidationError as exc:
+        _raise_project_http_error(status_code=422, category="validation_error", message=str(exc.errors()[0].get("msg", "Invalid request payload.")))
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Visualization does not exist.")
+    except VisualArtifactConflict as exc:
+        _raise_project_http_error(status_code=409, category="visual_artifact_conflict", message=str(exc))
+    except VisualArtifactProviderError:
+        _raise_project_http_error(status_code=503, category="visual_artifact_provider_unavailable", message="Visualization provider is unavailable.")
+
+
+@app.post(_VISUAL_BASE + "/{artifact_id}/retain", response_model=VisualArtifact)
+async def retain_visual_artifact(project_id: str, result_id: str, option_id: str, artifact_id: str) -> VisualArtifact:
+    try:
+        service = _create_visual_artifact_service(with_provider=False)
+        service.read(project_id, result_id, option_id, artifact_id)
+        return service.retain(project_id, artifact_id)
+    except VisualArtifactNotFound:
+        _raise_project_http_error(status_code=404, category="visual_artifact_not_found", message="Visualization does not exist.")
+    except VisualArtifactConflict as exc:
+        _raise_project_http_error(status_code=409, category="visual_artifact_conflict", message=str(exc))
 
 
 @app.post("/projects/{project_id}/activities", response_model=ProjectActivity, status_code=201)

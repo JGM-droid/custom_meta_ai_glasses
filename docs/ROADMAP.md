@@ -1,5 +1,13 @@
 # Roadmap
 
+## Current / Next — Conversational Project Assistant
+
+**Current: Phase 2 — Android conversation-first UI, PHYSICALLY ACCEPTED on real hardware (2026-09-08).** A user turn may reference up to five existing accepted Project image Evidence records in caller order. Conversation persists typed references only; the orchestrator resolves same-Project Evidence through the existing Investigation stores and sends bytes only for images explicitly attached to the current turn. Text-only follow-ups receive bounded prior text and Project context but do not automatically resend prior image bytes. See "Phase 2 Physical Validation" below for the accepted real-glasses/real-phone loop. Existing ADR-060 guidance, Investigation, Explore, Proposal, VisualArtifact, desktop, and glasses paths remain runnable and unmigrated - this acceptance proves the Phase 2 vertical slice only, not migration/retirement of those paths, and not production readiness, security, or cloud deployment.
+
+**Next: Phase 3 — conversational Explore/Investigation/Proposal capabilities and cards.** Bring the existing response-family capabilities into the conversation surface as internal tools the orchestrator can call, without regaining independent primary-navigation ownership - existing guidance workflows keep running unmigrated until parity is proven.
+
+Locked sequence: Phase 0 architecture authority -> Phase 1A text conversation spine -> Phase 1B multimodal conversation -> Phase 2 Android conversation-first UI -> Phase 3 conversational Explore/Investigation/Proposal capabilities and cards -> Phase 4 VisualArtifact conversation integration -> Phase 5 desktop and glasses shared conversation projection -> Phase 6 retirement of old primary workflow UX only after parity.
+
 ## Completed
 
 - Task Continuity
@@ -82,6 +90,8 @@ Choose seating and finalize furniture placement.
 
 Status: APPROVED ROADMAP, next after the current glasses Investigation + trust UX milestone (see "Physical Validation - 2026-09-03" below). Not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-059 is authoritative; this entry summarizes sequencing. **The dispatch mechanism this entry originally described (explicit user/client choice of response family) is amended by ADR-060 - see "Bounded Response Planner Correction" below.**
 
+**Historical sequencing note:** ADR-061 now supersedes this as the next primary product architecture. The implemented response families and typed results remain reusable compatibility capabilities during the conversational strangler migration.
+
 Problem: the existing Investigation result contract (evidence + context -> hypothesis -> recommended next action) is correct for diagnosis but produces low-value output for design/planning/creative Project tasks - e.g. Room Redesign currently returns generic guidance such as "declutter surfaces, add wall art" instead of reasoned alternatives.
 
 Goal: AI responses appropriate to the Project task, while preserving application-owned Project Memory, explicit trust, Project isolation, and provider-neutral architecture - rich ChatGPT-like intelligence on phone/desktop, concise orientation/execution projection on glasses.
@@ -131,6 +141,8 @@ Not part of this direction: building the feature now; a universal chat transcrip
 
 Status: APPROVED ROADMAP direction only; not implemented by this documentation update. `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-060 is authoritative; this entry summarizes the correction and sequencing.
 
+**Historical sequencing note:** ADR-061 preserves this implemented router as a compatibility component but supersedes it as the target primary interaction model and supersedes its prohibition on persistent Project conversation storage.
+
 **Why this changed:** the physical Room Redesign acceptance test run against the uncommitted Android implementation of the sequencing above surfaced a product/architecture defect in ADR-059's original dispatch rule, not an implementation bug. The natural physical flow (glasses Capture -> Use -> Continue on phone -> add explanation/context -> Analyze) always produced a basic diagnostic `TROUBLESHOOT` "AI suggestion," never the newly built `EXPLORE_PLAN` rich options, because reaching `EXPLORE_PLAN` required the user to notice and tap a separate explicit "Or explore design/planning ideas instead" alternative next to Analyze, or find an independent, always-visible "DESIGN & PLANNING GUIDANCE" composer elsewhere on the same screen. Exposing the response-family choice to the user this way required them to understand internal application architecture (TROUBLESHOOT vs. EXPLORE_PLAN vs. GENERAL_GUIDANCE) that ADR-059 never intended to surface, and it defeated the point of building Rich Project Intelligence in the first place.
 
 **What changes:** response-family selection becomes application-owned bounded intelligent routing instead of explicit user/client dispatch. The user experience becomes one natural conversational action - Project context + current evidence + a natural typed request -> a bounded Response Planner -> the appropriate one of `TROUBLESHOOT` / `EXPLORE_PLAN` / `GENERAL_GUIDANCE` (no larger taxonomy) -> the existing typed result renderer. The primary action's label becomes neutral ("Get guidance," replacing "Analyze investigation" wherever it is the entry point). The explicit "Or explore design/planning ideas instead" button and the separate always-visible "DESIGN & PLANNING GUIDANCE" composer are removed from the intended architecture - there is exactly one natural guidance entry point per Project Interaction. A Project is never permanently typed to one family: the same Project can receive different families for different requests over time (e.g. a Room Redesign Project can still receive `TROUBLESHOOT` for "this drawer won't close").
@@ -150,6 +162,41 @@ Status: APPROVED ROADMAP direction only; not implemented by this documentation u
 7. Checkpoint only after that acceptance succeeds.
 
 Not part of this direction: implementation now; expanding the response family list beyond these three; a universal chat-transcript memory; the Planner mutating Project state; a fixed/guessed confidence threshold; or any change to ADR-059's three response families, `ProjectAIResult` envelope, or trust boundary.
+
+### Persistent Provider-Neutral Project Conversation - ADR-061 (2026-09-04)
+
+Status: **APPROVED TARGET ARCHITECTURE; Phase 0, Phase 1A, and Phase 1B accepted; Phase 2 physically accepted on real hardware 2026-09-08 (see "Phase 2 Physical Validation" below). Phase 3 is next.** `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-061 is authoritative.
+
+The primary product interaction becomes one persistent conversation per Project: `Project -> ProjectConversation -> ConversationTurn -> application-owned Assistant Orchestrator -> bounded application capabilities/tools -> Provider Adapter`. Conversation follows the Project across phone, desktop, and glasses, while Project Memory remains separate canonical truth. Turns use provider-neutral semantic content parts and typed references to authoritative Evidence, Activities, Investigations, VisualArtifacts, Proposals, Decisions, and other Project resources; they do not duplicate those records. Provider-native message/thread/tool formats are never canonical persistence. The model provider provides intelligence; the application provides continuity.
+
+ADR-061 supersedes only ADR-057/Foundation and ADR-059/ADR-060 clauses that rejected persistent conversation storage. It preserves bounded selective retrieval, explicit `project_id`, isolation, provenance, idempotency, application validation, Proposal -> Apply, explicit trust for important state changes, and explicit user gating for expensive image generation. Existing response families remain compatible during migration but become internal capabilities rather than visible user modes: Explore for options, Investigation for evidence-backed diagnosis, and ordinary assistant answering for general guidance.
+
+### Phase 2 Physical Validation - 2026-09-08: ADR-061 Conversation-First Capture Loop
+
+Physically proven on real Meta glasses and a real Android phone:
+
+```text
+Project Conversation
+-> Use Glasses
+-> connect/stream
+-> Capture
+-> real photo preview on phone
+-> Use/Retake available (both glasses HUD and phone)
+-> Use from HUD
+-> phone shows accepted-photo state
+-> Continue to Project
+-> exact photo reaches the same Project Conversation exactly once
+-> voice question
+-> multimodal AI response
+-> glasses return cleanly
+```
+
+This validates the Phase 2 conversation-first vertical slice end to end on real hardware. It does **not** mark production readiness, security review, or cloud deployment readiness, and it does not migrate or retire any existing guidance/Investigation/Explore/VisualArtifact workflow - those remain runnable and unmigrated per the locked sequence above, reachable exactly as before from their own existing (non-conversation) entry points.
+
+**Known post-Phase-2 UX debt (tracked for Phase 3+, not yet implemented):**
+
+- Conversation image history UX: a persisted image turn currently renders only an attachment/count indicator, not an actual thumbnail. A future pass should show a real thumbnail and make it tappable/openable for a larger view.
+- Richer multimodal assistant experience: current visual answers are correct but can be generic. Future conversational responses should draw more on Project context/evidence, and may offer visual inspiration/generated/reference imagery when explicitly requested or clearly appropriate - subject to the existing explicit user-gating/cost policy for image generation (ADR-061 preserves this unchanged; it is not relaxed by this validation).
 
 ## Glasses-Native Project Workspace
 

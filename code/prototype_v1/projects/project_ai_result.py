@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Callable, Protocol
 from uuid import uuid4
 
@@ -14,6 +16,10 @@ except Exception:  # pragma: no cover - optional import fallback
     OpenAI = None  # type: ignore[assignment]
 
 from investigations import (
+    MAX_IMAGE_UPLOAD_BYTES,
+    MAX_INVESTIGATION_IMAGE_COUNT,
+    InvestigationEvidenceType,
+    InvestigationEvidenceValidationStatus,
     InvestigationEvidenceStore,
     InvestigationEvidenceStoreError,
     InvestigationSessionAnalysisRejected,
@@ -42,12 +48,13 @@ from .models import (
     ProjectTroubleshootTextResult,
 )
 from .project_context_retriever import ProjectContextRetriever
-from .project_explore import ProjectExploreService
+from .project_explore import ProjectExploreImageEvidence, ProjectExploreService
 from .project_qa import ProjectQuestionAnsweringService
 from .project_store import ProjectStore
 from .project_troubleshoot import ProjectTextTroubleshootService
 
 
+_LOGGER = logging.getLogger(__name__)
 _MAX_GENERAL_GUIDANCE_HEADLINE_LENGTH = 280
 
 
@@ -337,10 +344,18 @@ class ProjectAIResultPlanner:
     def _compose_explore_plan(self, project_id: str, group: ProjectExploreGroupView) -> ProjectAIResult:
         recommended = next((option for option in group.options if option.recommended), None)
         headline_source = (recommended.idea.summary if recommended else group.title) or "AI plan ready"
-        evidence_refs: list[str] = []
+        source_refs: list[str] = []
+        image_evidence_refs: list[str] = []
         for option in group.options:
             refs_csv = str((option.idea.metadata or {}).get("source_refs") or "")
-            evidence_refs.extend(ref for ref in refs_csv.split(",") if ref)
+            source_refs.extend(ref for ref in refs_csv.split(",") if ref)
+            evidence_csv = str((option.idea.metadata or {}).get("evidence_refs") or "")
+            image_evidence_refs.extend(ref for ref in evidence_csv.split(",") if ref)
+        result_evidence_csv = str((group.result_activity.metadata or {}).get("evidence_refs") or "") if group.result_activity else ""
+        image_evidence_refs.extend(ref for ref in result_evidence_csv.split(",") if ref)
+        # Image-backed unified guidance reports exactly the accepted image IDs supplied to the
+        # provider. Legacy/text-only Explore results retain their existing Activity source refs.
+        unique_evidence_refs = list(dict.fromkeys(image_evidence_refs or source_refs))
         return ProjectAIResult(
             result_id=group.interaction_id,
             project_id=project_id,
@@ -351,7 +366,7 @@ class ProjectAIResultPlanner:
                 next=_truncate(group.next_steps[0], _MAX_GENERAL_GUIDANCE_HEADLINE_LENGTH) if group.next_steps else None,
                 uncertainty_flag=not group.complete,
             ),
-            evidence_refs=sorted(set(evidence_refs)),
+            evidence_refs=unique_evidence_refs,
             suggested_project_updates=bool(group.options and any(option.related_proposals for option in group.options)),
             explore_plan=group,
         )
@@ -431,6 +446,7 @@ class ProjectAIResultPlanner:
         Returns ProjectAIResultClarificationNeeded (not an error) when the Planner is genuinely
         uncertain and asks one concise clarifying question instead of guessing.
         """
+        total_started = perf_counter()
         if self.context_retriever is None or self.routing_provider is None:
             raise ProjectAIResultRoutingUnavailable("Response routing is not configured.")
 
@@ -460,7 +476,9 @@ class ProjectAIResultPlanner:
             user_request=request.user_request,
             session_snapshot=session_snapshot,
         )
+        routing_started = perf_counter()
         decision = self.routing_provider.classify(context_payload)
+        routing_ms = int((perf_counter() - routing_started) * 1000)
 
         if decision.needs_clarification:
             return ProjectAIResultClarificationNeeded(
@@ -470,12 +488,20 @@ class ProjectAIResultPlanner:
             )
 
         if decision.response_family == ProjectAIResultType.EXPLORE_PLAN:
+            image_evidence = self._load_explore_image_evidence(
+                normalized_project_id,
+                request.investigation_session_id,
+            )
             explore_request = ProjectExploreRequest(
                 user_intent=request.user_request,
                 input_refs=[],
                 idempotency_key=request.idempotency_key,
             )
-            response = self.explore_service.execute(normalized_project_id, explore_request)
+            response = self.explore_service.execute(
+                normalized_project_id,
+                explore_request,
+                image_evidence=image_evidence,
+            )
             if response.option_set is None:
                 info = response.information_request
                 return ProjectAIResultClarificationNeeded(
@@ -483,7 +509,20 @@ class ProjectAIResultPlanner:
                     clarifying_question=(info.prompt if info else "More information is needed to suggest design/planning options."),
                     brief_reason="EXPLORE_PLAN needs more information before options can be produced.",
                 )
-            return self._compose_explore_plan(normalized_project_id, response.option_set)
+            result = self._compose_explore_plan(normalized_project_id, response.option_set)
+            metrics = self.explore_service.last_execution_metrics
+            _LOGGER.info(
+                "project_ai_result_timing %s",
+                json.dumps({
+                    "project_id": normalized_project_id,
+                    "result_type": "EXPLORE_PLAN",
+                    "routing_ms": routing_ms,
+                    "explore_provider_ms": metrics.provider_ms if metrics is not None else None,
+                    "total_ms": int((perf_counter() - total_started) * 1000),
+                    "reconstructed": metrics.reconstructed if metrics is not None else False,
+                }, separators=(",", ":"), sort_keys=True),
+            )
+            return result
 
         if decision.response_family == ProjectAIResultType.GENERAL_GUIDANCE:
             return self.create_general_guidance(normalized_project_id, request.user_request)
@@ -492,6 +531,54 @@ class ProjectAIResultPlanner:
             return self._dispatch_troubleshoot(normalized_project_id, request)
 
         raise ProjectAIResultRoutingUnavailable("Response routing selected an unsupported response family.")
+
+    def _load_explore_image_evidence(
+        self,
+        project_id: str,
+        session_id: str | None,
+    ) -> tuple[ProjectExploreImageEvidence, ...]:
+        """Loads only bounded, accepted images from the explicit Project-scoped session.
+
+        The router sees only the session evidence count. Raw bytes are loaded after family
+        selection and travel ephemerally to the Explore provider; they never enter the routing
+        Context Pack or Project Memory.
+        """
+        if session_id is None or self.evidence_store is None:
+            return ()
+        session = self.session_store.load_session_for_project(project_id, session_id)
+        accepted_states = {
+            InvestigationEvidenceValidationStatus.ACCEPTED,
+            InvestigationEvidenceValidationStatus.DUPLICATE_ACCEPTED,
+        }
+        records = [
+            item
+            for item in self.evidence_store.list_evidence_for_analysis(session.session_id)
+            if item.evidence_type == InvestigationEvidenceType.IMAGE
+            and item.validation_status in accepted_states
+        ]
+        records.sort(key=lambda item: (item.sequence_number, item.evidence_id))
+        if len(records) > MAX_INVESTIGATION_IMAGE_COUNT:
+            raise InvestigationEvidenceStoreError("Investigation image evidence exceeds the configured limit.")
+
+        loaded: list[ProjectExploreImageEvidence] = []
+        for item in records:
+            record, payload_path = self.evidence_store.load_evidence_content(
+                session_id=session.session_id,
+                evidence_id=item.evidence_id,
+            )
+            try:
+                size_bytes = payload_path.stat().st_size
+                if size_bytes <= 0 or size_bytes > MAX_IMAGE_UPLOAD_BYTES:
+                    raise InvestigationEvidenceStoreError("Explore image evidence has an invalid size.")
+                image_bytes = payload_path.read_bytes()
+            except OSError as exc:
+                raise InvestigationEvidenceStoreError("Explore image evidence payload is unavailable.") from exc
+            loaded.append(ProjectExploreImageEvidence(
+                evidence_id=record.evidence_id,
+                media_type=record.mime_type,
+                image_bytes=image_bytes,
+            ))
+        return tuple(loaded)
 
     def _dispatch_troubleshoot(self, project_id: str, request: ProjectAIRoutingRequest) -> ProjectAIResult:
         """ADR-060 (2026-09-04 architecture decision): TROUBLESHOOT is a response family, not a

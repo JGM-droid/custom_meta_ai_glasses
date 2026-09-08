@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,12 +27,65 @@ from projects.models import (
     ProjectExploreOptionSet,
 )
 from projects.project_explore import (
+    OpenAIProjectExploreProvider,
+    ProjectExploreContextPack,
+    ProjectExploreImageEvidence,
     ProjectExploreRecoveryConflict,
     _ProjectExploreProviderResponse,
     _response_contains_refusal,
     _decode_estimated_cost,
     _encode_estimated_cost,
 )
+
+
+def test_openai_explore_provider_builds_one_multimodal_request_with_actual_image_content():
+    captured = {}
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_parsed=_ProjectExploreProviderResponse.model_validate({
+                    "result_type": "OPTION_SET",
+                    "option_set": rich_option_set(),
+                    "information_request": None,
+                }),
+            )
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            self.responses = FakeResponses()
+
+    provider = OpenAIProjectExploreProvider(
+        api_key="fake-key",
+        model="fixture-model",
+        client_factory=FakeClient,
+    )
+    context = ProjectExploreContextPack(
+        contract_id="explore_option_generation_v1",
+        project_id="project-1",
+        project_name="Room Redesign",
+        project_goal="Make the room warmer",
+        project_revision=1,
+        checkpoint={},
+        user_intent="Give me ideas for this room.",
+        input_activities=(),
+        relevant_context=(),
+        evidence_refs=("evidence-1", "evidence-2"),
+    )
+    images = (
+        ProjectExploreImageEvidence("evidence-1", "image/jpeg", b"first"),
+        ProjectExploreImageEvidence("evidence-2", "image/png", b"second"),
+    )
+
+    provider.explore(context, images)
+
+    assert set(captured) >= {"model", "instructions", "input", "text_format", "timeout"}
+    content = captured["input"][0]["content"]
+    assert [item["type"] for item in content] == ["input_text", "input_image", "input_image"]
+    assert content[1]["image_url"] == "data:image/jpeg;base64,Zmlyc3Q="
+    assert content[2]["image_url"] == "data:image/png;base64,c2Vjb25k"
+    assert "concrete visible facts" in captured["instructions"]
 
 
 def test_responses_parse_transport_schema_avoids_unsupported_one_of():

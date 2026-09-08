@@ -10,6 +10,8 @@ evaluation script), not by this deterministic suite.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,12 +56,16 @@ class FakeExploreProvider:
     def __init__(self, result=None):
         self.result = result if result is not None else rich_option_set()
         self.calls = 0
+        self.last_context_pack = None
+        self.last_image_evidence = ()
 
     def identity(self):
         return api.ProjectExploreProviderIdentity(provider="fake", model="fixture-v1", tool="test.explore")
 
-    def explore(self, context_pack):
+    def explore(self, context_pack, image_evidence=()):
         self.calls += 1
+        self.last_context_pack = context_pack
+        self.last_image_evidence = image_evidence
         return self.result
 
 
@@ -249,6 +255,112 @@ def test_route_dispatches_to_explore_plan(routing_context):
     }
     assert payload["current_request"] == "What would you change about this room? Give me some ideas."
     assert payload["current_investigation_session"] is None
+    assert ctx["explore_provider"].last_image_evidence == ()
+    assert ctx["explore_provider"].calls == 1
+
+
+def test_route_explore_retry_reconstructs_and_emits_timing_without_second_provider_call(routing_context, caplog):
+    ctx = routing_context
+    project = create_project(ctx["client"])
+    ctx["routing_provider"].decision = ProjectAIResultRoutingDecision(
+        response_family=ProjectAIResultType.EXPLORE_PLAN,
+        confidence=0.9,
+        brief_reason="Design request.",
+    )
+    caplog.set_level(logging.INFO, logger="projects.project_ai_result")
+
+    first = route(ctx["client"], project["project_id"], user_request="Give me room ideas.", idempotency_key="same-key")
+    retry = route(ctx["client"], project["project_id"], user_request="Give me room ideas.", idempotency_key="same-key")
+
+    assert first.status_code == retry.status_code == 200
+    assert first.json()["result_id"] == retry.json()["result_id"]
+    assert ctx["explore_provider"].calls == 1
+    timing_records = [record.message.split("project_ai_result_timing ", 1)[1]
+                      for record in caplog.records if "project_ai_result_timing " in record.message]
+    assert len(timing_records) == 2
+    first_timing, retry_timing = [json.loads(item) for item in timing_records]
+    assert first_timing["reconstructed"] is False
+    assert retry_timing["reconstructed"] is True
+    assert retry_timing["explore_provider_ms"] == 0
+    for timing in (first_timing, retry_timing):
+        assert isinstance(timing["routing_ms"], int)
+        assert isinstance(timing["explore_provider_ms"], int)
+        assert isinstance(timing["total_ms"], int)
+
+
+def test_route_explore_plan_supplies_accepted_images_in_order_and_returns_exact_evidence_refs(routing_context):
+    ctx = routing_context
+    project = create_project(ctx["client"])
+    session_response = ctx["client"].post(
+        f"/projects/{project['project_id']}/investigation-sessions",
+        json={},
+    )
+    session_id = session_response.json()["session_id"]
+    first_id = _upload_image(
+        ctx["client"], session_id, name="first.png", content=b"first-image",
+        normalized_text="Make this room warmer and more modern.",
+    )
+    second_id = _upload_image(
+        ctx["client"], session_id, name="second.png", content=b"second-image",
+    )
+    ctx["routing_provider"].decision = ProjectAIResultRoutingDecision(
+        response_family=ProjectAIResultType.EXPLORE_PLAN,
+        confidence=0.95,
+        brief_reason="Room redesign request with visual evidence.",
+    )
+
+    response = route(
+        ctx["client"], project["project_id"],
+        user_request="Give me ideas for this room.",
+        investigation_session_id=session_id,
+    )
+
+    assert response.status_code == 200
+    supplied = ctx["explore_provider"].last_image_evidence
+    assert [item.evidence_id for item in supplied] == [first_id, second_id]
+    assert [item.image_bytes for item in supplied] == [b"first-image", b"second-image"]
+    assert response.json()["evidence_refs"] == [first_id, second_id]
+    assert ctx["explore_provider"].calls == 1, "one multimodal Explore reasoning call only"
+
+    # Routing receives bounded metadata only: never image bytes, data URLs, or storage refs.
+    routing_payload = ctx["routing_provider"].last_context_payload
+    encoded_routing_payload = repr(routing_payload)
+    assert "first-image" not in encoded_routing_payload
+    assert "second-image" not in encoded_routing_payload
+    assert "base64" not in encoded_routing_payload
+    assert "storage_ref" not in encoded_routing_payload
+    assert routing_payload["current_investigation_session"] == {
+        "status": "collecting",
+        "evidence_count": 2,
+    }
+
+
+def test_route_explore_plan_rejects_explicit_session_from_another_project(routing_context):
+    ctx = routing_context
+    project_a = create_project(ctx["client"], name="Room A")
+    project_b = create_project(ctx["client"], name="Room B")
+    session_response = ctx["client"].post(
+        f"/projects/{project_a['project_id']}/investigation-sessions",
+        json={},
+    )
+    session_id = session_response.json()["session_id"]
+    _upload_image(ctx["client"], session_id, name="foreign.png", content=b"foreign-image")
+    ctx["routing_provider"].decision = ProjectAIResultRoutingDecision(
+        response_family=ProjectAIResultType.EXPLORE_PLAN,
+        confidence=0.95,
+        brief_reason="Design request.",
+    )
+
+    response = route(
+        ctx["client"], project_b["project_id"],
+        user_request="Give me ideas for this room.",
+        investigation_session_id=session_id,
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["category"] == "session_not_found"
+    assert ctx["routing_provider"].calls == 0
+    assert ctx["explore_provider"].calls == 0
 
 
 def test_route_explore_plan_needs_more_information_is_clarification_not_a_fabricated_result(routing_context):

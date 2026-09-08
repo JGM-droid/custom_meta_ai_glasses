@@ -2,7 +2,7 @@
 
 Status: Authoritative design for the approved Project Interaction foundation. No production implementation is authorized by this document.
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 
 Authority: This document refines ADR-052, ADR-054, and ADR-057 in `PROJECT_MEMORY_ARCHITECTURE.md`. If it conflicts with that document, `PROJECT_MEMORY_ARCHITECTURE.md` wins.
 
@@ -37,6 +37,10 @@ Project Interaction is a lightweight application-level orchestration and correla
 - a device-owned state model.
 
 The first implementation reuses the existing Project Store, Activity Store, Idea service, Checkpoint Proposals, Context Pack retrieval, Knowledge/Orientation projections, and Investigation subsystem.
+
+### ADR-061 supersession note
+
+ADR-061 supersedes only this foundation's original rejection of a conversation log/new persisted aggregate. The approved target now has one application-owned primary `ProjectConversation` per Project with ordered provider-neutral `ConversationTurn` records. Conversation is the primary user interaction model, but it is not canonical Project Memory, an Activity replacement, an Investigation replacement, or a universal workflow state machine. Turns reference existing authoritative Project resources instead of copying them. All remaining clauses in this foundation—including explicit Project ownership, bounded Context Packs, typed validation, family-appropriate domain persistence, Project isolation, provenance, and Proposal/Apply trust—remain in force.
 
 ## Minimum Interaction Contract
 
@@ -259,6 +263,8 @@ All remain within the same Project continuity without sharing an artificial univ
 
 ## Project Guidance Engine Boundary
 
+**Superseded primary-model note (ADR-061):** the Guidance Engine/Response Planner and its three response families remain implemented compatibility components and may be reused as internal capabilities during migration, but they are no longer the target primary interaction contract. The target application-owned boundary is `ProjectConversation -> ConversationTurn -> Assistant Orchestrator -> bounded application capabilities -> Provider Adapter`. Investigation becomes a specialized evidence/diagnostic capability, Explore becomes an internal option-generation capability, and ordinary guidance becomes conversational answering. Provider tool requests are never direct mutation authority.
+
 A future Project Guidance Engine selects an interaction type, retrieval contract, provider/tool capability, structured result family, authorized actions, and device projection.
 
 It does not own Project Memory, a universal workflow state machine, Investigation evidence/trust, provider-specific core schemas, device UI state, or automatic Project mutation. Initial routing should be explicit service dispatch, not autonomous intent classification. **Amended by ADR-060** (`PROJECT_MEMORY_ARCHITECTURE.md`): physical Room Redesign acceptance testing showed explicit dispatch pushed response-family choice onto the user and prevented the natural workflow from ever reaching `EXPLORE_PLAN`. Routing is now application-owned bounded intent inference (a Response Planner reading a narrow deterministic Context Pack, never full Project history or a chat transcript) - the Engine's other boundaries in this paragraph (no Project Memory ownership, no workflow state machine, no automatic Project mutation) are unchanged.
@@ -272,6 +278,8 @@ Web research, documentation, products, diagrams, images, and videos remain provi
 Unsaved candidates remain transient. Saved references use existing bounded Activity/provenance mechanisms. Rich media remains at its authoritative source; Project Memory stores references, not a second research/media database.
 
 ## First Implementation Milestone
+
+**Historical sequencing note:** this was the first Project Interaction proof and remains a valid reusable Explore capability contract. ADR-061 supersedes it as the product's next primary implementation milestone; Phase 1A Text Conversation Spine is now next.
 
 The single smallest proof is a backend-first Room Redesign `EXPLORE` interaction:
 
@@ -292,7 +300,7 @@ This milestone is approved as the next proposed proof, not implemented or author
 
 Rejected for the foundation:
 
-- universal Interaction persistence or retained-result store;
+- universal Interaction persistence or retained-result store unrelated to the ADR-061 ProjectConversation; the former rejection of a Project-owned conversation store is superseded by ADR-061;
 - making every interaction an Investigation;
 - Activity as the orchestration engine;
 - rich structured JSON in Activity metadata;
