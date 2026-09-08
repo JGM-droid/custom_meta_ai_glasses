@@ -25,6 +25,7 @@ from .assistant_provider import (
 from .conversation_store import ConversationIdempotencyConflict, ProjectConversationStore
 from .project_context_retriever import ProjectContextRetriever
 from .project_conversation import (
+    ConversationExploreReferencePart,
     ConversationProviderProvenance,
     ConversationEvidenceReferencePart,
     ConversationReadResponse,
@@ -36,7 +37,15 @@ from .project_conversation import (
     ConversationTurnStatus,
     ProjectConversation,
 )
-from .project_store import ProjectStore
+from .activity_store import ProjectActivityStoreError
+from .checkpoint_proposal_store import CheckpointProposalStoreError
+from .project_explore import (
+    ProjectExploreError,
+    ProjectExploreImageEvidence,
+    ProjectExploreService,
+)
+from .project_store import ProjectStore, ProjectStoreError
+from .models import ProjectExploreRequest
 
 
 MAX_PRIOR_CONVERSATION_TURNS = 8
@@ -50,13 +59,18 @@ class AssistantOrchestrator:
     def __init__(self, *, project_store: ProjectStore, conversation_store: ProjectConversationStore,
                  context_retriever: ProjectContextRetriever, provider: AssistantProvider,
                  session_store: InvestigationSessionStore | None = None,
-                 evidence_store: InvestigationEvidenceStore | None = None):
+                 evidence_store: InvestigationEvidenceStore | None = None,
+                 explore_service: ProjectExploreService | None = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
         self.provider = provider
         self.session_store = session_store
         self.evidence_store = evidence_store
+        # Phase 3A: reuses the existing Explore capability as-is - never a second, parallel
+        # implementation. None (the default) means Explore intent is never advertised to the
+        # provider and a tool-call can never be produced - see AssistantRequest.allow_explore_intent.
+        self.explore_service = explore_service
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -140,24 +154,54 @@ class AssistantOrchestrator:
                 project_context=self._project_context_payload(context_pack),
                 prior_turns=prior_turns,
                 images=image_inputs,
+                allow_explore_intent=self.explore_service is not None,
             )
             try:
                 result = self.provider.respond(provider_request)
             except AssistantProviderError as exc:
-                failed = assistant_turn.model_copy(update={
-                    "status": ConversationTurnStatus.FAILED,
-                    "content_parts": [ConversationTextPart(text="The assistant could not respond. Retry this message.")],
-                    "completed_at_utc": datetime.now(timezone.utc),
-                    "provider_provenance": None,
-                    "failure_category": "provider_failure",
-                    "failure_message": str(exc),
-                })
-                self._replace_turn(conversation, failed)
+                self._fail_assistant_turn(
+                    conversation, assistant_turn,
+                    failure_category="provider_failure",
+                    failure_message=str(exc),
+                    user_facing_text="The assistant could not respond. Retry this message.",
+                )
                 raise
+
+            if result.wants_explore and self.explore_service is None:
+                # Provider-boundary contract violation: a conforming AssistantProvider must never
+                # set wants_explore unless allow_explore_intent was true, which this orchestrator
+                # only ever sets when explore_service is configured (see
+                # AssistantRequest.allow_explore_intent's doc). Treated exactly like any other
+                # provider-contract failure - never a silently empty completed turn, never an
+                # Explore execution, never a Project Memory mutation.
+                exc = AssistantProviderError(
+                    "Assistant provider requested Explore, but Explore is not available for this Project.")
+                self._fail_assistant_turn(
+                    conversation, assistant_turn,
+                    failure_category="provider_failure",
+                    failure_message=str(exc),
+                    user_facing_text="The assistant could not respond. Retry this message.",
+                )
+                raise exc
+
+            if result.wants_explore:
+                try:
+                    content_parts = self._run_explore_bridge(
+                        normalized_project_id, request, image_inputs)
+                except ProjectExploreError as exc:
+                    self._fail_assistant_turn(
+                        conversation, assistant_turn,
+                        failure_category="explore_failure",
+                        failure_message=str(exc),
+                        user_facing_text="Could not generate ideas right now. Retry this message.",
+                    )
+                    raise
+            else:
+                content_parts = [ConversationTextPart(text=result.text)]
 
             completed = assistant_turn.model_copy(update={
                 "status": ConversationTurnStatus.COMPLETED,
-                "content_parts": [ConversationTextPart(text=result.text)],
+                "content_parts": content_parts,
                 "completed_at_utc": datetime.now(timezone.utc),
                 "provider_provenance": ConversationProviderProvenance(
                     provider=result.provider, model=result.model, request_id=result.request_id),
@@ -171,6 +215,78 @@ class AssistantOrchestrator:
                 turns=[user_turn, completed],
                 reconstructed=False,
             )
+
+    def _fail_assistant_turn(
+        self,
+        conversation: ProjectConversation,
+        assistant_turn: ConversationTurn,
+        *,
+        failure_category: str,
+        failure_message: str,
+        user_facing_text: str,
+    ) -> None:
+        """Shared FAILED-turn persistence for every send() failure path (provider failure,
+        provider-contract violation, Explore failure) - the caller always re-raises immediately
+        after this returns, so this method's only job is to leave the conversation in the correct,
+        already-established failure shape."""
+        failed = assistant_turn.model_copy(update={
+            "status": ConversationTurnStatus.FAILED,
+            "content_parts": [ConversationTextPart(text=user_facing_text)],
+            "completed_at_utc": datetime.now(timezone.utc),
+            "provider_provenance": None,
+            "failure_category": failure_category,
+            "failure_message": failure_message,
+        })
+        self._replace_turn(conversation, failed)
+
+    def _run_explore_bridge(
+        self,
+        project_id: str,
+        request: ConversationSendRequest,
+        image_inputs: tuple[AssistantImageInput, ...],
+    ) -> list[ConversationTextPart | ConversationExploreReferencePart]:
+        """Phase 3A bridge: reuses the existing Explore capability exactly as its own direct API
+        caller does - same request type, same idempotent execute(), same INFERRED-only Activity
+        writes (no canonical Project Memory mutation from generation alone). user_intent is always
+        the conversation's own verbatim text, never a model-restated phrase, so a retry with the
+        same idempotency_key produces the same ProjectExploreRequest fingerprint and reconstructs
+        instead of conflicting or duplicating. image_inputs is the SAME evidence this method's
+        caller already resolved for the plain conversation path - never a second evidence lookup.
+        """
+        explore_request = ProjectExploreRequest(
+            user_intent=request.text,
+            input_refs=[],
+            idempotency_key=request.idempotency_key,
+        )
+        explore_image_evidence = tuple(
+            ProjectExploreImageEvidence(
+                evidence_id=item.evidence_id, media_type=item.media_type, image_bytes=item.image_bytes)
+            for item in image_inputs
+        )
+        response = self.explore_service.execute(project_id, explore_request, image_evidence=explore_image_evidence)
+        if response.option_set is None:
+            info = response.information_request
+            prompt = info.prompt if info else "Could you say a bit more about what you'd like ideas for?"
+            return [ConversationTextPart(text=prompt)]
+        return [
+            ConversationTextPart(text=self._format_explore_reply(response.option_set)),
+            ConversationExploreReferencePart(interaction_id=response.interaction_id),
+        ]
+
+    @staticmethod
+    def _format_explore_reply(group) -> str:
+        lines: list[str] = []
+        if group.summary:
+            lines.append(group.summary)
+            lines.append("")
+        for option in group.options:
+            title = option.idea.summary
+            blurb = f" — {option.summary}" if option.summary else ""
+            lines.append(f"{option.ordinal}. {title}{blurb}")
+        if group.recommended_ordinal and group.recommendation_reason:
+            lines.append("")
+            lines.append(f"Recommended: option {group.recommended_ordinal} — {group.recommendation_reason}")
+        return "\n".join(lines).strip()
 
     def _replace_turn(self, conversation: ProjectConversation, replacement: ConversationTurn) -> None:
         now = datetime.now(timezone.utc)

@@ -4,7 +4,9 @@
 
 **Current: Phase 2 — Android conversation-first UI, PHYSICALLY ACCEPTED on real hardware (2026-09-08).** A user turn may reference up to five existing accepted Project image Evidence records in caller order. Conversation persists typed references only; the orchestrator resolves same-Project Evidence through the existing Investigation stores and sends bytes only for images explicitly attached to the current turn. Text-only follow-ups receive bounded prior text and Project context but do not automatically resend prior image bytes. See "Phase 2 Physical Validation" below for the accepted real-glasses/real-phone loop. Existing ADR-060 guidance, Investigation, Explore, Proposal, VisualArtifact, desktop, and glasses paths remain runnable and unmigrated - this acceptance proves the Phase 2 vertical slice only, not migration/retirement of those paths, and not production readiness, security, or cloud deployment.
 
-**Next: Phase 3 — conversational Explore/Investigation/Proposal capabilities and cards.** Bring the existing response-family capabilities into the conversation surface as internal tools the orchestrator can call, without regaining independent primary-navigation ownership - existing guidance workflows keep running unmigrated until parity is proven.
+**Phase 3A — conversational Explore + persistent conversation image thumbnails, PHYSICALLY VALIDATED on real hardware (2026-09-08).** The first slice of Phase 3 is complete: the existing Explore capability (ideas/options) is now reachable as an in-conversation intent via the orchestrator's own native provider tool-calling, with a genuine Explore failure ending the assistant turn cleanly as FAILED rather than a silent empty turn or a raw leaked provider exception. Separately, persistent conversation image turns (both phone-attached and accepted-glasses Evidence) now render an actual tappable thumbnail with a full-screen viewer, sourced on demand from the same canonical Evidence content the legacy Investigation panel already reads - the conversation still only stores the Evidence reference, never image bytes - so the image survives conversation reload, app relaunch, and reopening the Project later. See "Phase 3A Physical Validation" below.
+
+**Next: Phase 3B — VisualArtifact integrated into ProjectConversation.** The natural follow-up observed after Explore options appear in conversation is a request like "I like option 3. Show me what that would look like in my room." - this connects the already-existing VisualArtifact generation capability to the conversation surface, following the same "conversation references, capability owns" pattern already used for Explore and Evidence. Investigation integration into conversation remains a separate, not-yet-started later slice of Phase 3.
 
 Locked sequence: Phase 0 architecture authority -> Phase 1A text conversation spine -> Phase 1B multimodal conversation -> Phase 2 Android conversation-first UI -> Phase 3 conversational Explore/Investigation/Proposal capabilities and cards -> Phase 4 VisualArtifact conversation integration -> Phase 5 desktop and glasses shared conversation projection -> Phase 6 retirement of old primary workflow UX only after parity.
 
@@ -165,7 +167,7 @@ Not part of this direction: implementation now; expanding the response family li
 
 ### Persistent Provider-Neutral Project Conversation - ADR-061 (2026-09-04)
 
-Status: **APPROVED TARGET ARCHITECTURE; Phase 0, Phase 1A, and Phase 1B accepted; Phase 2 physically accepted on real hardware 2026-09-08 (see "Phase 2 Physical Validation" below). Phase 3 is next.** `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-061 is authoritative.
+Status: **APPROVED TARGET ARCHITECTURE; Phase 0, Phase 1A, and Phase 1B accepted; Phase 2 physically accepted on real hardware 2026-09-08 (see "Phase 2 Physical Validation" below); Phase 3A (conversational Explore + persistent image thumbnails) physically validated on real hardware 2026-09-08 (see "Phase 3A Physical Validation" below). Phase 3B (VisualArtifact conversation integration) is next.** `docs/PROJECT_MEMORY_ARCHITECTURE.md` ADR-061 is authoritative.
 
 The primary product interaction becomes one persistent conversation per Project: `Project -> ProjectConversation -> ConversationTurn -> application-owned Assistant Orchestrator -> bounded application capabilities/tools -> Provider Adapter`. Conversation follows the Project across phone, desktop, and glasses, while Project Memory remains separate canonical truth. Turns use provider-neutral semantic content parts and typed references to authoritative Evidence, Activities, Investigations, VisualArtifacts, Proposals, Decisions, and other Project resources; they do not duplicate those records. Provider-native message/thread/tool formats are never canonical persistence. The model provider provides intelligence; the application provides continuity.
 
@@ -195,8 +197,31 @@ This validates the Phase 2 conversation-first vertical slice end to end on real 
 
 **Known post-Phase-2 UX debt (tracked for Phase 3+, not yet implemented):**
 
-- Conversation image history UX: a persisted image turn currently renders only an attachment/count indicator, not an actual thumbnail. A future pass should show a real thumbnail and make it tappable/openable for a larger view.
+- ~~Conversation image history UX: a persisted image turn currently renders only an attachment/count indicator, not an actual thumbnail.~~ Resolved in Phase 3A - see "Phase 3A Physical Validation" below.
 - Richer multimodal assistant experience: current visual answers are correct but can be generic. Future conversational responses should draw more on Project context/evidence, and may offer visual inspiration/generated/reference imagery when explicitly requested or clearly appropriate - subject to the existing explicit user-gating/cost policy for image generation (ADR-061 preserves this unchanged; it is not relaxed by this validation).
+
+### Phase 3A Physical Validation - 2026-09-08: Conversational Explore + Persistent Image Thumbnails
+
+Physically proven on the same real Project Conversation used for Phase 2 acceptance:
+
+```text
+Project Conversation
+-> natural request for design ideas (no explicit mode/screen choice)
+-> orchestrator's native tool-calling routes the turn to the existing Explore capability
+-> Explore options returned in-conversation
+-> user reaction to a specific option, in the same conversation
+-> previously captured source photo re-opened from conversation history
+-> renders as an actual tappable thumbnail (not a text/count placeholder)
+-> tap opens a full-screen viewer
+-> Back returns to the same, unaffected conversation
+```
+
+Two closeout fixes landed alongside this validation, both preserving existing architecture rather than changing it:
+
+- **Explore failure handling**: the conversation send endpoint previously had no explicit mapping for a genuine Explore-execution failure (`ProjectExploreError`), which would have surfaced as an unhandled 500. It now maps to a clean, categorized `503 conversation_explore_unavailable` response; the underlying assistant turn was already left cleanly FAILED (never an empty COMPLETED turn, never a duplicate Explore execution, never a Project Memory mutation) by the existing Assistant Orchestrator failure path - this closes the gap between that internal state and the HTTP response the client actually sees.
+- **Persistent image thumbnails**: conversation turns still only ever store a typed reference to canonical Evidence (`PROJECT_RESOURCE_REFERENCE`); no second image store, no Bitmap/byte copy into conversation persistence, and no dependency on the transient in-memory capture Bitmap. Android resolves that reference to real image bytes on demand, through the same Project-isolated Evidence content route the legacy Investigation panel already used, and renders it with a lightweight session-lifetime rendering cache. This is why the image survives conversation reload, app relaunch, and reopening the Project later - it was never conversation-owned to begin with.
+
+This validates the Phase 3A vertical slice end to end. It does **not** mark production readiness, security review, or cloud deployment readiness, and it does not start VisualArtifact or Investigation conversation integration - those remain the next, not-yet-started Phase 3B/3C slices.
 
 ## Glasses-Native Project Workspace
 

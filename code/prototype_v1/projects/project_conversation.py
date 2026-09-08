@@ -53,8 +53,34 @@ class ConversationEvidenceReferencePart(BaseModel):
             raise ValueError("Evidence reference identity fields must be valid UUIDs.") from exc
 
 
+class ConversationExploreReferencePart(BaseModel):
+    """Phase 3A: provider-neutral pointer to a canonical Explore interaction (the existing
+    ProjectExploreService's own idempotency-derived interaction_id) - never contains provider-native
+    structures or a duplicated copy of the options/result. The interaction_id is the single source
+    of truth, already fetchable via the existing Explore endpoints
+    (GET /projects/{project_id}/ai-results/explore-plan/{interaction_id} or read_projection). Kept
+    deliberately separate from ConversationEvidenceReferencePart rather than widening its Literals:
+    an Explore interaction has no Investigation session container and is not "Evidence", and the
+    existing assistant-turns-cannot-attach-Evidence invariant below must not need a resource_kind
+    exception carved into it.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    type: Literal["EXPLORE_REFERENCE"] = "EXPLORE_REFERENCE"
+    interaction_id: str
+
+    @field_validator("interaction_id")
+    @classmethod
+    def _validate_uuid(cls, value: str) -> str:
+        try:
+            return str(UUID(str(value)))
+        except ValueError as exc:
+            raise ValueError("interaction_id must be a valid UUID.") from exc
+
+
 ConversationContentPart = Annotated[
-    Union[ConversationTextPart, ConversationEvidenceReferencePart],
+    Union[ConversationTextPart, ConversationEvidenceReferencePart, ConversationExploreReferencePart],
     Field(discriminator="type"),
 ]
 
@@ -114,6 +140,7 @@ class ConversationTurn(BaseModel):
             raise ValueError("User turns cannot have provider provenance.")
         text_parts = [item for item in self.content_parts if isinstance(item, ConversationTextPart)]
         evidence_parts = [item for item in self.content_parts if isinstance(item, ConversationEvidenceReferencePart)]
+        explore_parts = [item for item in self.content_parts if isinstance(item, ConversationExploreReferencePart)]
         if len(text_parts) != 1:
             raise ValueError("Phase 1B conversation turns require exactly one text part.")
         if self.role == ConversationRole.ASSISTANT and evidence_parts:
@@ -122,6 +149,10 @@ class ConversationTurn(BaseModel):
             raise ValueError("Too many Evidence references.")
         if len({(item.container_id, item.resource_id) for item in evidence_parts}) != len(evidence_parts):
             raise ValueError("Duplicate Evidence references are not allowed.")
+        if self.role == ConversationRole.USER and explore_parts:
+            raise ValueError("Only assistant turns may reference an Explore interaction.")
+        if len(explore_parts) > 1:
+            raise ValueError("A turn may reference at most one Explore interaction.")
         return self
 
 

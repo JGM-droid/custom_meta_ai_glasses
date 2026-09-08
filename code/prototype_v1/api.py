@@ -164,6 +164,7 @@ from projects import (
     OpenAIProjectExploreProvider,
     ProjectExploreDispositionRequest,
     ProjectExploreDispositionResponse,
+    ProjectExploreError,
     ProjectExploreExecutionResponse,
     ProjectExploreForeignReference,
     ProjectExploreIdeaNotFound,
@@ -3010,12 +3011,18 @@ def _create_project_explore_read_service() -> ProjectExploreService:
 def _create_assistant_orchestrator() -> AssistantOrchestrator:
     api_key = _load_openai_api_key()
     provider = UnavailableAssistantProvider()
+    # Phase 3A: reuses the existing Explore capability/provider construction verbatim
+    # (_create_project_explore_service) - never a second Explore implementation. None when no API
+    # key is configured, exactly like the plain conversation provider itself degrades - Explore
+    # intent is then never advertised to the model at all (see AssistantOrchestrator.send).
+    explore_service: ProjectExploreService | None = None
     if api_key:
         provider = OpenAIAssistantProvider(
             api_key=api_key,
             model=str(os.environ.get("PROJECT_CONVERSATION_OPENAI_MODEL") or load_project_qa_model_name()),
             timeout_seconds=load_project_qa_timeout_seconds(),
         )
+        explore_service = _create_project_explore_service()
     return AssistantOrchestrator(
         project_store=PROJECT_STORE,
         conversation_store=PROJECT_CONVERSATION_STORE,
@@ -3023,6 +3030,7 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         provider=provider,
         session_store=SESSION_STORE,
         evidence_store=EVIDENCE_STORE,
+        explore_service=explore_service,
     )
 
 
@@ -3490,6 +3498,18 @@ async def send_project_conversation_message(
         _raise_project_http_error(
             status_code=503, category="conversation_provider_unavailable",
             message="The assistant could not respond. Retry with the same idempotency key.",
+        )
+    except ProjectExploreError:
+        # The conversation's own Explore bridge (AssistantOrchestrator._run_explore_bridge) already
+        # marks the assistant turn FAILED with failure_category="explore_failure" and re-raises the
+        # real ProjectExploreError subtype before this is reached - this only maps that same
+        # already-categorized failure to a clean HTTP response, never exposing the raw internal
+        # exception (idempotency conflict / recovery conflict / invalid result / provider
+        # unavailable - all covered by the one base type here, matching the FAILED turn's own single
+        # explore_failure category rather than reintroducing each subtype's own status code).
+        _raise_project_http_error(
+            status_code=503, category="conversation_explore_unavailable",
+            message="Could not generate ideas right now. Retry with the same idempotency key.",
         )
     except ProjectContextRetrieverError:
         _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")

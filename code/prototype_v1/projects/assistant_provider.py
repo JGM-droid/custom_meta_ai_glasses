@@ -29,6 +29,10 @@ class AssistantRequest:
     project_context: dict[str, object]
     prior_turns: tuple[AssistantContextTurn, ...]
     images: tuple[AssistantImageInput, ...] = ()
+    # Phase 3A: only true when the caller has a real Explore capability wired in (see
+    # AssistantOrchestrator._create_assistant_orchestrator's explore_service). The provider must
+    # never advertise a tool the orchestrator cannot actually fulfill.
+    allow_explore_intent: bool = False
 
 
 @dataclass(frozen=True)
@@ -37,6 +41,29 @@ class AssistantResponse:
     provider: str
     model: str
     request_id: str | None = None
+    # Phase 3A: true when the model itself judged (via the SAME chat.completions call, native
+    # OpenAI tool-calling - never a second classification call and never keyword matching) that the
+    # user is asking for creative options/ideas rather than an ordinary question. The tool carries
+    # no arguments - the orchestrator always uses the conversation's own verbatim user_text as the
+    # Explore intent, never a model-restated paraphrase, so idempotent retries stay stable even
+    # though this flag comes from a fresh (non-deterministic-in-principle) model call each time.
+    wants_explore: bool = False
+
+
+_PROPOSE_IDEAS_TOOL_NAME = "propose_project_ideas"
+_PROPOSE_IDEAS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": _PROPOSE_IDEAS_TOOL_NAME,
+        "description": (
+            "Call this when the user is asking for creative options, alternatives, or ideas about "
+            "their Project - for example choosing a replacement, redesigning something, comparing "
+            "approaches, or brainstorming what to do next. Do not call this for ordinary questions, "
+            "status updates, or requests that do not need a set of alternative ideas."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
 
 
 class AssistantProvider(Protocol):
@@ -92,11 +119,11 @@ class OpenAIAssistantProvider:
                     "type": "image_url",
                     "image_url": {"url": f"data:{image.media_type};base64,{encoded}"},
                 })
-            response = self._client_factory(api_key=self._api_key).chat.completions.create(
-                model=self._model,
-                temperature=0.0,
-                timeout=self._timeout_seconds,
-                messages=[
+            create_kwargs: dict[str, object] = {
+                "model": self._model,
+                "temperature": 0.0,
+                "timeout": self._timeout_seconds,
+                "messages": [
                     {
                         "role": "system",
                         "content": (
@@ -106,15 +133,29 @@ class OpenAIAssistantProvider:
                     },
                     {"role": "user", "content": current_content},
                 ],
+            }
+            if request.allow_explore_intent:
+                create_kwargs["tools"] = [_PROPOSE_IDEAS_TOOL]
+            response = self._client_factory(api_key=self._api_key).chat.completions.create(**create_kwargs)
+            message = response.choices[0].message
+            request_id = str(getattr(response, "id", "") or "") or None
+            tool_calls = getattr(message, "tool_calls", None) or []
+            wants_explore = any(
+                getattr(getattr(call, "function", None), "name", None) == _PROPOSE_IDEAS_TOOL_NAME
+                for call in tool_calls
             )
-            text = str(response.choices[0].message.content or "").strip()
+            if wants_explore:
+                return AssistantResponse(
+                    text="", provider="openai", model=self._model, request_id=request_id, wants_explore=True,
+                )
+            text = str(message.content or "").strip()
             if not text:
                 raise ValueError("missing assistant text")
             return AssistantResponse(
                 text=text,
                 provider="openai",
                 model=self._model,
-                request_id=str(getattr(response, "id", "") or "") or None,
+                request_id=request_id,
             )
         except Exception as exc:
             if isinstance(exc, AssistantProviderError):
