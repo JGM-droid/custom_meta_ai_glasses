@@ -219,7 +219,11 @@ from projects.visual_artifacts import (
     VisualArtifactStatus,
     VisualArtifactStore,
 )
-from projects.assistant_orchestrator import AssistantOrchestrator, ConversationEvidenceUnavailable
+from projects.assistant_orchestrator import (
+    AssistantOrchestrator,
+    ConversationEvidenceUnavailable,
+    ConversationInvestigationError,
+)
 from projects.assistant_provider import AssistantProviderError, OpenAIAssistantProvider, UnavailableAssistantProvider
 from projects.conversation_store import (
     ConversationIdempotencyConflict,
@@ -3011,13 +3015,15 @@ def _create_project_explore_read_service() -> ProjectExploreService:
 def _create_assistant_orchestrator() -> AssistantOrchestrator:
     api_key = _load_openai_api_key()
     provider = UnavailableAssistantProvider()
-    # Phase 3A/3B: reuses the existing Explore/VisualArtifact capability/provider construction
-    # verbatim (_create_project_explore_service / _create_visual_artifact_service) - never a second
-    # implementation of either. Both None when no API key is configured, exactly like the plain
-    # conversation provider itself degrades - neither capability is then advertised to the model at
-    # all (see AssistantOrchestrator.send / _allowed_capability_intents).
+    # Phase 3A/3B/3C: reuses the existing Explore/VisualArtifact/Investigation capability/provider
+    # construction verbatim (_create_project_explore_service / _create_visual_artifact_service /
+    # _create_project_ai_result_planner) - never a second implementation of any of them. All None
+    # when no API key is configured, exactly like the plain conversation provider itself degrades -
+    # no capability is then advertised to the model at all (see AssistantOrchestrator.send /
+    # _allowed_capability_intents).
     explore_service: ProjectExploreService | None = None
     visual_artifact_service: VisualArtifactService | None = None
+    ai_result_planner: ProjectAIResultPlanner | None = None
     if api_key:
         provider = OpenAIAssistantProvider(
             api_key=api_key,
@@ -3026,6 +3032,12 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         )
         explore_service = _create_project_explore_service()
         visual_artifact_service = _create_visual_artifact_service(with_provider=True)
+        # include_routing=True wires analyze_session_fn/text_troubleshoot_service (what the
+        # conversation bridge actually calls, via dispatch_troubleshoot_for_conversation) - it also
+        # builds route()'s own OpenAIProjectResponseRoutingProvider, which the conversation bridge
+        # never calls (no second routing/classification model call is made from here); that object
+        # is inert construction only, never invoked, so this carries no extra behavior or cost.
+        ai_result_planner = _create_project_ai_result_planner(explore_service=explore_service, include_routing=True)
     return AssistantOrchestrator(
         project_store=PROJECT_STORE,
         conversation_store=PROJECT_CONVERSATION_STORE,
@@ -3035,6 +3047,7 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         evidence_store=EVIDENCE_STORE,
         explore_service=explore_service,
         visual_artifact_service=visual_artifact_service,
+        ai_result_planner=ai_result_planner,
     )
 
 
@@ -3525,6 +3538,19 @@ async def send_project_conversation_message(
         _raise_project_http_error(
             status_code=503, category="conversation_visualize_unavailable",
             message="Could not create that visualization right now. Retry with the same idempotency key.",
+        )
+    except ConversationInvestigationError:
+        # Phase 3C: mirrors the ProjectExploreError/VisualArtifactError clauses above exactly. The
+        # conversation's own Investigation bridge (AssistantOrchestrator._run_investigate_bridge)
+        # already marks the assistant turn FAILED with failure_category="investigate_failure" and
+        # re-raises this uniform wrapper (covering InvestigationSessionAnalysisRejected,
+        # evidence/session store failures, ProjectTextTroubleshootError, and
+        # ProjectAIResultRoutingUnavailable alike) before this is reached - this only maps that same
+        # already-categorized failure to a clean HTTP response, never exposing the raw internal
+        # exception.
+        _raise_project_http_error(
+            status_code=503, category="conversation_investigate_unavailable",
+            message="Could not investigate this right now. Retry with the same idempotency key.",
         )
     except ProjectContextRetrieverError:
         _raise_project_http_error(status_code=500, category="project_context_unavailable", message="Project context is unavailable.")

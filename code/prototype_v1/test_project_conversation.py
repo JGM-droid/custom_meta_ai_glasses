@@ -48,6 +48,8 @@ class FakeAssistantProvider:
         # Maps an exact message text to the option ordinal a real model's tool-call argument would
         # have carried.
         self.visualize_intent_texts: dict[str, int] = {}
+        # Phase 3C test-only stand-in, mirrors explore_intent_texts above.
+        self.investigate_intent_texts: set[str] = set()
 
     def respond(self, request):
         self.calls += 1
@@ -66,6 +68,10 @@ class FakeAssistantProvider:
                 text="", provider="fake-provider", model="fake-model", request_id="req-1",
                 capability_intent=AssistantCapabilityIntent.VISUALIZE_OPTION,
                 visualize_option_ordinal=self.visualize_intent_texts[request.user_text])
+        if (AssistantCapabilityIntent.INVESTIGATE in request.allowed_capability_intents
+                and request.user_text in self.investigate_intent_texts):
+            return AssistantResponse(text="", provider="fake-provider", model="fake-model",
+                                      request_id="req-1", capability_intent=AssistantCapabilityIntent.INVESTIGATE)
         if request.prior_turns:
             text = f"Because the Project context says to continue next, and we previously discussed: {request.prior_turns[-1].text}"
         else:
@@ -94,6 +100,12 @@ def conversation_context(routing_context, monkeypatch):
         artifact_store=visual_artifact_store,
         provider=visual_provider,
     )
+    # Phase 3C: routing_context already monkeypatches every real-provider dependency this pulls in
+    # (OpenAIProjectResponseRoutingProvider, OpenAIProjectTextTroubleshootProvider,
+    # _create_session_orchestrator -> _StaticInvestigationProvider, _load_openai_api_key) - so this
+    # is the SAME real ProjectAIResultPlanner route()'s own TROUBLESHOOT dispatch uses, fully
+    # fake-backed, never a second Investigation dispatch construction.
+    ai_result_planner = api._create_project_ai_result_planner(explore_service=explore_service, include_routing=True)
     orchestrator = AssistantOrchestrator(
         project_store=ctx["project_store"],
         conversation_store=store,
@@ -103,13 +115,15 @@ def conversation_context(routing_context, monkeypatch):
         evidence_store=ctx["evidence_store"],
         explore_service=explore_service,
         visual_artifact_service=visual_artifact_service,
+        ai_result_planner=ai_result_planner,
     )
     monkeypatch.setattr(api, "PROJECT_CONVERSATION_STORE", store)
     monkeypatch.setattr(api, "VISUAL_ARTIFACT_STORE", visual_artifact_store)
     monkeypatch.setattr(api, "_create_assistant_orchestrator", lambda: orchestrator)
     return {**ctx, "conversation_store": store, "provider": provider, "orchestrator": orchestrator,
             "explore_service": explore_service, "visual_artifact_store": visual_artifact_store,
-            "visual_provider": visual_provider, "visual_artifact_service": visual_artifact_service}
+            "visual_provider": visual_provider, "visual_artifact_service": visual_artifact_service,
+            "ai_result_planner": ai_result_planner}
 
 
 def _send(client, project_id, text, key):
@@ -535,6 +549,200 @@ def test_openai_adapter_advertises_visualize_tool_and_parses_its_ordinal_argumen
     assert result.capability_intent == AssistantCapabilityIntent.VISUALIZE_OPTION
     assert result.visualize_option_ordinal == 3
     assert result.text == ""
+
+
+# --- Phase 3C routing repair: real acceptance test found the real OpenAI model answered
+# "These used to be white. How can I get them looking white again? Look how dirty they are and
+# tell me what I should do." directly (capability_intent NONE) instead of calling
+# investigate_project_issue, and then answered the context-free follow-up "Okay, what should I try
+# first?" by calling propose_project_ideas (EXPLORE) instead of continuing in plain text. Root
+# cause: the INVESTIGATE tool description/system-message line was scoped to "malfunctioning,
+# broken, or behaving unexpectedly" - language that reads as mechanical failure and excludes a
+# degraded/dirty/discolored restoration request - and the EXPLORE tool description had no carve-out
+# for "which of the steps you already gave me should I do first", so the model reasonably read it as
+# a request for a fresh set of alternatives. A FakeAssistantProvider cannot reproduce a real model's
+# judgment - these tests instead prove the repaired tool descriptions/system-message text actually
+# reaches the provider call, and that tool offering/mapping/isolation between the three capabilities
+# is otherwise unaffected.
+
+def test_openai_adapter_advertises_investigate_tool_and_maps_tool_call_to_investigate_intent():
+    from projects.assistant_provider import AssistantCapabilityIntent, AssistantRequest
+
+    def make_client(message):
+        choice = type("Choice", (), {"message": message})()
+        response = type("Response", (), {"id": "openai-response", "choices": [choice]})()
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return response
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+        return client, captured
+
+    function = type("Function", (), {"name": "investigate_project_issue", "arguments": "{}"})()
+    tool_call = type("ToolCall", (), {"function": function})()
+    tool_message = type("Message", (), {"content": None, "tool_calls": [tool_call]})()
+    client, captured = make_client(tool_message)
+    provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+    result = provider.respond(AssistantRequest(
+        user_text="These used to be white. How can I get them looking white again?",
+        project_context={}, prior_turns=(),
+        allowed_capability_intents=frozenset({AssistantCapabilityIntent.INVESTIGATE})))
+    assert {tool["function"]["name"] for tool in captured["tools"]} == {"investigate_project_issue"}
+    assert result.capability_intent == AssistantCapabilityIntent.INVESTIGATE
+    assert result.text == ""
+
+    # Not advertised at all when the orchestrator has no ai_result_planner wired up.
+    text_message = type("Message", (), {"content": "Just a plain answer.", "tool_calls": None})()
+    client, captured = make_client(text_message)
+    provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+    result = provider.respond(AssistantRequest(
+        user_text="What color is this?", project_context={}, prior_turns=(),
+        allowed_capability_intents=frozenset()))
+    assert "tools" not in captured
+    assert result.capability_intent == AssistantCapabilityIntent.NONE
+
+
+def test_investigate_tool_description_and_system_prompt_require_diagnosing_a_cause():
+    from projects.assistant_provider import AssistantCapabilityIntent, AssistantRequest
+
+    def make_client(message):
+        choice = type("Choice", (), {"message": message})()
+        response = type("Response", (), {"id": "openai-response", "choices": [choice]})()
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return response
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+        return client, captured
+
+    text_message = type("Message", (), {"content": "placeholder", "tool_calls": None})()
+    client, captured = make_client(text_message)
+    provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+    provider.respond(AssistantRequest(
+        user_text="My plant keeps getting brown leaves even though I'm watering it. Help me figure out why.",
+        project_context={}, prior_turns=(),
+        allowed_capability_intents=frozenset({AssistantCapabilityIntent.INVESTIGATE})))
+
+    investigate_description = next(
+        tool["function"]["description"] for tool in captured["tools"]
+        if tool["function"]["name"] == "investigate_project_issue")
+    # Phase 3C routing calibration: the 12-case real-provider eval found the earlier "restore/
+    # repair/fix the appearance" wording over-broad - it made ordinary cleaning/how-to requests
+    # ("how should I clean these shoes", "how can I make these shoes white again") false-positive
+    # into INVESTIGATE. The boundary is narrowed to require actually diagnosing a CAUSE.
+    assert "why" in investigate_description.lower()
+    assert "cause" in investigate_description.lower()
+    assert "leaves turning brown" not in investigate_description.lower()
+    assert "why does it look like this now and what caused it" in investigate_description.lower()
+    # Ordinary cleaning/restoration/how-to requests must now be explicit negative examples, not
+    # positive examples - this is the exact pair of cases the eval found false-positiving.
+    assert "how should i clean these shoes" in investigate_description.lower()
+    assert "how can i make these shoes white again" in investigate_description.lower()
+    assert "not a diagnosis" in investigate_description.lower()
+    # Other negative examples must still be excluded from the tool.
+    assert "what color is this" in investigate_description.lower()
+    assert "what is this" in investigate_description.lower()
+
+    system_message = next(m["content"] for m in captured["messages"] if m["role"] == "system")
+    assert "why" in system_message.lower() and "cause" in system_message.lower()
+    assert "not a diagnosis" in system_message.lower()
+    assert "investigate_project_issue" in system_message
+
+
+def test_explore_tool_description_and_system_prompt_exclude_continuing_existing_troubleshooting():
+    from projects.assistant_provider import AssistantCapabilityIntent, AssistantRequest
+
+    def make_client(message):
+        choice = type("Choice", (), {"message": message})()
+        response = type("Response", (), {"id": "openai-response", "choices": [choice]})()
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return response
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+        return client, captured
+
+    text_message = type("Message", (), {"content": "placeholder", "tool_calls": None})()
+    client, captured = make_client(text_message)
+    provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+    provider.respond(AssistantRequest(
+        user_text="Okay, what should I try first?", project_context={}, prior_turns=(),
+        allowed_capability_intents=frozenset({
+            AssistantCapabilityIntent.EXPLORE, AssistantCapabilityIntent.INVESTIGATE,
+        })))
+
+    explore_description = next(
+        tool["function"]["description"] for tool in captured["tools"]
+        if tool["function"]["name"] == "propose_project_ideas")
+    assert "try first or next" in explore_description
+    assert "continuing an existing answer" in explore_description
+
+    system_message = next(m["content"] for m in captured["messages"] if m["role"] == "system")
+    assert "try first or next" in system_message
+    assert "not a request for new brainstorming" in system_message or "not a request for new" in system_message
+
+
+def test_all_three_capability_tools_offered_together_stay_distinct_and_plain_text_stays_none():
+    from projects.assistant_provider import AssistantCapabilityIntent, AssistantRequest
+
+    def make_client(message):
+        choice = type("Choice", (), {"message": message})()
+        response = type("Response", (), {"id": "openai-response", "choices": [choice]})()
+        captured = {}
+
+        class Completions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return response
+
+        client = type("Client", (), {"chat": type("Chat", (), {"completions": Completions()})()})()
+        return client, captured
+
+    # All three tools offered, but the model answers a purely descriptive question in plain text -
+    # capability_intent must stay NONE even though every tool is available.
+    text_message = type("Message", (), {"content": "That looks like a canvas sneaker.", "tool_calls": None})()
+    client, captured = make_client(text_message)
+    provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+    result = provider.respond(AssistantRequest(
+        user_text="What brand does this look like?", project_context={}, prior_turns=(),
+        allowed_capability_intents=frozenset({
+            AssistantCapabilityIntent.EXPLORE,
+            AssistantCapabilityIntent.VISUALIZE_OPTION,
+            AssistantCapabilityIntent.INVESTIGATE,
+        })))
+    assert {tool["function"]["name"] for tool in captured["tools"]} == {
+        "propose_project_ideas", "visualize_project_option", "investigate_project_issue",
+    }
+    assert result.capability_intent == AssistantCapabilityIntent.NONE
+    assert result.text == "That looks like a canvas sneaker."
+
+    # Each tool call still maps to exactly its own distinct capability_intent - no cross-mapping.
+    for tool_name, expected_intent in (
+        ("propose_project_ideas", AssistantCapabilityIntent.EXPLORE),
+        ("investigate_project_issue", AssistantCapabilityIntent.INVESTIGATE),
+    ):
+        function = type("Function", (), {"name": tool_name, "arguments": "{}"})()
+        tool_call = type("ToolCall", (), {"function": function})()
+        tool_message = type("Message", (), {"content": None, "tool_calls": [tool_call]})()
+        client, captured = make_client(tool_message)
+        provider = OpenAIAssistantProvider(api_key="test", model="test-model", client_factory=lambda **_: client)
+        result = provider.respond(AssistantRequest(
+            user_text="irrelevant", project_context={}, prior_turns=(),
+            allowed_capability_intents=frozenset({
+                AssistantCapabilityIntent.EXPLORE,
+                AssistantCapabilityIntent.VISUALIZE_OPTION,
+                AssistantCapabilityIntent.INVESTIGATE,
+            })))
+        assert result.capability_intent == expected_intent
 
 
 def test_ordinary_conversation_never_touches_explore_service(conversation_context):
@@ -1212,3 +1420,314 @@ def test_explore_execution_failure_maps_to_a_clean_categorized_response(conversa
     assert recovered.status_code == 200
     assert ctx["explore_provider"].calls == 1
     assert len(ctx["conversation_store"].load(project["project_id"]).turns) == 2
+
+
+# --- Phase 3C: Conversation -> Investigation bridge ---
+#
+# "Why isn't this working?" reuses the existing session-based Investigation pipeline exactly as
+# ProjectAIResultPlanner.route()'s own TROUBLESHOOT dispatch does, via
+# dispatch_troubleshoot_for_conversation - never a second Investigation implementation, and
+# structurally unable to reach the separate legacy multipart POST /investigations/analyze pipeline
+# (investigations/service.py), which this bridge never imports or calls.
+
+def _attach_image_with_explanation(ctx, project_id: str, explanation: str, payload: bytes = b"broken-thing-photo"):
+    """Like _attach_image, but with normalized_text set at upload time - simulating an
+    already-explained session from a non-conversation Investigation capture flow (e.g. the legacy
+    panel), which _session_has_usable_evidence's reusable-session detection can find."""
+    session = ctx["session_store"].create_session(project_id=project_id, client_metadata=None)
+    collecting = session.model_copy(update={
+        "status": InvestigationSessionStatus.COLLECTING,
+        "revision": session.revision + 1,
+        "updated_at_utc": datetime.now(timezone.utc),
+    })
+    ctx["session_store"].save_session(collecting)
+    evidence, created = ctx["evidence_store"].upload_evidence(
+        session_id=collecting.session_id,
+        evidence_type=InvestigationEvidenceType.IMAGE,
+        raw_bytes=payload,
+        mime_type="image/png",
+        original_filename="broken.png",
+        request=InvestigationEvidenceCreateRequest(
+            source="test", filename="broken.png", mime_type="image/png", width=10, height=10,
+            normalized_text=explanation,
+        ),
+    )
+    assert created
+    return collecting, evidence
+
+
+def test_explicit_troubleshooting_request_invokes_investigate(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this working?")
+
+    response = _send(ctx["client"], project["project_id"], "Why isn't this working?", "investigate-1")
+
+    assert response.status_code == 200
+    # No evidence/reusable session exists for this Project - Path B (text-only) is the correct,
+    # deterministic outcome, never a fabricated Path A result.
+    assert ctx["text_troubleshoot_provider"].calls == 1
+    assistant_turn = response.json()["turns"][1]
+    assert [part["type"] for part in assistant_turn["content_parts"]] == ["TEXT"]
+
+
+def test_current_turn_evidence_takes_precedence_over_unrelated_older_session(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+
+    # An older, unrelated, genuinely reusable session already exists for this Project.
+    old_session, _old_evidence = _attach_image_with_explanation(
+        ctx, project["project_id"], "This has been broken for weeks.")
+
+    # The CURRENT message attaches its own, different Evidence.
+    new_session, new_evidence = _attach_image(ctx, project["project_id"], payload=b"todays-photo")
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+    response = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-precedence-1",
+        [_reference(new_session.session_id, new_evidence.evidence_id)],
+    )
+
+    assert response.status_code == 200
+    # The CURRENT-TURN session was analyzed (COMPLETED) - the older, unrelated session was never
+    # touched (still COLLECTING), proving deterministic precedence rather than "any usable session."
+    assert ctx["session_store"].load_session(new_session.session_id).status == InvestigationSessionStatus.COMPLETED
+    assert ctx["session_store"].load_session(old_session.session_id).status == InvestigationSessionStatus.COLLECTING
+    assistant_turn = response.json()["turns"][1]
+    reference = next(part for part in assistant_turn["content_parts"] if part["type"] == "INVESTIGATION_REFERENCE")
+    assert reference["investigation_session_id"] == new_session.session_id
+
+
+def test_investigate_evidence_backfill_never_duplicates_evidence_bytes(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    # list_evidence_for_analysis (not list_evidence, which is state-gated and deliberately empty
+    # for a COMPLETED session) - the right tool to count records regardless of session status.
+    before_count = len(ctx["evidence_store"].list_evidence_for_analysis(session.session_id))
+
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+    response = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-nodupe-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+
+    assert response.status_code == 200
+    after_count = len(ctx["evidence_store"].list_evidence_for_analysis(session.session_id))
+    assert after_count == before_count == 1
+    # The explanation backfill only ever updates the SAME evidence record's own field in place.
+    updated = ctx["evidence_store"].load_evidence_for_analysis(session_id=session.session_id, evidence_id=evidence.evidence_id)
+    assert updated.evidence_id == evidence.evidence_id
+    assert updated.content_hash == evidence.content_hash
+    assert updated.normalized_text == "Why isn't this outlet working?"
+
+
+def test_durable_path_a_produces_exactly_one_investigation_reference(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    response = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-patha-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+
+    assert response.status_code == 200
+    assistant_turn = response.json()["turns"][1]
+    references = [part for part in assistant_turn["content_parts"] if part["type"] == "INVESTIGATION_REFERENCE"]
+    assert len(references) == 1
+    assert references[0]["investigation_session_id"] == session.session_id
+    assert any(part["type"] == "TEXT" and part["text"] for part in assistant_turn["content_parts"])
+
+
+def test_path_b_remains_text_only_with_no_fabricated_reference(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    response = _send(ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-pathb-1")
+
+    assert response.status_code == 200
+    assistant_turn = response.json()["turns"][1]
+    assert [part["type"] for part in assistant_turn["content_parts"]] == ["TEXT"]
+
+
+def test_investigate_followup_stays_in_the_same_conversation(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+    first = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-followup-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert first.status_code == 200
+    conversation_id = first.json()["conversation_id"]
+
+    second = _send(ctx["client"], project["project_id"], "What should I check first?", "investigate-followup-2")
+
+    assert second.status_code == 200
+    assert second.json()["conversation_id"] == conversation_id
+    assert len(ctx["conversation_store"].load(project["project_id"]).turns) == 4
+
+
+def test_ordinary_explanatory_questions_make_zero_investigation_calls(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+
+    for index, text in enumerate([
+        "What is this?",
+        "Explain how this works.",
+        "What usually causes this?",
+        "Is this type of outlet common?",
+    ]):
+        # Deliberately NOT registered in investigate_intent_texts.
+        response = _send(ctx["client"], project["project_id"], text, f"investigate-ordinary-{index}")
+        assert response.status_code == 200, text
+        assistant_turn = response.json()["turns"][1]
+        assert [part["type"] for part in assistant_turn["content_parts"]] == ["TEXT"], text
+    assert ctx["text_troubleshoot_provider"].calls == 0
+
+
+def test_investigate_does_not_mutate_canonical_project_state(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    before_revision = ctx["project_store"].load_project(project["project_id"]).revision
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    response = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-nomutate-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+
+    assert response.status_code == 200
+    assert ctx["project_store"].load_project(project["project_id"]).revision == before_revision
+    assert ctx["client"].get(f"/projects/{project['project_id']}/checkpoint-proposals").json() == []
+
+
+def test_investigate_failure_is_honest_and_recoverable(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    # Force an unanalyzable state (a real, if unusual, failure mode) - never a fabricated exception.
+    cancelled = ctx["session_store"].load_session(session.session_id).model_copy(update={
+        "status": InvestigationSessionStatus.CANCELLED,
+        "cancelled_at_utc": datetime.now(timezone.utc),
+    })
+    ctx["session_store"].save_session(cancelled)
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    failed = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-fail-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+
+    assert failed.status_code == 503
+    assert failed.json()["detail"]["category"] == "conversation_investigate_unavailable"
+    assert "Traceback" not in failed.json()["detail"]["message"]
+    persisted = ctx["conversation_store"].load(project["project_id"])
+    assert len(persisted.turns) == 2
+    assistant_turn = persisted.turns[1]
+    assert assistant_turn.status == ConversationTurnStatus.FAILED
+    assert assistant_turn.failure_category == "investigate_failure"
+    assert assistant_turn.content_parts[0].text
+
+    # Retry after the underlying issue is resolved recovers the SAME turn in place.
+    reopened = ctx["session_store"].load_session(session.session_id).model_copy(update={
+        "status": InvestigationSessionStatus.COLLECTING, "cancelled_at_utc": None,
+    })
+    ctx["session_store"].save_session(reopened)
+    recovered = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-fail-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert recovered.status_code == 200
+    assert len(ctx["conversation_store"].load(project["project_id"]).turns) == 2
+    recovered_turn = ctx["conversation_store"].load(project["project_id"]).turns[1]
+    assert recovered_turn.status == ConversationTurnStatus.COMPLETED
+
+
+def test_investigate_same_key_retry_does_not_duplicate_work(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    first = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-retry-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert first.status_code == 200
+    calls_before_retry = ctx["provider"].calls
+    second = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-retry-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert second.status_code == 200
+
+    # The conversation's own idempotency shortcut means the SAME exchange is never re-executed.
+    assert ctx["provider"].calls == calls_before_retry
+    assert len(ctx["conversation_store"].load(project["project_id"]).turns) == 2
+    first_ref = next(p for p in first.json()["turns"][1]["content_parts"] if p["type"] == "INVESTIGATION_REFERENCE")
+    second_ref = next(p for p in second.json()["turns"][1]["content_parts"] if p["type"] == "INVESTIGATION_REFERENCE")
+    assert first_ref == second_ref
+
+
+def test_investigate_preserves_project_isolation(conversation_context):
+    ctx = conversation_context
+    project_a = create_project(ctx["client"])
+    project_b = create_project(ctx["client"])
+    old_session, _evidence = _attach_image_with_explanation(
+        ctx, project_a["project_id"], "Project A's own long-running issue.")
+
+    ctx["provider"].investigate_intent_texts.add("Why isn't this working?")
+    response = _send(ctx["client"], project_b["project_id"], "Why isn't this working?", "investigate-isolation-1")
+
+    assert response.status_code == 200
+    # Project B's own conversation never reaches Project A's session - Path B (text-only) is the
+    # correct, isolated outcome.
+    assistant_turn = response.json()["turns"][1]
+    assert [part["type"] for part in assistant_turn["content_parts"]] == ["TEXT"]
+    assert ctx["session_store"].load_session(old_session.session_id).status == InvestigationSessionStatus.COLLECTING
+
+
+def test_investigate_reference_survives_reload_from_persisted_turn_data(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session, evidence = _attach_image(ctx, project["project_id"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+
+    sent = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "investigate-reload-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert sent.status_code == 200
+    sent_ref = next(p for p in sent.json()["turns"][1]["content_parts"] if p["type"] == "INVESTIGATION_REFERENCE")
+
+    reloaded = ctx["client"].get(f"/projects/{project['project_id']}/conversation").json()
+    reloaded_ref = next(p for p in reloaded["turns"][-1]["content_parts"] if p["type"] == "INVESTIGATION_REFERENCE")
+    assert reloaded_ref == sent_ref
+
+
+def test_investigate_bridge_never_reaches_legacy_multipart_pipeline(conversation_context, monkeypatch):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+
+    async def _fail_if_called(*_args, **_kwargs):
+        raise AssertionError(
+            "the conversational Investigation bridge must never reach the legacy multipart "
+            "POST /investigations/analyze pipeline (investigations/service.py)")
+    monkeypatch.setattr(api, "analyze_investigation_request_with_retained", _fail_if_called)
+
+    ctx["provider"].investigate_intent_texts.add("Why isn't this working?")
+    path_b = _send(ctx["client"], project["project_id"], "Why isn't this working?", "legacy-check-b")
+    assert path_b.status_code == 200
+
+    session, evidence = _attach_image(ctx, project["project_id"])
+    ctx["provider"].investigate_intent_texts.add("Why isn't this outlet working?")
+    path_a = _send_with_evidence(
+        ctx["client"], project["project_id"], "Why isn't this outlet working?", "legacy-check-a",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert path_a.status_code == 200

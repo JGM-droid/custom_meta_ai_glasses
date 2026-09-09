@@ -12,18 +12,18 @@ class AssistantProviderError(RuntimeError):
 
 
 class AssistantCapabilityIntent(str, Enum):
-    """Phase 3B: the small, closed set of application-owned capabilities a provider may hand back
-    control for, via native tool-calling, instead of answering in plain text. Two real capabilities
-    (Explore, then VisualArtifact) is the concrete justification for this abstraction: it replaces
-    what would otherwise be a second, unrelated `wants_visual_artifact: bool` field (plus its own
-    provider-boundary contract-violation check) with one typed value the orchestrator already knows
-    how to validate and dispatch on generically. This is deliberately NOT a generic capability
-    registry/plugin system - it is a closed enum with exactly the capabilities that exist today, and
-    growing it is a one-line addition only when a THIRD real capability justifies it."""
+    """Phase 3B/3C: the small, closed set of application-owned capabilities a provider may hand
+    back control for, via native tool-calling, instead of answering in plain text. Two real
+    capabilities (Explore, then VisualArtifact) originally justified this abstraction over a bag of
+    one-off booleans; INVESTIGATE (Phase 3C) is the third, exactly as anticipated. This is
+    deliberately NOT a generic capability registry/plugin system - it is a closed enum with exactly
+    the capabilities that exist today, and growing it stays a one-line addition only when a real
+    capability justifies it."""
 
     NONE = "NONE"
     EXPLORE = "EXPLORE"
     VISUALIZE_OPTION = "VISUALIZE_OPTION"
+    INVESTIGATE = "INVESTIGATE"
 
 
 @dataclass(frozen=True)
@@ -77,10 +77,14 @@ _PROPOSE_IDEAS_TOOL = {
     "function": {
         "name": _PROPOSE_IDEAS_TOOL_NAME,
         "description": (
-            "Call this when the user is asking for creative options, alternatives, or ideas about "
+            "Call this when the user is asking for NEW creative options, alternatives, or ideas about "
             "their Project - for example choosing a replacement, redesigning something, comparing "
             "approaches, or brainstorming what to do next. Do not call this for ordinary questions, "
-            "status updates, or requests that do not need a set of alternative ideas."
+            "status updates, or requests that do not need a set of alternative ideas. Do NOT call this "
+            "when the user is simply asking which of the steps/options already given earlier in this "
+            "conversation (for example by investigate_project_issue's guidance) to try first or next, "
+            "or asking how to carry out one of those steps - that is continuing an existing answer, "
+            "not requesting new brainstorming, and should be answered as normal text instead."
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
@@ -118,6 +122,39 @@ _VISUALIZE_OPTION_TOOL = {
             },
             "required": ["ordinal"],
         },
+    },
+}
+
+_INVESTIGATE_TOOL_NAME = "investigate_project_issue"
+_INVESTIGATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": _INVESTIGATE_TOOL_NAME,
+        "description": (
+            "Call this when the user is trying to actually diagnose or troubleshoot a problem - "
+            "determine WHY something is failing, broken, or behaving incorrectly, identify an "
+            "underlying cause, test a hypothesis, or work through an unresolved problem - and "
+            "answering depends on looking at the attached/current visual Evidence. Do NOT call this "
+            "for ordinary cleaning, restoration, or how-to requests that do not ask you to diagnose a "
+            "cause - wanting to know how to clean, whiten, refresh, or otherwise fix the appearance "
+            "of something is an ordinary how-to request, not a diagnosis, even when the thing is "
+            "visibly dirty, damaged, or discolored; answer those directly in plain text with the "
+            "how-to/cleaning/restoration steps instead of calling this tool. Examples that SHOULD "
+            "call this: 'why isn't this working', 'what's wrong with this', 'my AC isn't cooling, "
+            "help me diagnose what's wrong', 'this outlet stopped working, help me troubleshoot it', "
+            "'my computer won't boot, here's the error, help me figure out what's wrong', 'my plant "
+            "keeps getting brown leaves even though I'm watering it, help me figure out why', 'this "
+            "bike chain used to be smooth, why does it look like this now and what caused it'. Do "
+            "NOT call this for ordinary descriptive, curiosity, or how-to questions that are not "
+            "asking you to determine a cause (for example 'what is this', 'what color is this', 'how "
+            "should I clean these shoes', 'how can I make these shoes white again', 'summarize what "
+            "you see', 'what brand does this look like', 'explain how this works') - answer those as "
+            "normal text instead, including giving cleaning/restoration/how-to steps directly. Call "
+            "it immediately the first time the request is already this explicit - never ask the user "
+            "to confirm first, and never reply with plain text saying you will investigate/diagnose "
+            "it instead of actually calling this tool right now."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
     },
 }
 
@@ -193,6 +230,8 @@ class OpenAIAssistantProvider:
                 tools.append(_PROPOSE_IDEAS_TOOL)
             if AssistantCapabilityIntent.VISUALIZE_OPTION in request.allowed_capability_intents:
                 tools.append(_VISUALIZE_OPTION_TOOL)
+            if AssistantCapabilityIntent.INVESTIGATE in request.allowed_capability_intents:
+                tools.append(_INVESTIGATE_TOOL)
             if tools:
                 create_kwargs["tools"] = tools
             response = self._client_factory(api_key=self._api_key).chat.completions.create(**create_kwargs)
@@ -218,6 +257,11 @@ class OpenAIAssistantProvider:
                     text="", provider="openai", model=self._model, request_id=request_id,
                     capability_intent=AssistantCapabilityIntent.VISUALIZE_OPTION,
                     visualize_option_ordinal=ordinal,
+                )
+            if _call_named(_INVESTIGATE_TOOL_NAME) is not None:
+                return AssistantResponse(
+                    text="", provider="openai", model=self._model, request_id=request_id,
+                    capability_intent=AssistantCapabilityIntent.INVESTIGATE,
                 )
             text = str(message.content or "").strip()
             if not text:
@@ -255,9 +299,13 @@ class OpenAIAssistantProvider:
         ]
         if AssistantCapabilityIntent.EXPLORE in allowed_capability_intents:
             lines.append(
-                "If the user is asking for creative options, alternatives, or ideas about their "
+                "If the user is asking for NEW creative options, alternatives, or ideas about their "
                 "Project, call propose_project_ideas in this exact response instead of listing "
-                "options yourself in text."
+                "options yourself in text. Do not call it when the user is instead asking which of "
+                "the steps/options you already gave earlier in this conversation to try first or "
+                "next, or how to carry one of them out - that is continuing your existing answer, not "
+                "a request for new brainstorming, so just answer in plain text using the prior "
+                "conversation."
             )
         if AssistantCapabilityIntent.VISUALIZE_OPTION in allowed_capability_intents:
             lines.append(
@@ -266,6 +314,25 @@ class OpenAIAssistantProvider:
                 "that option's ordinal - immediately, the first time they ask. Never ask them to "
                 "confirm first, and never reply with text claiming you are generating, preparing, "
                 "starting, or about to create the visualization instead of actually calling the tool."
+            )
+        if AssistantCapabilityIntent.INVESTIGATE in allowed_capability_intents:
+            lines.append(
+                "If the user is trying to actually diagnose or troubleshoot a problem - determine WHY "
+                "something is failing, broken, or behaving incorrectly, identify an underlying cause, "
+                "or work through an unresolved problem - and that depends on the attached/current "
+                "visual Evidence, call investigate_project_issue in this exact response, immediately, "
+                "the first time they ask. Never ask them to confirm first, and never reply with text "
+                "claiming you are investigating or diagnosing it instead of actually calling the "
+                "tool. Do not call it for ordinary cleaning, restoration, or how-to requests that do "
+                "not ask you to diagnose a cause - wanting to know how to clean, whiten, refresh, or "
+                "otherwise fix the appearance of something is an ordinary how-to request, not a "
+                "diagnosis, even when the thing is visibly dirty, damaged, or discolored; answer "
+                "those directly in plain text with the how-to/cleaning/restoration steps. Also do not "
+                "call it for ordinary descriptive or curiosity questions (for example what something "
+                "is, what color it is, or what it looks like). If the user is instead asking which "
+                "step you already gave to try first or next, or how to carry one out, that continues "
+                "your existing answer - reply in plain text using the prior conversation instead of "
+                "calling the tool again unless a new problem or new Evidence is involved."
             )
         lines.append(
             "For everything else, reply naturally and concisely in text. Never describe yourself as "

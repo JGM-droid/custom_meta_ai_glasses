@@ -104,10 +104,35 @@ class ConversationVisualArtifactReferencePart(BaseModel):
             raise ValueError("Visual artifact reference identity fields must be valid UUIDs.") from exc
 
 
+class ConversationInvestigationReferencePart(BaseModel):
+    """Phase 3C: provider-neutral pointer to a canonical, durable Investigation session/result -
+    never contains the diagnosis/next-action bodies themselves (those live in the assistant turn's
+    own TEXT part, generated fresh from the canonical result at bridge time) and never image bytes.
+    Only ever attached for a session/evidence-backed (Path A) result; a text-only (Path B) result
+    has no durable session to reference and stays plain TEXT, exactly like GENERAL_GUIDANCE's own
+    ephemeral outputs. The session identity is the same one the existing Investigation HTTP routes
+    and trust-decision endpoints already use - no second identity scheme.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    type: Literal["INVESTIGATION_REFERENCE"] = "INVESTIGATION_REFERENCE"
+    investigation_session_id: str
+
+    @field_validator("investigation_session_id")
+    @classmethod
+    def _validate_uuid(cls, value: str) -> str:
+        try:
+            return str(UUID(str(value)))
+        except ValueError as exc:
+            raise ValueError("investigation_session_id must be a valid UUID.") from exc
+
+
 ConversationContentPart = Annotated[
     Union[
         ConversationTextPart, ConversationEvidenceReferencePart,
         ConversationExploreReferencePart, ConversationVisualArtifactReferencePart,
+        ConversationInvestigationReferencePart,
     ],
     Field(discriminator="type"),
 ]
@@ -170,6 +195,7 @@ class ConversationTurn(BaseModel):
         evidence_parts = [item for item in self.content_parts if isinstance(item, ConversationEvidenceReferencePart)]
         explore_parts = [item for item in self.content_parts if isinstance(item, ConversationExploreReferencePart)]
         visual_artifact_parts = [item for item in self.content_parts if isinstance(item, ConversationVisualArtifactReferencePart)]
+        investigation_parts = [item for item in self.content_parts if isinstance(item, ConversationInvestigationReferencePart)]
         if len(text_parts) != 1:
             raise ValueError("Phase 1B conversation turns require exactly one text part.")
         if self.role == ConversationRole.ASSISTANT and evidence_parts:
@@ -186,6 +212,10 @@ class ConversationTurn(BaseModel):
             raise ValueError("Only assistant turns may reference a Visual Artifact.")
         if len(visual_artifact_parts) > 1:
             raise ValueError("A turn may reference at most one Visual Artifact.")
+        if self.role == ConversationRole.USER and investigation_parts:
+            raise ValueError("Only assistant turns may reference an Investigation.")
+        if len(investigation_parts) > 1:
+            raise ValueError("A turn may reference at most one Investigation.")
         return self
 
 

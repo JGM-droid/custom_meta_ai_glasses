@@ -214,6 +214,14 @@ class OpenAIProjectExploreProvider:
             " When images are supplied, observations must include 2-3 concise, concrete visible facts; "
             "distinguish those observed facts from user-stated goals and from inferred recommendations. "
             "Make options respond to relevant visible room details rather than generic style advice."
+            " When NO images are supplied with this request, you are not currently viewing or inspecting "
+            "any image - never claim or imply that you can currently see a picture, and never invent "
+            "new visual-specific observations (for example describing a layout, arrangement, labeling, "
+            "or other visible detail you were not shown). You may use relevant prior conversation text "
+            "normally, including acknowledging that an image was discussed earlier if the conversation "
+            "history supports it, but never describe it as something you are looking at now. If the "
+            "request genuinely depends on re-examining a previously supplied image, say plainly that the "
+            "image is not available to this request rather than describing it as if you had examined it."
         )
         context_payload = dict(context_pack.__dict__)
         # Evidence IDs are provenance, while image bytes travel only as separate multimodal

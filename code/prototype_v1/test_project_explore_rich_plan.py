@@ -86,6 +86,67 @@ def test_openai_explore_provider_builds_one_multimodal_request_with_actual_image
     assert content[1]["image_url"] == "data:image/jpeg;base64,Zmlyc3Q="
     assert content[2]["image_url"] == "data:image/png;base64,c2Vjb25k"
     assert "concrete visible facts" in captured["instructions"]
+    # The visual-grounding honesty guard (see below) coexists with the grounded-observation
+    # directive - both are always present in the static instructions; the model applies whichever
+    # branch matches what it actually received in `content` for this specific call.
+    assert "not currently viewing or inspecting" in captured["instructions"]
+
+
+# --- Phase 3C closeout: visual grounding trust guard ---
+#
+# The breaker acceptance run's follow-up turn invoked Explore with no current image bytes and no
+# Evidence refs, yet the generated response opened with "Based on the picture you provided..." and
+# went on to invent plausible-sounding but unverifiable visual details (a specific breaker layout,
+# visible labeling) it was never shown - only prior conversation TEXT was available to that call.
+# This is a trust defect, not an Investigation-routing defect: Explore must never claim to be
+# currently looking at an image it was not given. Fixed at the single production Explore provider's
+# instructions (the smallest provider-neutral spot - the same place its other honesty rules like
+# "never invent Project facts" already live), not via app-side regex/keyword post-processing of the
+# generated prose.
+
+def test_openai_explore_provider_instructions_forbid_claiming_current_inspection_without_images():
+    captured = {}
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                output_parsed=_ProjectExploreProviderResponse.model_validate({
+                    "result_type": "OPTION_SET",
+                    "option_set": rich_option_set(),
+                    "information_request": None,
+                }),
+            )
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            self.responses = FakeResponses()
+
+    provider = OpenAIProjectExploreProvider(
+        api_key="fake-key", model="fixture-model", client_factory=FakeClient)
+    context = ProjectExploreContextPack(
+        contract_id="explore_option_generation_v1",
+        project_id="project-1",
+        project_name="Breaker issue",
+        project_goal="Find out why my breaker keeps tripping",
+        project_revision=1,
+        checkpoint={},
+        user_intent="Are you able to tell from the picture I sent?",
+        input_activities=(),
+        relevant_context=(),
+        evidence_refs=(),
+    )
+
+    provider.explore(context, ())  # no image_evidence supplied - the exact breaker-run shape
+
+    content = captured["input"][0]["content"]
+    assert [item["type"] for item in content] == ["input_text"]
+    instructions = captured["instructions"]
+    assert "not currently viewing or inspecting" in instructions
+    assert "never invent" in instructions and "visual-specific observations" in instructions
+    assert "not available to this request" in instructions
+    # The ordinary prior-textual-conversation allowance must still be present.
+    assert "prior conversation text" in instructions
 
 
 def test_responses_parse_transport_schema_avoids_unsupported_one_of():

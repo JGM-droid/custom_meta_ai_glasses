@@ -11,6 +11,7 @@ from investigations import (
     InvestigationEvidenceStoreError,
     InvestigationEvidenceType,
     InvestigationEvidenceValidationStatus,
+    InvestigationSessionAnalysisRejected,
     InvestigationSessionStore,
     InvestigationSessionStoreError,
 )
@@ -27,6 +28,7 @@ from .conversation_store import ConversationIdempotencyConflict, ProjectConversa
 from .project_context_retriever import ProjectContextRetriever
 from .project_conversation import (
     ConversationExploreReferencePart,
+    ConversationInvestigationReferencePart,
     ConversationProviderProvenance,
     ConversationEvidenceReferencePart,
     ConversationReadResponse,
@@ -41,13 +43,15 @@ from .project_conversation import (
 )
 from .activity_store import ProjectActivityStoreError
 from .checkpoint_proposal_store import CheckpointProposalStoreError
+from .project_ai_result import ProjectAIResultPlanner, ProjectAIResultRoutingUnavailable
 from .project_explore import (
     ProjectExploreError,
     ProjectExploreImageEvidence,
     ProjectExploreService,
 )
 from .project_store import ProjectStore, ProjectStoreError
-from .models import ProjectExploreRequest
+from .project_troubleshoot import ProjectTextTroubleshootError
+from .models import ProjectAIRoutingRequest, ProjectExploreRequest
 from .visual_artifacts import (
     VisualArtifactCreateRequest,
     VisualArtifactError,
@@ -71,25 +75,41 @@ class VisualArtifactBridgeError(VisualArtifactError):
     ProjectExploreError's single base-type handling for the Explore bridge."""
 
 
+class ConversationInvestigationError(RuntimeError):
+    """Phase 3C: uniform wrapper for any failure in the conversational Investigation bridge - the
+    underlying session-based analyze pipeline, evidence-explanation backfill, or Path B text-only
+    troubleshoot can each raise their own distinct exception type (InvestigationSessionAnalysisRejected,
+    InvestigationEvidenceStoreError/InvestigationSessionStoreError, ProjectTextTroubleshootError,
+    ProjectAIResultRoutingUnavailable) - this wraps all of them so the conversation endpoint maps
+    exactly one exception type to one categorized HTTP response, exactly like
+    VisualArtifactBridgeError/ProjectExploreError's own single-base-type handling."""
+
+
 class AssistantOrchestrator:
     def __init__(self, *, project_store: ProjectStore, conversation_store: ProjectConversationStore,
                  context_retriever: ProjectContextRetriever, provider: AssistantProvider,
                  session_store: InvestigationSessionStore | None = None,
                  evidence_store: InvestigationEvidenceStore | None = None,
                  explore_service: ProjectExploreService | None = None,
-                 visual_artifact_service: VisualArtifactService | None = None):
+                 visual_artifact_service: VisualArtifactService | None = None,
+                 ai_result_planner: ProjectAIResultPlanner | None = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
         self.provider = provider
         self.session_store = session_store
         self.evidence_store = evidence_store
-        # Phase 3A/3B: reuses the existing Explore/VisualArtifact capabilities as-is - never a
-        # second, parallel implementation of either. None (the default) means that capability is
-        # never advertised to the provider and its tool-call can never be produced - see
-        # _allowed_capability_intents.
+        # Phase 3A/3B/3C: reuses the existing Explore/VisualArtifact/Investigation capabilities
+        # as-is - never a second, parallel implementation of any of them. None (the default) means
+        # that capability is never advertised to the provider and its tool-call can never be
+        # produced - see _allowed_capability_intents.
         self.explore_service = explore_service
         self.visual_artifact_service = visual_artifact_service
+        # Phase 3C: the SAME ProjectAIResultPlanner route()'s own TROUBLESHOOT dispatch uses -
+        # reused via its dispatch_troubleshoot_for_conversation method, never a second Investigation
+        # dispatch mechanism, and never route()'s own LLM intent-classification call (the
+        # conversation's native tool-calling already decided this is a troubleshooting request).
+        self.ai_result_planner = ai_result_planner
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -230,6 +250,17 @@ class AssistantOrchestrator:
                         user_facing_text="Could not create that visualization right now. Retry this message.",
                     )
                     raise
+            elif result.capability_intent == AssistantCapabilityIntent.INVESTIGATE:
+                try:
+                    content_parts = self._run_investigate_bridge(normalized_project_id, request)
+                except ConversationInvestigationError as exc:
+                    self._fail_assistant_turn(
+                        conversation, assistant_turn,
+                        failure_category="investigate_failure",
+                        failure_message=str(exc),
+                        user_facing_text="Could not investigate this right now. Retry this message.",
+                    )
+                    raise
             else:
                 content_parts = [ConversationTextPart(text=result.text)]
 
@@ -256,6 +287,8 @@ class AssistantOrchestrator:
             intents.add(AssistantCapabilityIntent.EXPLORE)
         if self.visual_artifact_service is not None:
             intents.add(AssistantCapabilityIntent.VISUALIZE_OPTION)
+        if self.ai_result_planner is not None:
+            intents.add(AssistantCapabilityIntent.INVESTIGATE)
         return frozenset(intents)
 
     def _fail_assistant_turn(
@@ -384,6 +417,87 @@ class AssistantOrchestrator:
                 if isinstance(part, ConversationExploreReferencePart):
                     return part
         return None
+
+    def _run_investigate_bridge(
+        self, project_id: str, request: ConversationSendRequest,
+    ) -> list[ConversationTextPart | ConversationInvestigationReferencePart]:
+        """Phase 3C bridge: reuses the existing session-based Investigation pipeline exactly as
+        ProjectAIResultPlanner.route()'s own TROUBLESHOOT dispatch does, via
+        dispatch_troubleshoot_for_conversation - which only ever calls the session-based
+        analyze_session_fn (_execute_investigation_session_analysis) for Path A and
+        ProjectTextTroubleshootService for Path B. This bridge is structurally unable to reach the
+        SEPARATE legacy multipart POST /investigations/analyze pipeline (investigations/service.py)
+        - that pipeline is never imported, referenced, or callable from anywhere in this class.
+
+        Evidence precedence (deterministic, never guesses across unrelated sessions):
+          (A) Evidence already attached to THIS message takes explicit precedence - its own
+              Investigation session is targeted directly, exactly as if the user had picked that
+              session explicitly. Conversation-originated Evidence carries no explanation text (the
+              explanation lives in the conversation message itself), so this backfills that one
+              field on the SAME existing evidence record before dispatch - never a new session,
+              evidence record, or association (see _ensure_evidence_explanation).
+          (B) Otherwise, the SAME existing reusable-COLLECTING-session detection
+              dispatch_troubleshoot_for_conversation already performs internally.
+          (C) Otherwise, the SAME existing text-only fallback (Path B).
+        """
+        investigation_session_id: str | None = None
+        if request.evidence_refs:
+            reference = request.evidence_refs[0]
+            investigation_session_id = reference.container_id
+            self._ensure_evidence_explanation(reference, request.text)
+        try:
+            routing_request = ProjectAIRoutingRequest(
+                user_request=request.text,
+                investigation_session_id=investigation_session_id,
+                idempotency_key=request.idempotency_key,
+            )
+            result = self.ai_result_planner.dispatch_troubleshoot_for_conversation(project_id, routing_request)
+        except (InvestigationSessionAnalysisRejected, InvestigationEvidenceStoreError,
+                InvestigationSessionStoreError, ProjectTextTroubleshootError,
+                ProjectAIResultRoutingUnavailable) as exc:
+            raise ConversationInvestigationError(str(exc)) from exc
+
+        text = result.summary
+        if result.hud_projection.next:
+            text = f"{text}\n\nNext: {result.hud_projection.next}"
+        if result.ephemeral or result.troubleshoot is None:
+            # Path B: nothing durable was created - no reference to attach, exactly like
+            # GENERAL_GUIDANCE's own ephemeral outputs.
+            return [ConversationTextPart(text=text)]
+        return [
+            ConversationTextPart(text=text),
+            ConversationInvestigationReferencePart(investigation_session_id=result.troubleshoot.session_id),
+        ]
+
+    def _ensure_evidence_explanation(
+        self, reference: ConversationEvidenceReferencePart, explanation_text: str,
+    ) -> None:
+        """Phase 3C: conversation-originated Evidence is uploaded with no explanation text (the
+        explanation lives in the conversation message itself - see
+        ProjectConversationViewModel.stageAttachment), but the existing session-based analyze
+        pipeline derives its explanation strictly from evidence.normalized_text
+        (_normalize_session_explanation). This backfills that ONE field on the EXACT existing
+        evidence record the conversation already references - never a new evidence record, never a
+        new session, never new bytes - and only when it is still blank, so any pre-existing
+        explanation (e.g. from a legacy Investigation capture) is preserved untouched. Failures here
+        are swallowed deliberately: the downstream analyze call will then raise its own honest,
+        already-categorized error (e.g. missing_explanation) rather than this pre-step introducing a
+        second, redundant failure surface for the same underlying problem."""
+        if self.evidence_store is None:
+            return
+        try:
+            record = self.evidence_store.load_evidence_for_analysis(
+                session_id=reference.container_id, evidence_id=reference.resource_id)
+        except (InvestigationEvidenceStoreError, InvestigationSessionStoreError):
+            return
+        if str(record.normalized_text or "").strip():
+            return
+        try:
+            self.evidence_store.set_evidence_explanation(
+                session_id=reference.container_id, evidence_id=reference.resource_id,
+                normalized_text=explanation_text)
+        except (InvestigationEvidenceStoreError, InvestigationSessionStoreError):
+            pass
 
     def _replace_turn(self, conversation: ProjectConversation, replacement: ConversationTurn) -> None:
         now = datetime.now(timezone.utc)

@@ -568,3 +568,56 @@ class InvestigationEvidenceStore:
             return record
 
         return self.session_store.run_with_session_lock(normalized_session_id, _delete)
+
+    def set_evidence_explanation(self, *, session_id: str, evidence_id: str, normalized_text: str) -> InvestigationEvidence:
+        """Phase 3C: backfills normalized_text on an EXISTING evidence record already referenced by
+        a ProjectConversation turn - never creates a new record, never touches bytes/storage_ref/
+        content_hash, only allowed while the session is still COLLECTING (the same mutation gate
+        upload_evidence/delete_evidence already enforce). Conversation-originated evidence is
+        uploaded with no explanation text (the explanation lives in the conversation message itself
+        - see ProjectConversationViewModel.stageAttachment), but the existing session-based analyze
+        pipeline (_execute_investigation_session_analysis -> _normalize_session_explanation) derives
+        its explanation strictly from evidence.normalized_text. This closes that one gap using the
+        exact atomic-write idiom upload_evidence already uses - no new store, no new session, no new
+        evidence record."""
+        normalized_session_id = self.session_store.validate_session_id(session_id)
+        normalized_evidence_id = _normalize_uuid_text(evidence_id)
+        text = str(normalized_text or "").strip() or None
+
+        def _update(session: InvestigationSession) -> InvestigationEvidence:
+            if not _session_allows_evidence_mutation(session):
+                raise InvestigationEvidenceStateError("Evidence can only be updated while collecting.")
+
+            metadata_path = self._session_evidence_dir(normalized_session_id) / f"{normalized_evidence_id}.json"
+            if not metadata_path.exists() or not metadata_path.is_file():
+                raise InvestigationEvidenceNotFound("Evidence does not exist.")
+            record = self._load_evidence_from_path(metadata_path, normalized_session_id)
+            updated = record.model_copy(update={"normalized_text": text})
+
+            temp_metadata: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=str(self.session_store.temp_dir),
+                    prefix=f"{normalized_evidence_id}.meta.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    handle.write(json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    temp_metadata = Path(handle.name)
+                os.replace(str(temp_metadata), str(metadata_path))
+            except OSError as exc:
+                raise InvestigationEvidenceStoreError("Failed to persist evidence explanation.") from exc
+            finally:
+                if temp_metadata and temp_metadata.exists():
+                    try:
+                        temp_metadata.unlink()
+                    except OSError:
+                        pass
+
+            return updated
+
+        return self.session_store.run_with_session_lock(normalized_session_id, _update)

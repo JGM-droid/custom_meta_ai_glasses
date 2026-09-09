@@ -580,6 +580,19 @@ class ProjectAIResultPlanner:
             ))
         return tuple(loaded)
 
+    def dispatch_troubleshoot_for_conversation(
+        self, project_id: str, request: ProjectAIRoutingRequest,
+    ) -> ProjectAIResult:
+        """Phase 3C: exposes the exact explicit-session -> reusable-session -> text-fallback
+        selection logic route()'s TROUBLESHOOT branch already uses (_dispatch_troubleshoot below),
+        for AssistantOrchestrator's conversational Investigation bridge to call directly. Skips
+        route()'s OWN LLM intent-classification call entirely - the conversation's own native
+        tool-calling already decided this is a troubleshooting request, so a second routing model
+        call here would be redundant. This is a pure visibility addition: it does not duplicate
+        _dispatch_troubleshoot's selection logic and does not change route()'s existing behavior."""
+        normalized_project_id = self.project_store.validate_project_id(project_id)
+        return self._dispatch_troubleshoot(normalized_project_id, request)
+
     def _dispatch_troubleshoot(self, project_id: str, request: ProjectAIRoutingRequest) -> ProjectAIResult:
         """ADR-060 (2026-09-04 architecture decision): TROUBLESHOOT is a response family, not a
         synonym for "has an Investigation session." Investigation's evidence-rich session/
