@@ -3048,6 +3048,11 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         explore_service=explore_service,
         visual_artifact_service=visual_artifact_service,
         ai_result_planner=ai_result_planner,
+        # Conversational Project Progression, Slice 1: the SAME trust service the legacy
+        # CONTINUE/DISAGREE/MORE EVIDENCE endpoints already use (_project_trust_service) - zero
+        # OpenAI calls, so wired unconditionally regardless of api_key, matching that service's own
+        # existing zero-provider-calls guarantee.
+        investigation_trust_service=_project_trust_service(),
     )
 
 

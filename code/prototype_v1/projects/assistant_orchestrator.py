@@ -14,6 +14,7 @@ from investigations import (
     InvestigationSessionAnalysisRejected,
     InvestigationSessionStore,
     InvestigationSessionStoreError,
+    InvestigationStoreError,
 )
 
 from .assistant_provider import (
@@ -23,6 +24,8 @@ from .assistant_provider import (
     AssistantProvider,
     AssistantProviderError,
     AssistantRequest,
+    AssistantReportedProgress,
+    ReportedProgressOutcome,
 )
 from .conversation_store import ConversationIdempotencyConflict, ProjectConversationStore
 from .project_context_retriever import ProjectContextRetriever
@@ -42,7 +45,12 @@ from .project_conversation import (
     ProjectConversation,
 )
 from .activity_store import ProjectActivityStoreError
-from .checkpoint_proposal_store import CheckpointProposalStoreError
+from .checkpoint_proposal_store import (
+    CheckpointProposalRevisionConflict,
+    CheckpointProposalStateError,
+    CheckpointProposalStoreError,
+)
+from .investigation_trust import ProjectInvestigationTrustError, ProjectInvestigationTrustService
 from .project_ai_result import ProjectAIResultPlanner, ProjectAIResultRoutingUnavailable
 from .project_explore import (
     ProjectExploreError,
@@ -51,13 +59,31 @@ from .project_explore import (
 )
 from .project_store import ProjectStore, ProjectStoreError
 from .project_troubleshoot import ProjectTextTroubleshootError
-from .models import ProjectAIRoutingRequest, ProjectExploreRequest
+from .models import (
+    CheckpointProposalPatch,
+    CheckpointProposalStatus,
+    ProjectAIRoutingRequest,
+    ProjectExploreRequest,
+    ProjectTrustDecisionRequest,
+    ProjectTrustDecisionType,
+)
 from .visual_artifacts import (
     VisualArtifactCreateRequest,
     VisualArtifactError,
     VisualArtifactService,
     VisualArtifactStatus,
 )
+
+
+# Conversational Project Progression, Slice 1 (ADR-042/ADR-043): a proposed checkpoint patch may be
+# auto-applied through the existing CheckpointProposal machinery, in the same request, only when it
+# touches exclusively these narrative/working-state fields - never a "significant Project change"
+# field (completed_summary, stopped_at, current_objective). This is documented as Slice 1
+# IMPLEMENTATION POLICY, not a permanent product definition of "low consequence" - see
+# docs/PROJECT_MEMORY_ARCHITECTURE.md. Investigation-originated CONTINUE proposals only ever
+# populate next_action today, so this is currently the only field this policy needs to recognize;
+# it is written as a real, general checkless allowlist so it stays correct if that ever changes.
+_LOW_CONSEQUENCE_CHECKPOINT_FIELDS = frozenset({"current_work", "next_action", "discoveries_summary"})
 
 
 MAX_PRIOR_CONVERSATION_TURNS = 8
@@ -92,7 +118,8 @@ class AssistantOrchestrator:
                  evidence_store: InvestigationEvidenceStore | None = None,
                  explore_service: ProjectExploreService | None = None,
                  visual_artifact_service: VisualArtifactService | None = None,
-                 ai_result_planner: ProjectAIResultPlanner | None = None):
+                 ai_result_planner: ProjectAIResultPlanner | None = None,
+                 investigation_trust_service: ProjectInvestigationTrustService | None = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
@@ -110,6 +137,12 @@ class AssistantOrchestrator:
         # dispatch mechanism, and never route()'s own LLM intent-classification call (the
         # conversation's native tool-calling already decided this is a troubleshooting request).
         self.ai_result_planner = ai_result_planner
+        # Conversational Project Progression, Slice 1: the SAME ProjectInvestigationTrustService the
+        # legacy CONTINUE/DISAGREE/MORE EVIDENCE UI already calls - never a second trust-decision or
+        # Checkpoint-mutation implementation. None (the default) means the progress-report tool is
+        # never advertised and this bridge is a complete no-op - see
+        # _find_eligible_investigation_target.
+        self.investigation_trust_service = investigation_trust_service
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -189,12 +222,15 @@ class AssistantOrchestrator:
             context_pack = self.context_retriever.get_context_for_question(
                 normalized_project_id, request.text)
             allowed_intents = self._allowed_capability_intents()
+            progress_target = self._find_eligible_investigation_target(
+                normalized_project_id, conversation, before_sequence=user_turn.sequence_number)
             provider_request = AssistantRequest(
                 user_text=request.text,
                 project_context=self._project_context_payload(context_pack),
                 prior_turns=prior_turns,
                 images=image_inputs,
                 allowed_capability_intents=allowed_intents,
+                investigation_progress_eligible=progress_target is not None,
             )
             try:
                 result = self.provider.respond(provider_request)
@@ -263,6 +299,32 @@ class AssistantOrchestrator:
                     raise
             else:
                 content_parts = [ConversationTextPart(text=result.text)]
+
+            # Conversational Project Progression, Slice 1: reported_progress is orthogonal to
+            # capability_intent (see AssistantResponse), so this runs regardless of which branch
+            # above executed - a turn may both confirm/correct the prior outstanding Investigation
+            # claim AND independently trigger EXPLORE/VISUALIZE_OPTION/INVESTIGATE/NONE in the same
+            # message, without a second model call: the SAME provider response already carried both
+            # signals (OpenAI tool-calling already supports more than one tool_call per message).
+            # progress_target was resolved BEFORE the branch above ran, from conversation state as
+            # of the START of this turn - so it can never be the brand-new Investigation/Explore
+            # result THIS turn's own primary capability just produced; the two are always distinct
+            # targets. Still requires a real eligible target (never fires on an unrelated message,
+            # silence, or topic change - see _find_eligible_investigation_target) and still fails
+            # the whole turn honestly (retry-safe, like every other bridge failure) rather than
+            # silently dropping either the primary capability's result or the progress update.
+            if result.reported_progress is not None and progress_target is not None:
+                try:
+                    self._apply_reported_investigation_progress(
+                        normalized_project_id, progress_target, result.reported_progress, request.text)
+                except ConversationInvestigationError as exc:
+                    self._fail_assistant_turn(
+                        conversation, assistant_turn,
+                        failure_category="investigate_failure",
+                        failure_message=str(exc),
+                        user_facing_text="Could not record that update right now. Retry this message.",
+                    )
+                    raise
 
             completed = assistant_turn.model_copy(update={
                 "status": ConversationTurnStatus.COMPLETED,
@@ -468,6 +530,112 @@ class AssistantOrchestrator:
             ConversationTextPart(text=text),
             ConversationInvestigationReferencePart(investigation_session_id=result.troubleshoot.session_id),
         ]
+
+    def _find_eligible_investigation_target(
+        self, project_id: str, conversation: ProjectConversation, *, before_sequence: int,
+    ) -> str | None:
+        """Conversational Project Progression, Slice 1: the ONLY thing that decides whether
+        report_investigation_progress is even offered to the model this turn - a real target must
+        already exist in THIS conversation's own persisted state, never a model judgment call. The
+        target is the most recently INVESTIGATION_REFERENCE-d session in this conversation, and only
+        while its trust state is still "awaiting_decision" (fresh - no decision yet) or
+        "working_hypothesis" (a prior CONTINUE, still correctable per ADR-049's DISAGREE semantics -
+        "Don't mark that complete" after an earlier confirmation is exactly this case). An
+        already-DISAGREE'd or MORE-EVIDENCE'd target is out of Slice 1's bounded scope and is
+        deliberately not re-offered here. If the most recent reference is not eligible, this does
+        NOT fall back to an older one - "eligible target" means the most recent one, or none."""
+        if self.investigation_trust_service is None:
+            return None
+        candidates = [item for item in conversation.turns if item.sequence_number < before_sequence]
+        for turn in reversed(candidates):
+            for part in turn.content_parts:
+                if isinstance(part, ConversationInvestigationReferencePart):
+                    try:
+                        state = self.investigation_trust_service.get_state(
+                            project_id, part.investigation_session_id)
+                    except (ProjectInvestigationTrustError, InvestigationStoreError,
+                            InvestigationSessionStoreError):
+                        return None
+                    if state.status in ("awaiting_decision", "working_hypothesis"):
+                        return part.investigation_session_id
+                    return None
+        return None
+
+    @staticmethod
+    def _is_low_consequence_checkpoint_patch(patch: CheckpointProposalPatch) -> bool:
+        return set(patch.to_update_fields()) <= _LOW_CONSEQUENCE_CHECKPOINT_FIELDS
+
+    def _apply_reported_investigation_progress(
+        self,
+        project_id: str,
+        investigation_session_id: str,
+        reported: AssistantReportedProgress,
+        user_text: str,
+    ) -> None:
+        """Conversational Project Progression, Slice 1 CONFIRMED path: record the outcome and, only
+        for a low-consequence patch (Slice 1 implementation policy - see
+        _LOW_CONSEQUENCE_CHECKPOINT_FIELDS), apply the resulting CheckpointProposal through the
+        EXISTING apply mechanism in this same request - never a new mutation path. A
+        significant-change patch is left PENDING, exactly like the legacy CONTINUE button today.
+
+        CORRECTED path: never advances the rejected claim. Any PENDING proposal tied to the prior
+        decision is rejected via the existing reject mechanism; an already-APPLIED prior proposal has
+        no revert (forward correction only, not undo - see architecture review) and is left as durable
+        history, consistent with never erasing historical Activities.
+
+        Both paths reuse ProjectInvestigationTrustService.decide() verbatim - the exact same
+        Activity/provenance/idempotency behavior the legacy CONTINUE/DISAGREE UI already relies on,
+        so a retried conversational turn (same idempotency_key) converges exactly like a retried
+        button click already does, and no second Activity/Proposal-creation implementation exists.
+        """
+        try:
+            prior_state = self.investigation_trust_service.get_state(project_id, investigation_session_id)
+        except (ProjectInvestigationTrustError, InvestigationStoreError,
+                InvestigationSessionStoreError) as exc:
+            raise ConversationInvestigationError(str(exc)) from exc
+
+        decision_type = (
+            ProjectTrustDecisionType.CONTINUE
+            if reported.outcome == ReportedProgressOutcome.CONFIRMED
+            else ProjectTrustDecisionType.DISAGREE
+        )
+        correction = user_text.strip()[:1000] or None
+        try:
+            response = self.investigation_trust_service.decide(
+                project_id, investigation_session_id,
+                ProjectTrustDecisionRequest(decision=decision_type, correction=correction),
+            )
+        except (ProjectInvestigationTrustError, InvestigationStoreError, InvestigationSessionStoreError,
+                CheckpointProposalStoreError, ProjectActivityStoreError) as exc:
+            raise ConversationInvestigationError(str(exc)) from exc
+
+        if decision_type == ProjectTrustDecisionType.DISAGREE:
+            if (prior_state.checkpoint_proposal_id is not None
+                    and prior_state.checkpoint_proposal_status == CheckpointProposalStatus.PENDING):
+                try:
+                    self.investigation_trust_service.proposal_store.reject_proposal(
+                        project_id, prior_state.checkpoint_proposal_id)
+                except CheckpointProposalStoreError:
+                    pass
+            return
+
+        proposal = response.checkpoint_proposal
+        if proposal is None or proposal.status != CheckpointProposalStatus.PENDING:
+            return
+        if not self._is_low_consequence_checkpoint_patch(proposal.proposed_checkpoint_patch):
+            # Significant Project change (ADR-042/ADR-043): stays PENDING, exactly like the legacy
+            # CONTINUE button today. Slice 1's assistant reply is not yet specialized to ask a
+            # confirming question for this case - see architecture review, "what remains
+            # intentionally unimplemented."
+            return
+        try:
+            self.investigation_trust_service.proposal_store.apply_proposal(project_id, proposal.proposal_id)
+        except (CheckpointProposalRevisionConflict, CheckpointProposalStateError):
+            # Already advanced by an earlier equivalent confirmation, or a sibling proposal with
+            # identical content already applied (see CheckpointProposalStore's own reconciliation) -
+            # the Project already reflects this outcome, so this is a benign no-op, never a
+            # user-facing failure or a duplicate state advancement.
+            pass
 
     def _ensure_evidence_explanation(
         self, reference: ConversationEvidenceReferencePart, explanation_text: str,

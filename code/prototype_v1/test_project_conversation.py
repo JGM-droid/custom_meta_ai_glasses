@@ -18,10 +18,18 @@ from projects.assistant_orchestrator import AssistantOrchestrator, MAX_PRIOR_CON
 from projects.assistant_provider import (
     AssistantCapabilityIntent,
     AssistantProviderError,
+    AssistantReportedProgress,
     AssistantResponse,
     OpenAIAssistantProvider,
+    ReportedProgressOutcome,
 )
 from projects.conversation_store import ProjectConversationStore
+from projects.models import (
+    CheckpointProposalPatch,
+    CheckpointProposalStatus,
+    ProjectTrustDecisionRequest,
+    ProjectTrustDecisionType,
+)
 from projects.project_conversation import ConversationSendRequest, ConversationTurnStatus
 from projects.visual_artifacts import (
     VisualArtifactCreateRequest,
@@ -50,6 +58,12 @@ class FakeAssistantProvider:
         self.visualize_intent_texts: dict[str, int] = {}
         # Phase 3C test-only stand-in, mirrors explore_intent_texts above.
         self.investigate_intent_texts: set[str] = set()
+        # Conversational Project Progression, Slice 1 test-only stand-in, mirrors the pattern above:
+        # maps an exact message text to the outcome a real model's report_investigation_progress
+        # tool-call argument would have carried. Only ever honored when the orchestrator itself
+        # marked this turn eligible (request.investigation_progress_eligible), exactly like a real
+        # OpenAIAssistantProvider only offers the tool in that case.
+        self.reported_progress_texts: dict[str, ReportedProgressOutcome] = {}
 
     def respond(self, request):
         self.calls += 1
@@ -58,25 +72,41 @@ class FakeAssistantProvider:
             time.sleep(self.delay_seconds)
         if self.fail:
             raise AssistantProviderError("fixture provider failure")
+        # Conversational Project Progression, Slice 1: computed independently of, and attached
+        # alongside, whichever primary capability branch fires below - mirrors a real
+        # OpenAIAssistantProvider response, which can carry more than one tool_call (the primary
+        # capability tool and report_investigation_progress) in the same single model call. Only
+        # ever honored when the orchestrator itself marked this turn eligible
+        # (request.investigation_progress_eligible), exactly like a real provider only offers the
+        # tool in that case.
+        reported_progress = None
+        if (request.investigation_progress_eligible
+                and request.user_text in self.reported_progress_texts):
+            reported_progress = AssistantReportedProgress(
+                outcome=self.reported_progress_texts[request.user_text])
         if (AssistantCapabilityIntent.EXPLORE in request.allowed_capability_intents
                 and request.user_text in self.explore_intent_texts):
             return AssistantResponse(text="", provider="fake-provider", model="fake-model",
-                                      request_id="req-1", capability_intent=AssistantCapabilityIntent.EXPLORE)
+                                      request_id="req-1", capability_intent=AssistantCapabilityIntent.EXPLORE,
+                                      reported_progress=reported_progress)
         if (AssistantCapabilityIntent.VISUALIZE_OPTION in request.allowed_capability_intents
                 and request.user_text in self.visualize_intent_texts):
             return AssistantResponse(
                 text="", provider="fake-provider", model="fake-model", request_id="req-1",
                 capability_intent=AssistantCapabilityIntent.VISUALIZE_OPTION,
-                visualize_option_ordinal=self.visualize_intent_texts[request.user_text])
+                visualize_option_ordinal=self.visualize_intent_texts[request.user_text],
+                reported_progress=reported_progress)
         if (AssistantCapabilityIntent.INVESTIGATE in request.allowed_capability_intents
                 and request.user_text in self.investigate_intent_texts):
             return AssistantResponse(text="", provider="fake-provider", model="fake-model",
-                                      request_id="req-1", capability_intent=AssistantCapabilityIntent.INVESTIGATE)
+                                      request_id="req-1", capability_intent=AssistantCapabilityIntent.INVESTIGATE,
+                                      reported_progress=reported_progress)
         if request.prior_turns:
             text = f"Because the Project context says to continue next, and we previously discussed: {request.prior_turns[-1].text}"
         else:
             text = "Work on the recorded next action from the bounded Project context."
-        return AssistantResponse(text=text, provider="fake-provider", model="fake-model", request_id="req-1")
+        return AssistantResponse(text=text, provider="fake-provider", model="fake-model", request_id="req-1",
+                                  reported_progress=reported_progress)
 
 
 @pytest.fixture
@@ -106,6 +136,11 @@ def conversation_context(routing_context, monkeypatch):
     # is the SAME real ProjectAIResultPlanner route()'s own TROUBLESHOOT dispatch uses, fully
     # fake-backed, never a second Investigation dispatch construction.
     ai_result_planner = api._create_project_ai_result_planner(explore_service=explore_service, include_routing=True)
+    # Conversational Project Progression, Slice 1: the SAME production wiring function
+    # (_project_trust_service) - every dependency it reads (PROJECT_ACTIVITY_STORE,
+    # CHECKPOINT_PROPOSAL_STORE, SESSION_STORE, INVESTIGATION_LATEST_JSON) was already monkeypatched
+    # onto the api module by routing_context above, so this is not a second/parallel construction.
+    investigation_trust_service = api._project_trust_service()
     orchestrator = AssistantOrchestrator(
         project_store=ctx["project_store"],
         conversation_store=store,
@@ -116,6 +151,7 @@ def conversation_context(routing_context, monkeypatch):
         explore_service=explore_service,
         visual_artifact_service=visual_artifact_service,
         ai_result_planner=ai_result_planner,
+        investigation_trust_service=investigation_trust_service,
     )
     monkeypatch.setattr(api, "PROJECT_CONVERSATION_STORE", store)
     monkeypatch.setattr(api, "VISUAL_ARTIFACT_STORE", visual_artifact_store)
@@ -123,7 +159,9 @@ def conversation_context(routing_context, monkeypatch):
     return {**ctx, "conversation_store": store, "provider": provider, "orchestrator": orchestrator,
             "explore_service": explore_service, "visual_artifact_store": visual_artifact_store,
             "visual_provider": visual_provider, "visual_artifact_service": visual_artifact_service,
-            "ai_result_planner": ai_result_planner}
+            "ai_result_planner": ai_result_planner,
+            "investigation_trust_service": investigation_trust_service,
+            "proposal_store": api.CHECKPOINT_PROPOSAL_STORE}
 
 
 def _send(client, project_id, text, key):
@@ -1731,3 +1769,330 @@ def test_investigate_bridge_never_reaches_legacy_multipart_pipeline(conversation
         [_reference(session.session_id, evidence.evidence_id)],
     )
     assert path_a.status_code == 200
+
+
+# --- Conversational Project Progression, Slice 1 ---
+#
+# Scope: Investigation-originated outstanding claims only (architecture review + approved
+# refinements). Reuses ProjectInvestigationTrustService.decide() verbatim - the SAME
+# Activity/provenance/CheckpointProposal machinery the legacy CONTINUE/DISAGREE UI already calls -
+# never a second mutation path, never a fifth AssistantCapabilityIntent. A "confirmed" outcome maps
+# to CONTINUE; a "corrected" outcome maps to DISAGREE. Auto-apply through the EXISTING apply
+# mechanism only happens for a low-consequence patch (Slice 1 implementation policy - see
+# assistant_orchestrator._LOW_CONSEQUENCE_CHECKPOINT_FIELDS); Investigation-originated CONTINUE
+# proposals only ever touch next_action, so every real proposal in this slice is low-consequence.
+
+def _reach_completed_investigation(ctx, project_id: str, text: str = "Why isn't this outlet working?"):
+    """Drives the conversation to a real, completed, Path A Investigation with exactly one
+    INVESTIGATION_REFERENCE - the exact prerequisite state _find_eligible_investigation_target
+    requires - reusing the same fixture pattern the Phase 3C Investigation-bridge tests already use."""
+    session, evidence = _attach_image(ctx, project_id)
+    ctx["provider"].investigate_intent_texts.add(text)
+    response = _send_with_evidence(
+        ctx["client"], project_id, text, "reach-investigation-1",
+        [_reference(session.session_id, evidence.evidence_id)],
+    )
+    assert response.status_code == 200
+    return session.session_id
+
+
+def test_no_eligible_target_means_progress_signal_is_never_even_offered(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    # No Investigation has ever occurred in this conversation - register the outcome anyway to
+    # prove the fake (mirroring a real OpenAIAssistantProvider) still cannot report it, since
+    # investigation_progress_eligible gates the tool's very availability, not just its use.
+    ctx["provider"].reported_progress_texts["I did that and it worked."] = ReportedProgressOutcome.CONFIRMED
+
+    response = _send(ctx["client"], project["project_id"], "I did that and it worked.", "no-target-1")
+
+    assert response.status_code == 200
+    assert ctx["provider"].requests[-1].investigation_progress_eligible is False
+    assert ctx["activity_store"].list_activities(project["project_id"]) == []
+    unchanged = ctx["project_store"].load_project(project["project_id"])
+    assert unchanged.revision == 0
+
+
+def test_grounded_confirmed_outcome_creates_correct_activity_and_provenance(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session_id = _reach_completed_investigation(ctx, project["project_id"])
+
+    ctx["provider"].reported_progress_texts["I did that and it worked."] = ReportedProgressOutcome.CONFIRMED
+    response = _send(ctx["client"], project["project_id"], "I did that and it worked.", "confirm-1")
+
+    assert response.status_code == 200
+    assert ctx["provider"].requests[-1].investigation_progress_eligible is True
+    decisions = [
+        a for a in ctx["activity_store"].list_activities(project["project_id"])
+        if (a.metadata or {}).get("trust_decision") == "continue"
+    ]
+    assert len(decisions) == 1
+    decision = decisions[0]
+    # User-reported, not AI-inferred - the existing distinguishing provenance mechanism
+    # (source_type/confirmation_status), exactly as the legacy CONTINUE button already produces.
+    assert decision.source_type.value == "user"
+    assert decision.confirmation_status.value == "reported"
+    assert decision.details == "I did that and it worked."
+    assert decision.metadata["trust_session_id"] == session_id
+
+
+def test_safe_progression_creates_and_applies_proposal_through_existing_mechanism(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"])
+    before = ctx["project_store"].load_project(project["project_id"])
+    assert before.checkpoint.next_action is None
+
+    ctx["provider"].reported_progress_texts["I did that and it worked."] = ReportedProgressOutcome.CONFIRMED
+    response = _send(ctx["client"], project["project_id"], "I did that and it worked.", "confirm-apply-1")
+
+    assert response.status_code == 200
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision + 1
+    assert after.checkpoint.next_action  # the Investigation's required_next_action, now canonical
+    proposals = ctx["proposal_store"].list_proposals(project["project_id"])
+    assert len(proposals) == 1
+    assert proposals[0].status == CheckpointProposalStatus.APPLIED
+    assert proposals[0].proposed_checkpoint_patch.to_update_fields() == {"next_action": after.checkpoint.next_action}
+
+
+def test_low_consequence_gate_distinguishes_narrative_from_significant_fields():
+    # Focused unit coverage for the Slice 1 consequence policy itself (ADR-042/ADR-043): Investigation
+    # CONTINUE proposals only ever produce a next_action-only patch in this slice, so the
+    # significant-change branch is exercised here directly rather than via an unreachable end-to-end
+    # scenario.
+    low = CheckpointProposalPatch(next_action="Check the breaker.", current_work="Testing the outlet.")
+    high = CheckpointProposalPatch(completed_summary="Repair finished.")
+    mixed = CheckpointProposalPatch(next_action="Check the breaker.", completed_summary="Repair finished.")
+    assert AssistantOrchestrator._is_low_consequence_checkpoint_patch(low) is True
+    assert AssistantOrchestrator._is_low_consequence_checkpoint_patch(high) is False
+    assert AssistantOrchestrator._is_low_consequence_checkpoint_patch(mixed) is False
+
+
+def test_correction_never_advances_checkpoint_and_records_correction(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"])
+    before = ctx["project_store"].load_project(project["project_id"])
+
+    ctx["provider"].reported_progress_texts["That didn't work."] = ReportedProgressOutcome.CORRECTED
+    response = _send(ctx["client"], project["project_id"], "That didn't work.", "correct-1")
+
+    assert response.status_code == 200
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision
+    assert after.checkpoint == before.checkpoint
+    decisions = [
+        a for a in ctx["activity_store"].list_activities(project["project_id"])
+        if (a.metadata or {}).get("trust_decision") == "disagree"
+    ]
+    assert len(decisions) == 1
+    assert decisions[0].details == "That didn't work."
+    assert ctx["proposal_store"].list_proposals(project["project_id"]) == []
+
+
+def test_correction_rejects_a_pending_proposal_tied_to_the_prior_decision(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    session_id = _reach_completed_investigation(ctx, project["project_id"])
+    # Simulate a PENDING proposal already existing for this Investigation from an earlier decision
+    # (e.g. the legacy CONTINUE button, or a future significant-change path that stays PENDING) -
+    # calling decide() directly, bypassing the conversation bridge, so this proposal is genuinely
+    # still PENDING rather than already auto-applied.
+    setup = ctx["investigation_trust_service"].decide(
+        project["project_id"], session_id,
+        ProjectTrustDecisionRequest(decision=ProjectTrustDecisionType.CONTINUE, correction="first pass"))
+    assert setup.checkpoint_proposal.status == CheckpointProposalStatus.PENDING
+
+    ctx["provider"].reported_progress_texts["Don't mark that complete."] = ReportedProgressOutcome.CORRECTED
+    response = _send(ctx["client"], project["project_id"], "Don't mark that complete.", "correct-reject-1")
+
+    assert response.status_code == 200
+    rejected = ctx["proposal_store"].load_proposal(project["project_id"], setup.checkpoint_proposal.proposal_id)
+    assert rejected.status == CheckpointProposalStatus.REJECTED
+    unchanged = ctx["project_store"].load_project(project["project_id"])
+    assert unchanged.revision == 0
+
+
+def test_unrelated_continuation_does_not_progress_even_when_a_target_exists(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"])
+    before = ctx["project_store"].load_project(project["project_id"])
+    before_activity_count = len(ctx["activity_store"].list_activities(project["project_id"]))
+
+    # Deliberately NOT registered in reported_progress_texts - a real model judged this message did
+    # not address the outcome, exactly like a genuine topic change/unrelated continuation must not
+    # be treated as confirmation.
+    response = _send(ctx["client"], project["project_id"], "By the way, what's my Project goal again?", "unrelated-1")
+
+    assert response.status_code == 200
+    assert ctx["provider"].requests[-1].investigation_progress_eligible is True  # target existed, tool was offered
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision
+    assert len(ctx["activity_store"].list_activities(project["project_id"])) == before_activity_count
+
+
+def test_progress_retry_with_same_idempotency_key_does_not_duplicate(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"])
+    ctx["provider"].reported_progress_texts["I did that and it worked."] = ReportedProgressOutcome.CONFIRMED
+
+    first = _send(ctx["client"], project["project_id"], "I did that and it worked.", "retry-confirm-1")
+    calls_after_first = ctx["provider"].calls
+    revision_after_first = ctx["project_store"].load_project(project["project_id"]).revision
+    proposals_after_first = len(ctx["proposal_store"].list_proposals(project["project_id"]))
+
+    retry = _send(ctx["client"], project["project_id"], "I did that and it worked.", "retry-confirm-1")
+
+    assert first.status_code == retry.status_code == 200
+    assert retry.json()["reconstructed"] is True
+    assert ctx["provider"].calls == calls_after_first  # no second provider call
+    assert ctx["project_store"].load_project(project["project_id"]).revision == revision_after_first
+    assert len(ctx["proposal_store"].list_proposals(project["project_id"])) == proposals_after_first
+
+
+def test_progress_preserves_project_isolation(conversation_context):
+    ctx = conversation_context
+    project_a = create_project(ctx["client"], name="Project A")
+    project_b = create_project(ctx["client"], name="Project B")
+    _reach_completed_investigation(ctx, project_a["project_id"])
+    before_b = ctx["project_store"].load_project(project_b["project_id"])
+
+    ctx["provider"].reported_progress_texts["I did that and it worked."] = ReportedProgressOutcome.CONFIRMED
+    response = _send(ctx["client"], project_a["project_id"], "I did that and it worked.", "isolation-confirm-1")
+
+    assert response.status_code == 200
+    after_a = ctx["project_store"].load_project(project_a["project_id"])
+    after_b = ctx["project_store"].load_project(project_b["project_id"])
+    assert after_a.revision == 1  # Project A genuinely advanced
+    assert after_b == before_b  # Project B completely untouched
+    assert ctx["activity_store"].list_activities(project_b["project_id"]) == []
+
+
+# --- Conversational Project Progression, Slice 1: combined-turn review ---
+#
+# reported_progress is orthogonal to capability_intent on AssistantResponse (a real
+# OpenAIAssistantProvider response can carry more than one tool_call - the primary capability tool
+# and report_investigation_progress - in the same single model call), so a turn that both
+# confirms/corrects the prior outstanding Investigation AND independently triggers another
+# capability must not silently lose either signal. FakeAssistantProvider.respond() computes
+# reported_progress once, independently of which capability branch it then returns, exactly
+# mirroring the real provider - these tests exercise both together in one turn.
+
+def test_confirmation_and_investigate_in_same_turn_both_take_effect(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"], text="This outlet keeps tripping.")
+    before = ctx["project_store"].load_project(project["project_id"])
+
+    combined = "That worked, but now I'm getting this new error. What's causing it?"
+    ctx["provider"].reported_progress_texts[combined] = ReportedProgressOutcome.CONFIRMED
+    ctx["provider"].investigate_intent_texts.add(combined)
+
+    response = _send(ctx["client"], project["project_id"], combined, "combined-confirm-investigate-1")
+
+    assert response.status_code == 200
+    # The prior outlet Investigation's progress was preserved and applied.
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision + 1
+    assert after.checkpoint.next_action
+    proposals = ctx["proposal_store"].list_proposals(project["project_id"])
+    assert any(p.status == CheckpointProposalStatus.APPLIED for p in proposals)
+    # The NEW investigation (no evidence attached this turn -> Path B) still genuinely executed -
+    # it was not silently skipped or replaced by the progress side effect.
+    assert ctx["text_troubleshoot_provider"].calls == 1
+    assistant_text = response.json()["turns"][1]["content_parts"][0]["text"]
+    assert assistant_text  # Path B's own text, distinct from the progress acknowledgment
+
+
+def test_correction_and_investigate_in_same_turn_both_take_effect(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"], text="This outlet keeps tripping.")
+    before = ctx["project_store"].load_project(project["project_id"])
+
+    combined = "That didn't work. Also, why is this new light flickering?"
+    ctx["provider"].reported_progress_texts[combined] = ReportedProgressOutcome.CORRECTED
+    ctx["provider"].investigate_intent_texts.add(combined)
+
+    response = _send(ctx["client"], project["project_id"], combined, "combined-correct-investigate-1")
+
+    assert response.status_code == 200
+    # The correction was preserved - no checkpoint advancement from the rejected claim.
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision
+    assert after.checkpoint == before.checkpoint
+    decisions = [
+        a for a in ctx["activity_store"].list_activities(project["project_id"])
+        if (a.metadata or {}).get("trust_decision") == "disagree"
+    ]
+    assert len(decisions) == 1
+    assert decisions[0].details == combined
+    # The NEW investigation still genuinely executed alongside the correction.
+    assert ctx["text_troubleshoot_provider"].calls == 1
+
+
+def test_no_eligible_target_with_investigate_still_skips_progress_only(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    # No prior Investigation exists in this conversation at all.
+    combined = "That worked. What's causing this new error?"
+    ctx["provider"].reported_progress_texts[combined] = ReportedProgressOutcome.CONFIRMED
+    ctx["provider"].investigate_intent_texts.add(combined)
+
+    response = _send(ctx["client"], project["project_id"], combined, "no-target-investigate-1")
+
+    assert response.status_code == 200
+    assert ctx["provider"].requests[-1].investigation_progress_eligible is False
+    unchanged = ctx["project_store"].load_project(project["project_id"])
+    assert unchanged.revision == 0
+    # The primary capability was entirely unaffected by the absent progress target.
+    assert ctx["text_troubleshoot_provider"].calls == 1
+
+
+def test_unrelated_message_with_explore_does_not_falsely_progress(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"], text="This outlet keeps tripping.")
+    before = ctx["project_store"].load_project(project["project_id"])
+
+    unrelated = "Give me some ideas for organizing this space instead."
+    ctx["provider"].explore_intent_texts.add(unrelated)
+    # Deliberately NOT registered in reported_progress_texts - a real model judged this message
+    # does not address the outstanding Investigation's outcome at all.
+
+    response = _send(ctx["client"], project["project_id"], unrelated, "unrelated-explore-1")
+
+    assert response.status_code == 200
+    assert ctx["provider"].requests[-1].investigation_progress_eligible is True  # a target did exist
+    after = ctx["project_store"].load_project(project["project_id"])
+    assert after.revision == before.revision  # no false progression
+    assert ctx["explore_provider"].calls == 1  # EXPLORE still executed normally
+
+
+def test_combined_turn_retry_with_same_idempotency_key_does_not_duplicate(conversation_context):
+    ctx = conversation_context
+    project = create_project(ctx["client"])
+    _reach_completed_investigation(ctx, project["project_id"], text="This outlet keeps tripping.")
+
+    combined = "That worked, but now I'm getting this new error. What's causing it?"
+    ctx["provider"].reported_progress_texts[combined] = ReportedProgressOutcome.CONFIRMED
+    ctx["provider"].investigate_intent_texts.add(combined)
+
+    first = _send(ctx["client"], project["project_id"], combined, "combined-retry-1")
+    calls_after_first = ctx["provider"].calls
+    troubleshoot_calls_after_first = ctx["text_troubleshoot_provider"].calls
+    revision_after_first = ctx["project_store"].load_project(project["project_id"]).revision
+    proposals_after_first = len(ctx["proposal_store"].list_proposals(project["project_id"]))
+
+    retry = _send(ctx["client"], project["project_id"], combined, "combined-retry-1")
+
+    assert first.status_code == retry.status_code == 200
+    assert retry.json()["reconstructed"] is True
+    assert ctx["provider"].calls == calls_after_first
+    assert ctx["text_troubleshoot_provider"].calls == troubleshoot_calls_after_first
+    assert ctx["project_store"].load_project(project["project_id"]).revision == revision_after_first
+    assert len(ctx["proposal_store"].list_proposals(project["project_id"])) == proposals_after_first
