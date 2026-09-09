@@ -2444,7 +2444,14 @@ async def dashboard_page():
     dashboard_html = BASE_DIR / "dashboard.html"
     if not dashboard_html.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found.")
-    return FileResponse(str(dashboard_html), media_type="text/html")
+    # FileResponse sets Last-Modified/ETag but no Cache-Control by default, so browsers apply
+    # heuristic caching and can silently keep serving a stale copy of this actively-edited page
+    # across an ordinary refresh (only a hard/force-reload would bypass it) - this file changes
+    # with the running server's own deployed code, so it must never be treated as cacheable.
+    return FileResponse(
+        str(dashboard_html), media_type="text/html",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/mvp-demo", response_class=FileResponse)

@@ -1589,6 +1589,169 @@
       cursor: not-allowed;
     }
 
+    /* Desktop ProjectConversation parity: this panel occupies the same
+       layout slot .workspace-composer used to (order: 0 on the
+       .workspace-shell flex column; order: 1 on phone, matching the
+       existing continuity-before-composer phone priority below) - it is
+       now the primary interaction surface, with the legacy Ask/Add
+       Note/Start Investigation controls demoted into
+       .workspace-secondary-tools immediately after it. */
+    .workspace-conversation-panel {
+      order: 0;
+      margin: 22px 0 26px;
+    }
+
+    .workspace-conversation-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 420px;
+      overflow-y: auto;
+      padding: 4px 2px 10px;
+      margin-bottom: 10px;
+    }
+
+    .conv-turn {
+      display: flex;
+      flex-direction: column;
+      max-width: 88%;
+    }
+
+    .conv-turn-user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .conv-turn-assistant {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .conv-bubble {
+      border-radius: var(--radius-lg);
+      padding: 10px 14px;
+      font-size: 0.95rem;
+      line-height: 1.48;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .conv-turn-user .conv-bubble {
+      background: var(--accent-quiet);
+      color: var(--ink);
+      border: 1px solid var(--border-hairline-strong);
+    }
+
+    .conv-turn-assistant .conv-bubble {
+      background: var(--surface-raised);
+      color: var(--ink);
+      border: 1px solid var(--border-hairline);
+    }
+
+    .conv-turn-failed .conv-bubble {
+      background: var(--danger-quiet);
+      border-color: var(--danger-border);
+      color: var(--ink);
+    }
+
+    .conv-meta {
+      margin-top: 4px;
+      font-size: 0.74rem;
+      color: var(--ink-faint);
+    }
+
+    .conv-reference-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      border: 1px solid var(--border-hairline-strong);
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 0.76rem;
+      color: var(--ink-quiet);
+      background: var(--surface);
+    }
+
+    .conv-evidence-thumb,
+    .conv-artifact-image {
+      display: block;
+      margin-top: 6px;
+      max-width: 220px;
+      max-height: 220px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-hairline-strong);
+    }
+
+    .workspace-conversation-form {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border-hairline-strong);
+      border-radius: var(--radius-lg);
+      padding: 10px 10px 10px 16px;
+      transition: border-color 120ms ease;
+    }
+
+    .workspace-conversation-form:focus-within {
+      border-color: var(--accent);
+    }
+
+    .workspace-conversation-input {
+      flex: 1;
+      border: 0;
+      background: transparent;
+      font-size: 1.02rem;
+      padding: 6px 4px;
+      resize: vertical;
+      min-height: 40px;
+      max-height: 260px;
+      font-family: inherit;
+    }
+
+    .workspace-conversation-input:focus-visible {
+      outline: none;
+    }
+
+    /* Reuses .project-details' own collapsed-disclosure treatment (arrow
+       marker, muted summary) rather than introducing a second details
+       style - only the layout order differs, since this sits where
+       .workspace-composer used to (order: 0 / phone order: 1), not with
+       Project Details (order: 3). */
+    .workspace-secondary-tools {
+      order: 0;
+      margin: 0 0 26px;
+    }
+
+    .workspace-secondary-tools > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--ink-quiet);
+      list-style: none;
+    }
+
+    .workspace-secondary-tools > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .workspace-secondary-tools > summary::before {
+      content: "▸ ";
+    }
+
+    .workspace-secondary-tools[open] > summary::before {
+      content: "▾ ";
+    }
+
+    .workspace-secondary-tools > summary:hover {
+      color: var(--ink);
+    }
+
+    .workspace-secondary-tools .workspace-composer {
+      margin: 14px 0 0;
+    }
+
     .workspace-continuity {
       order: 1;
       display: grid;
@@ -1875,8 +2038,17 @@
         grid-template-columns: 1fr;
       }
 
+      .workspace-conversation-panel,
+      .workspace-secondary-tools {
+        order: 1;
+      }
+
       .workspace-composer {
         order: 1;
+      }
+
+      .workspace-conversation-feed {
+        max-height: 320px;
       }
 
       .workspace-recent {
@@ -1969,6 +2141,21 @@
         <div id="workspaceActiveProjectStatus" class="workspace-status-note"></div>
         <div id="workspaceInspectorStatus" class="workspace-status-note">Select a project to inspect.</div>
 
+          <div class="workspace-conversation-panel" id="workspaceConversationPanel">
+            <div class="composer-label">Conversation</div>
+            <p class="composer-subtitle">The same persistent Project conversation used on the phone app - talk to this Project naturally, paste in long context, and ask follow-ups.</p>
+            <div id="workspaceConversationFeed" class="workspace-conversation-feed">
+              <div class="workspace-value muted">Select a project to see its conversation.</div>
+            </div>
+            <form id="workspaceConversationForm" class="workspace-conversation-form">
+              <textarea id="workspaceConversationInput" class="workspace-ask-input workspace-conversation-input" rows="2" placeholder="Message this Project... you can paste a long report" aria-label="Message this Project"></textarea>
+              <button id="workspaceConversationSendBtn" class="composer-icon-btn primary" type="submit" aria-label="Send" title="Send">➤</button>
+            </form>
+            <div id="workspaceConversationStatus" class="workspace-status-note" aria-live="polite"></div>
+          </div>
+
+          <details class="workspace-secondary-tools" id="workspaceSecondaryToolsDisclosure">
+            <summary>More workspace tools (Ask AI, Get Context, Add Note, Start Investigation)</summary>
           <div class="workspace-composer">
             <div class="composer-label">Capture / Ask</div>
             <p class="composer-subtitle">Add context, capture evidence, or ask for help.</p>
@@ -1993,6 +2180,7 @@
               <div id="workspaceAskAiRefs" class="workspace-value muted" style="margin-top: 6px;">No supporting project facts yet.</div>
             </div>
           </div>
+          </details>
 
           <div class="workspace-continuity">
             <div class="workspace-block">
@@ -2392,6 +2580,21 @@
     const API_PROJECT_CHECKPOINT_PROPOSAL_REJECT_URL = (projectId, proposalId) => `${API_ORIGIN}/projects/${projectId}/checkpoint-proposals/${proposalId}/reject`;
     const API_ACTIVE_PROJECT_URL = `${API_ORIGIN}/projects/active`;
     const API_SET_ACTIVE_PROJECT_URL = (projectId) => `${API_ORIGIN}/projects/active/${projectId}`;
+    // Desktop ProjectConversation parity: the exact same backend-owned ProjectConversation
+    // contract the Android client uses (GET/POST /projects/{id}/conversation,
+    // POST /projects/{id}/conversation/messages) - no desktop-specific conversation backend.
+    const API_PROJECT_CONVERSATION_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/conversation`;
+    const API_PROJECT_CONVERSATION_MESSAGES_URL = (projectId) => `${API_ORIGIN}/projects/${projectId}/conversation/messages`;
+    const API_EVIDENCE_CONTENT_URL = (projectId, sessionId, evidenceId) =>
+      `${API_ORIGIN}/projects/${projectId}/investigation-sessions/${sessionId}/evidence/${evidenceId}/content`;
+    const API_VISUAL_ARTIFACT_CONTENT_URL = (projectId, resultId, optionId, artifactId) =>
+      `${API_ORIGIN}/projects/${projectId}/ai-results/explore-plan/${resultId}/options/${optionId}/visual-artifacts/${artifactId}/content`;
+    // Mirrors the real backend constraint on ConversationSendRequest.text (api.py /
+    // project_conversation.py) exactly - deliberately NOT raised to "fix" long pastes, since that
+    // is a real product/backend decision, not a desktop-UI concern. A message longer than this is
+    // refused locally with a clear message instead of being silently truncated or rejected by the
+    // server after a round trip.
+    const MAX_CONVERSATION_SEND_TEXT_LENGTH = 4000;
     const DEMO_MIN_IMAGES = 1;
     const DEMO_MAX_IMAGES = 3;
     const POLL_MS = 3000;
@@ -2509,6 +2712,11 @@
     const workspaceProposalFormStatus = document.getElementById("workspaceProposalFormStatus");
     const workspaceHistory = document.getElementById("workspaceHistory");
     const workspaceInvestigations = document.getElementById("workspaceInvestigations");
+    const workspaceConversationFeed = document.getElementById("workspaceConversationFeed");
+    const workspaceConversationForm = document.getElementById("workspaceConversationForm");
+    const workspaceConversationInput = document.getElementById("workspaceConversationInput");
+    const workspaceConversationSendBtn = document.getElementById("workspaceConversationSendBtn");
+    const workspaceConversationStatus = document.getElementById("workspaceConversationStatus");
     const workspaceAskInput = document.getElementById("workspaceAskInput");
     const workspaceAskBtn = document.getElementById("workspaceAskBtn");
     const workspaceAskAiBtn = document.getElementById("workspaceAskAiBtn");
@@ -2569,6 +2777,20 @@
     let workspaceProposalSourceActivityId = null;
     let workspaceProposalSubmitInFlight = false;
     let workspaceProposalActionInFlight = new Set();
+
+    // Desktop ProjectConversation parity: the last-rendered conversation for the currently open
+    // Project, plus a token guarding against a slow background refresh overwriting a newer state
+    // (same pattern as workspaceLoadingToken above). Purely a render cache - the backend
+    // ProjectConversation store remains the sole source of truth; nothing here is persisted.
+    let workspaceConversationCache = [];
+    let workspaceConversationProjectId = "";
+    let workspaceConversationSendInFlight = false;
+    // Tab/session-scoped only (sessionStorage, not localStorage/a global Active Project) - which
+    // Project THIS browser tab is currently viewing must never drive or be driven by any other
+    // client. Restored on load so a refresh reopens the same Project/conversation; a brand new
+    // tab starts with no stored selection and falls back to the most recent Project, exactly as
+    // it already did before this change.
+    const WORKSPACE_SELECTED_PROJECT_STORAGE_KEY = "workspaceSelectedProjectId";
 
     const PROGRESS_STAGES = [
       ["validating", "Preparing Investigation"],
@@ -3944,6 +4166,34 @@
       }
     }
 
+    // sessionStorage is per-tab by browser design (a new tab gets its own empty store even for
+    // the same origin), which is exactly the "local/session/tab-specific" scope this Viewed
+    // Project selection must have - never localStorage (shared across tabs) and never the global
+    // Active Project endpoint used elsewhere in this file for capture attribution.
+    function readStoredWorkspaceSelectedProjectId() {
+      try {
+        return sessionStorage.getItem(WORKSPACE_SELECTED_PROJECT_STORAGE_KEY) || "";
+      } catch (_err) {
+        return "";
+      }
+    }
+
+    function writeStoredWorkspaceSelectedProjectId(projectId) {
+      try {
+        sessionStorage.setItem(WORKSPACE_SELECTED_PROJECT_STORAGE_KEY, projectId || "");
+      } catch (_err) {
+        // Private-browsing/storage-disabled: selection simply won't survive a refresh in this
+        // tab - not a functional blocker for anything else.
+      }
+    }
+
+    function generateIdempotencyKey() {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") {
+        return window.crypto.randomUUID();
+      }
+      return `desktop-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
     async function loadWorkspaceProjects() {
       setWorkspaceStatus(workspaceProjectsStatus, "Loading projects...");
       try {
@@ -3959,6 +4209,12 @@
         if (workspaceProjectsCache.length === 0) {
           workspaceSelectedProjectId = "";
           return;
+        }
+        if (!workspaceSelectedProjectId) {
+          // First load in this tab: prefer whatever this tab itself had open before a refresh
+          // (sessionStorage - tab-scoped, never a global Active Project) over defaulting to the
+          // most recent Project.
+          workspaceSelectedProjectId = readStoredWorkspaceSelectedProjectId();
         }
         if (!workspaceSelectedProjectId || !workspaceProjectsCache.some((item) => item.project_id === workspaceSelectedProjectId)) {
           workspaceSelectedProjectId = workspaceProjectsCache[0].project_id;
@@ -3983,6 +4239,7 @@
       // the next poll tick even though nothing the user did changed.
       const projectChanged = projectId !== workspaceAskViewsProjectId;
       workspaceSelectedProjectId = projectId;
+      writeStoredWorkspaceSelectedProjectId(projectId);
       renderWorkspaceProjectsList(workspaceProjectsCache);
       setWorkspaceStatus(workspaceInspectorStatus, "Loading selected project...");
 
@@ -4034,6 +4291,190 @@
       } catch (err) {
         if (loadToken !== workspaceLoadingToken) return;
         setWorkspaceStatus(workspaceInspectorStatus, `Failed to load project inspector: ${err?.message || err}`, true);
+      }
+
+      // Loaded independently of the Promise.all above (own try/catch, own status note) so a
+      // conversation-specific failure never blocks Now/Next/History/Investigations from
+      // rendering, and vice versa.
+      await loadWorkspaceConversation(projectId, loadToken, projectChanged || forceReset);
+    }
+
+    // Desktop ProjectConversation parity: reads the SAME backend-owned ProjectConversation
+    // Android already uses (GET /projects/{id}/conversation, which lazily creates the single
+    // primary conversation for a valid Project exactly like the POST variant - see api.py's
+    // read_project_conversation). No desktop-specific conversation store or endpoint.
+    // loadToken mirrors workspaceLoadingToken's own stale-response guard above: a slow response
+    // for a Project the user has since switched away from must never overwrite what's shown now.
+    async function loadWorkspaceConversation(projectId, loadToken, forceRerender) {
+      try {
+        const conversation = await fetchJsonOrThrow(
+          API_PROJECT_CONVERSATION_URL(projectId), "Unable to load conversation");
+        if (loadToken !== workspaceLoadingToken) return;
+        const turns = Array.isArray(conversation?.turns) ? conversation.turns : [];
+        const changed = forceRerender || !conversationTurnsMatchCache(turns, projectId);
+        workspaceConversationCache = turns;
+        workspaceConversationProjectId = projectId;
+        if (changed) {
+          renderWorkspaceConversation(turns, projectId);
+          scrollConversationFeedToBottom();
+        }
+        if (!workspaceConversationSendInFlight) {
+          setWorkspaceStatus(workspaceConversationStatus, "");
+        }
+      } catch (err) {
+        if (loadToken !== workspaceLoadingToken) return;
+        setWorkspaceStatus(workspaceConversationStatus, `Failed to load conversation: ${err?.message || err}`, true);
+      }
+    }
+
+    // Cheap identity check (same Project, same turn count, same last turn_id/status) - avoids
+    // rebuilding the feed and stealing scroll position on every ~6s background poll tick when
+    // nothing actually changed, mirroring the existing "projectChanged" guard pattern used for
+    // Ask views elsewhere in this file.
+    function conversationTurnsMatchCache(turns, projectId) {
+      if (projectId !== workspaceConversationProjectId) return false;
+      if (turns.length !== workspaceConversationCache.length) return false;
+      const lastNew = turns[turns.length - 1];
+      const lastCached = workspaceConversationCache[workspaceConversationCache.length - 1];
+      if (!lastNew && !lastCached) return true;
+      if (!lastNew || !lastCached) return false;
+      return lastNew.turn_id === lastCached.turn_id && lastNew.status === lastCached.status;
+    }
+
+    function renderWorkspaceConversation(turns, projectId) {
+      workspaceConversationFeed.innerHTML = "";
+      if (!Array.isArray(turns) || turns.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "workspace-value muted";
+        empty.textContent = "No messages yet. Say hello, or paste in what you're working on.";
+        workspaceConversationFeed.appendChild(empty);
+        return;
+      }
+      const sorted = [...turns].sort((a, b) => a.sequence_number - b.sequence_number);
+      for (const turn of sorted) {
+        workspaceConversationFeed.appendChild(buildConversationTurnElement(turn, projectId));
+      }
+    }
+
+    // Renders exactly the content_part types the Android client understands today (TEXT,
+    // PROJECT_RESOURCE_REFERENCE/Evidence, INVESTIGATION_REFERENCE, VISUAL_ARTIFACT_REFERENCE) -
+    // EXPLORE_REFERENCE gets no distinct treatment here either, matching Android exactly: its
+    // TEXT part already contains the formatted options, so no separate UI is "missing" relative
+    // to the phone app. Every value comes from textContent/attribute assignment, never innerHTML
+    // interpolation, matching this file's existing safe-rendering convention throughout.
+    function buildConversationTurnElement(turn, projectId) {
+      const isUser = turn.role === "USER";
+      const wrapper = document.createElement("div");
+      wrapper.className = `conv-turn ${isUser ? "conv-turn-user" : "conv-turn-assistant"}`;
+      if (turn.status === "FAILED") wrapper.classList.add("conv-turn-failed");
+
+      const parts = Array.isArray(turn.content_parts) ? turn.content_parts : [];
+      const textPart = parts.find((part) => part.type === "TEXT");
+
+      const bubble = document.createElement("div");
+      bubble.className = "conv-bubble";
+      bubble.textContent = textPart ? textPart.text : (turn.status === "PROCESSING" ? "..." : "");
+      wrapper.appendChild(bubble);
+
+      for (const part of parts) {
+        if (part.type === "PROJECT_RESOURCE_REFERENCE" && part.resource_kind === "EVIDENCE") {
+          const img = document.createElement("img");
+          img.className = "conv-evidence-thumb";
+          img.alt = "Attached evidence";
+          img.loading = "lazy";
+          img.src = API_EVIDENCE_CONTENT_URL(projectId, part.container_id, part.resource_id);
+          wrapper.appendChild(img);
+        } else if (part.type === "INVESTIGATION_REFERENCE") {
+          const chip = document.createElement("span");
+          chip.className = "conv-reference-chip";
+          chip.textContent = "🔎 Investigation";
+          wrapper.appendChild(chip);
+        } else if (part.type === "VISUAL_ARTIFACT_REFERENCE") {
+          const img = document.createElement("img");
+          img.className = "conv-artifact-image";
+          img.alt = "Generated visualization";
+          img.loading = "lazy";
+          img.src = API_VISUAL_ARTIFACT_CONTENT_URL(
+            projectId, part.project_ai_result_id, part.option_id, part.artifact_id);
+          wrapper.appendChild(img);
+        }
+      }
+
+      if (turn.status === "FAILED" && turn.failure_message) {
+        const failNote = document.createElement("div");
+        failNote.className = "conv-meta";
+        failNote.textContent = `Could not complete: ${normalize(turn.failure_message)}`;
+        wrapper.appendChild(failNote);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "conv-meta";
+      meta.textContent = formatShortDate(turn.completed_at_utc || turn.created_at_utc);
+      wrapper.appendChild(meta);
+
+      return wrapper;
+    }
+
+    function scrollConversationFeedToBottom() {
+      workspaceConversationFeed.scrollTop = workspaceConversationFeed.scrollHeight;
+    }
+
+    // Sends through the exact same POST /projects/{id}/conversation/messages endpoint and
+    // request shape Android uses (text + idempotency_key + evidence_refs) - no desktop-specific
+    // send path. A fresh idempotency_key is generated per explicit submit; on failure the
+    // message is not retried automatically, so a resend is a new, independent attempt (simplest
+    // safe behavior - avoids ambiguous partial-retry state).
+    async function sendWorkspaceConversationMessage(event) {
+      event.preventDefault();
+      if (workspaceConversationSendInFlight || !workspaceSelectedProjectId) return;
+      const text = workspaceConversationInput.value.trim();
+      if (!text) return;
+      if (text.length > MAX_CONVERSATION_SEND_TEXT_LENGTH) {
+        setWorkspaceStatus(
+          workspaceConversationStatus,
+          `Message is too long (${text.length}/${MAX_CONVERSATION_SEND_TEXT_LENGTH} characters). ` +
+          "Shorten it or split it into more than one message.",
+          true,
+        );
+        return;
+      }
+
+      const projectId = workspaceSelectedProjectId;
+      workspaceConversationSendInFlight = true;
+      workspaceConversationSendBtn.disabled = true;
+      workspaceConversationInput.disabled = true;
+      setWorkspaceStatus(workspaceConversationStatus, "Sending...");
+
+      try {
+        const response = await fetch(API_PROJECT_CONVERSATION_MESSAGES_URL(projectId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            idempotency_key: generateIdempotencyKey(),
+            evidence_refs: [],
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(await parseErrorResponseMessage(response, "Unable to send that message."));
+        }
+        const result = await response.json();
+        if (result?.project_id !== projectId) {
+          throw new Error("Backend returned conversation for a different Project.");
+        }
+        workspaceConversationInput.value = "";
+        setWorkspaceStatus(workspaceConversationStatus, "");
+        // Refetch the canonical full conversation rather than splicing in result.turns (which
+        // only contains the new exchange) - simplest correct way to stay in exact sync with the
+        // backend-owned ordering, and cheap at this scale.
+        await loadWorkspaceConversation(projectId, workspaceLoadingToken, true);
+      } catch (err) {
+        setWorkspaceStatus(workspaceConversationStatus, err?.message || "Unable to send that message.", true);
+      } finally {
+        workspaceConversationSendInFlight = false;
+        workspaceConversationSendBtn.disabled = false;
+        workspaceConversationInput.disabled = false;
+        workspaceConversationInput.focus();
       }
     }
 
@@ -4530,6 +4971,15 @@
     });
     copyGitCommandsBtn.addEventListener("click", async () => {
       await handleCopyAction(latestGitCommandsText, copyGitCommandsBtn, "Copy Git Commands", gitCopyStatus);
+    });
+    workspaceConversationForm.addEventListener("submit", sendWorkspaceConversationMessage);
+    workspaceConversationInput.addEventListener("keydown", (event) => {
+      // Enter sends; Shift+Enter inserts a newline - standard chat composer behavior, and the
+      // only way to enter a newline at all since this is otherwise a single form submit action.
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendWorkspaceConversationMessage(event);
+      }
     });
     workspaceAskBtn.addEventListener("click", askWorkspaceProjectQuestion);
     workspaceAskAiBtn.addEventListener("click", askWorkspaceProjectWithAI);
