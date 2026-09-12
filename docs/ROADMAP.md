@@ -1,5 +1,36 @@
 # Roadmap
 
+## Canonical Re-Baseline (2026-09-12) — Current Authority
+
+This section is authoritative for CURRENT MILESTONE / NEXT MILESTONE / BLOCKERS / DEFERRED tracking. It supersedes the older "Current / Next" heading immediately below (kept as historical phase-completion detail, not as the live tracker) for that purpose. See `docs/PROJECT_MEMORY_ARCHITECTURE.md`'s "Canonical Architecture Re-Baseline (2026-09-12)" section for the full reference architecture, proven/unproven findings, and cleanup decisions this re-baseline is built on.
+
+### Stage sequence (current state to a genuinely usable product)
+
+- **STAGE 0 - Architecture Cleanup / Re-baseline** - **CURRENT MILESTONE.** Confirmed-safe legacy cleanup, canonical reference architecture written down, this roadmap re-baselined. See `docs/PROJECT_MEMORY_ARCHITECTURE.md` for the full cleanup decisions (legacy `memory_manager.py` dependency documented and deferred; `project_knowledge.py` classified REUSE/EVOLVE; Checkpoint-must-not-compete warning recorded; Context Retriever defects documented for a later milestone; route-file maintainability recorded as debt).
+- **STAGE 1 - Current Project State / Salience Gate** - **NEXT MILESTONE.** The one remaining architecture falsification experiment (see "Remaining Architecture Gate" in `docs/PROJECT_MEMORY_ARCHITECTURE.md`) - no production implementation. After this gate, architecture exploration on the memory/context path stops unless a foundational assumption is falsified.
+- **STAGE 2 - Integrated Persistent Memory Shadow Slice** - one coherent shadow-memory system (durable facts/constraints, assertion modality, provenance, Decision subject+slot, Progress representation, supersession, deterministic truth filtering, Current Project State, targeted retrieval), shadow/log-only where canonical-mutation risk remains. Not a set of unrelated mini-projects. Records must be structured so actor/scope/time/provenance attribution (see the Product Requirement Amendment in `docs/PROJECT_MEMORY_ARCHITECTURE.md`) is possible later without redefining what a Project event is - reuse `ProjectActivity`'s existing `source_type`/provenance fields for this rather than a second attribution system. No accounts/roles/permissions/collaboration UI in this stage.
+- **STAGE 3 - Visual Evidence Continuity** - durable Evidence descriptions, description-first retrieval, selective original-image re-fetch, in production.
+- **STAGE 4 - Real Conversation Integration** - wire the proven memory/context path into `ProjectConversation`; resolve Checkpoint/Project Knowledge/Context Retriever ownership so there is exactly one source of truth for "what's currently true," not parallel ones. Must preserve the principle "the user talks naturally; the Workspace becomes structured automatically" - no user-facing form-filling or manual memory operation. Route-file maintainability debt is loosely scheduled here, only if the same file is already being touched substantively.
+- **STAGE 5 - Realistic Usability Acceptance** - run the Persistent Project Usability Acceptance spec ("Living Room Long-Horizon Acceptance," `docs/PROJECT_MEMORY_ARCHITECTURE.md`) through the actual real application, not a toy unit test or a narrow provider eval. Extend the existing question set with cross-cutting retrieval questions that exercise Project History + Current Project State + targeted retrieval together, not just conversational recall - e.g. "What did I work on most recently?", "What have I completed?", "What changed?", "What have we done regarding the TV area?", "What remains in this part of the Project?".
+- **STAGE 6 - Phone / Glasses Dogfood** - only after Stage 5 passes on desktop/backend. Validate the same continuity through Android and glasses where physically required.
+- **STAGE 7 - Product Validation / Collaboration Direction** - expose to external users; determine whether multi-user shared Projects are valuable; evaluate high-value verticals (e.g. construction/field work, illustrative only); evaluate whether glasses materially improve the workflow; evaluate actor-based queries ("what did Jesse do last," "who reported this") once more than one contributor is real. Multi-user collaboration, construction/field-work validation, and actor-based queries are all recorded future directions only - not scheduled for implementation before this stage, and not authorized by this entry.
+
+### Blockers
+
+- None blocking Stage 0 (this cleanup pass).
+- Stage 1 blocks Stage 2 - the Current Project State/Salience question must be resolved (or explicitly accepted as an open risk) before shadow-memory implementation begins, per `docs/PROJECT_MEMORY_ARCHITECTURE.md`'s Remaining Architecture Gate.
+- A prior, still-unaddressed finding (`docs/research/MULTI_AGENT_PRODUCT_REVIEW.md`, 2026-08-23): the core value proposition may already be commoditized by free bundled ChatGPT/Claude Project memory features. Not a technical blocker to Stages 0-6, but a standing risk that should inform how much further investment precedes Stage 7's real external-user validation.
+
+### Deferred / Backlog
+
+- Full Context Retriever redesign (closed keyword classifier, `next_action`+`fallback` zero-activity defect, fixed recency window) - deferred to Stage 2/4, not fixed piecemeal.
+- Legacy `memory_manager.py` migration - deferred until its owning legacy single-image endpoint is itself intentionally revisited; not expanded in the meantime.
+- Monolithic API route file split - deferred, loosely to Stage 4; not pursued as standalone cleanup.
+- Embeddings/vector retrieval infrastructure - not justified by any evidence gathered to date; revisit only if a future measured need arises (see `docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md`'s Revisit Triggers).
+- Local/self-hosted LLM - not justified by any evidence gathered to date.
+- Multi-user/shared-Project collaboration - recorded future direction, Stage 7 or later only.
+- UI redesign - out of scope for the memory/context work entirely; tracked separately if pursued.
+
 ## Current / Next — Conversational Project Assistant
 
 **Current: Phase 2 — Android conversation-first UI, PHYSICALLY ACCEPTED on real hardware (2026-09-08).** A user turn may reference up to five existing accepted Project image Evidence records in caller order. Conversation persists typed references only; the orchestrator resolves same-Project Evidence through the existing Investigation stores and sends bytes only for images explicitly attached to the current turn. Text-only follow-ups receive bounded prior text and Project context but do not automatically resend prior image bytes. See "Phase 2 Physical Validation" below for the accepted real-glasses/real-phone loop. Existing ADR-060 guidance, Investigation, Explore, Proposal, VisualArtifact, desktop, and glasses paths remain runnable and unmigrated - this acceptance proves the Phase 2 vertical slice only, not migration/retirement of those paths, and not production readiness, security, or cloud deployment.

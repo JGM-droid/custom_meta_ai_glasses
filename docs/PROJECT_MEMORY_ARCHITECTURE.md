@@ -2,7 +2,9 @@
 
 Status: Authoritative for approved forward product architecture.
 
-Last Updated: 2026-09-03
+Last Updated: 2026-09-12
+
+Product name (canonical, use this internally, not "ChatGPT with memory" or "AI chatbot for Meta glasses"): **Persistent AI Project Workspace**. See "Canonical Architecture Re-Baseline (2026-09-12)" near the end of this document for the current authoritative reference architecture, proven-vs-unproven findings, the one remaining architecture gate, product positioning, and the usability acceptance specification. That section supersedes any prior informal framing in this document where the two conflict; it does not delete or invalidate the ADR history below.
 
 ## Product Vision
 
@@ -1226,4 +1228,172 @@ Status: APPROVED TARGET ARCHITECTURE. Phase 0, Phase 1A, and Phase 1B Multimodal
 - architecture/Phase2_System_Design.md remains valuable as Investigation subsystem design history and implementation reference.
 - docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md is supporting external research evidence and does not override architecture authority.
 - docs/research/MULTI_AGENT_PRODUCT_REVIEW.md is a structured product/architecture review (RESEARCH / RECOMMENDATIONS - HUMAN REVIEW REQUIRED); it does not override architecture authority, and its recommendations are not automatically approved architecture or roadmap.
+- This document's own "Canonical Architecture Re-Baseline (2026-09-12)" section, below, is authoritative for current architecture status, proven/unproven findings, and product positioning going forward.
+
+ADR-063 - ACCEPTED
+Architecture Cleanup + Roadmap Re-Baseline (2026-09-12)
+
+Context: An independent architecture review (2026-09-12, conversation-only at the time) concluded the core memory/context direction from the week's falsification experiments (durable facts, assertion modality, supersession, bounded topic-narrowed retrieval, two-tier visual Evidence) is sound and converges with established external agent-memory patterns (Letta/MemGPT tiered memory, Mem0's extraction/update pipeline, LangMem's semantic/episodic/procedural split, Anthropic's compaction/note-taking guidance) - see the research citations in the Re-Baseline section below. The review also found this convergence was not a coincidence: this repository's own prior research (`docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md`) and a prior structured product review (`docs/research/MULTI_AGENT_PRODUCT_REVIEW.md`, 2026-08-23) had already identified the same failure classes (fixed-window blindness, silent misclassification, checkpoint rot) the week's dogfooding rediscovered empirically, and had already set an explicit "Revisit Trigger" for exactly this situation.
+
+Decision: Adopt the Canonical Architecture Re-Baseline below as the current authoritative reference architecture and roadmap status. Perform only confirmed-safe cleanup now (see "Confirmed Cleanup" below) - no new Persistent Memory implementation, no Current Project State/Salience experiment, no multi-user collaboration, no embeddings/vector infrastructure, no local LLM, in this pass.
+
+Consequence: `docs/ROADMAP.md` is re-baselined with an explicit Stage 0-7 sequence, current/next milestone, and a roadmap-discipline rule (see `AGENTS.md`) so future dogfood findings are triaged into an existing milestone, an explicit roadmap amendment, or backlog - never a silent, undocumented pivot.
+
+## Canonical Architecture Re-Baseline (2026-09-12)
+
+This section is the load-bearing summary of the 2026-09-12 independent architecture review and cleanup pass. It intentionally does not reproduce the full experimental transcripts (durable-fact extraction falsification, Memory Reader prototype, Decision/Progress retrieval falsification) - those were conversation-scoped falsification experiments, not themselves architecture; only their conclusions are recorded here, per this document's own Documentation Governance rule in `AGENTS.md` (research/experiments are not authority until their conclusions are approved and written down - this section is that write-down).
+
+### Product Positioning
+
+Canonical product name: **Persistent AI Project Workspace**. Do not describe this internally as "ChatGPT with memory" or "an AI chatbot for Meta glasses" - both undersell the actual differentiator and invite the wrong comparison set.
+
+Working product thesis: a Project Workspace that preserves the history, current state, Evidence, decisions, and progress of real work, and lets users interact with that Project naturally through desktop, phone, and hands-free wearable interfaces. Provider-independent AI reasons over application-owned Project continuity - the application owns state, history, decisions, progress, Evidence, provenance, and retrieval; the provider supplies intelligence only.
+
+This is a **thesis**, not a validated product-market fit claim. A prior structured review (`docs/research/MULTI_AGENT_PRODUCT_REVIEW.md`, 2026-08-23) independently found, with cited sources, that the core "persistent per-project AI memory" value proposition is already shipped free by the same providers this product depends on for its own model calls (ChatGPT Projects/Memory). That finding has not been re-litigated or resolved by this week's architecture work and should not be treated as settled. Potential future differentiators (glasses-first hands-free field capture, multimodal Evidence tied to Project history, cross-device continuity, provider independence, eventually shared/multi-user Project workspaces) remain unvalidated claims, not proven differentiation, until real external users demonstrate retention.
+
+A useful mental model for the intended product shape (illustrative only - not authorization to pivot into a construction-specific product): a construction team today coordinates a Project through a Dropbox folder of photos/notes/documents that people manually search to understand status. The target product experience is a **Project Workspace** where photos/voice/observations belong to the Project, decisions and progress persist, Project state stays current, and authorized users can later ask natural questions ("Where did we leave off on electrical?", "What happened in unit 412?", "What's blocking inspection?") and get a trustworthy answer instead of manually searching files. Multi-user/shared-Project collaboration is a plausible long-term direction implied by this model; it is explicitly **not authorized for implementation now** (see Stage 7 in `docs/ROADMAP.md`).
+
+### Canonical Reference Architecture
+
+Eight responsibilities, mapped onto existing or planned components - no new component is introduced merely to fill a slot:
+
+1. **Project Workspace / Project identity** - existing `ProjectStore`/`Project` schema. Canonical data: `project_id`, name, goal, status. Owns namespace isolation. No change.
+2. **ProjectConversation** - existing `conversation_store.py`/`ConversationTurn`. Canonical data: raw episodic turn log. Explicitly NOT canonical durable truth (unchanged principle, now with real-provider evidence behind it). No change.
+3. **Memory Extraction** (not yet implemented for ordinary conversation) - a planned, stateless pass recognizing durable facts/constraints/decisions/progress/corrections from a turn. AI-assisted where semantics require it (this week's experiments: deterministic-first, model fallback for ambiguous cases). Owns no canonical state itself.
+4. **Structured Project Memory** (not yet implemented) - durable facts, constraints/preferences, decisions, progress/events, with supersession, provenance (`source_type`), and assertion modality (new field, not yet added to the schema). The natural extension of the existing `ProjectActivity` store and its trust taxonomy, not a replacement for it.
+5. **Evidence** - existing Investigation evidence store/upload path, extended (not yet implemented) with a durable derived text description per Evidence record and a real "re-inspect original bytes" capability, proven viable this week.
+6. **Current Project State** (not yet implemented as a first-class concept) - a bounded projection derived from Structured Project Memory, explicitly not a competing database. `project_knowledge.py`'s existing read-only projection pattern is the closest existing analog and a reasonable foundation to evolve (see Confirmed Cleanup Decisions above). Checkpoint's externally-visible behavior is the eventual target for this projection to subsume - not done yet.
+7. **Context Retriever / Context Pack** - existing `project_context_retriever.py`. Deterministic eligibility/truth filtering first, topic narrowing where possible, semantic AI selection only where deterministic narrowing cannot resolve a subject - the three-stage shape proven this week, not yet implemented in the production retriever (see Confirmed Cleanup Decisions above for its current, unfixed defects).
+8. **Provider Adapter** - existing OpenAI adapter. Owns no Project continuity; provider-neutral by design; unchanged.
+
+`CheckpointProposal` remains the trust/mutation gate for genuinely consequential Project changes requiring explicit confirmation - unchanged, and explicitly the correct precedent to extend (not replace) when Structured Project Memory needs a similar gate for higher-consequence writes.
+
+### Product Requirement Amendment — Structured Continuity from Natural Conversation (2026-09-12b)
+
+Recorded as a requirement to shape Stage 2 onward. This is not authorization to implement it, not a schema, and not multi-user collaboration.
+
+**Core principle**: the user talks naturally; the Workspace becomes structured automatically. `ProjectConversation` (component 2 above) is necessary but not sufficient - important user interactions (a finished repair, a budget, a changed decision, a photo of completed work) must eventually become durable, structured, queryable Project information owned by the application, without the user filling out a form. This is the product-level reason Structured Project Memory (component 4) and Current Project State (component 6) exist at all - they are not abstract data-modeling exercises.
+
+Useful future dimensions for that structured information - **a requirement, not an authorized schema**: Project, actor/contributor, time, Project scope/location/work area, activity/observation, progress/status, decision, Evidence, provenance. The exact production schema remains unauthorized; do not build one from this list directly.
+
+**Project History vs. Current Project State - keep this distinction explicit, they must never compete:**
+- **Project History / episodic record**: what happened, in order, including superseded information (e.g. "Sept 3: decision - keep couch; Sept 5: decision changed - replace TV stand; Sept 7: rug ordered; Sept 12: rug arrived"). Unbounded by nature - it only grows.
+- **Current Project State**: where the Project stands now (e.g. "Budget: ~$1,500; TV stand: replace; Rug: delivered; Next action: choose TV stand"). A bounded projection derived from History, never a second independently-written store.
+
+**Queryable Project requirement**: the application must be able to answer/retrieve across these dimensions - by actor ("what did Jesse do last"), by scope/location ("what happened in Unit 412"), by topic ("where are we on electrical"), by state ("what's blocking this Project"), by change ("what decisions have changed") - **before** anything is sent to the model. The intended flow:
+
+```text
+User question
+    |
+    v
+Project Workspace identifies relevant scope
+    |
+    v
+Application-owned Project Memory / History / State / Evidence retrieval
+    |
+    v
+small, trustworthy, bounded context
+    |
+    v
+LLM reasoning / synthesis
+    |
+    v
+natural answer
+```
+
+Explicit separation: the **application** decides what Project information is relevant and authoritative; the **LLM** decides what that information means and how to explain/reason over it. This does not mean every query must be solved deterministically - semantic interpretation (classification, paraphrase resolution, synthesis) may use a model where this week's experiments showed deterministic rules cannot reliably do the job (see "Proven vs. Not Yet Proven" above). Canonical Project information itself remains application-owned regardless of which layer answers a given question.
+
+**Future actor/contributor requirement (not multi-user collaboration)**: the architecture must not assume a Project will forever have exactly one human contributor, and must not make future attribution ("what did Jesse do last," "who reported this") impossible or require redefining what a Project event fundamentally is. `ProjectActivity`'s existing `source_type` field and per-record provenance are the reuse point for this - extend that model's attribution capability when the time comes rather than inventing a second one. Do **not** build accounts, roles, permissions, teams, invitations, multi-tenant authorization, or collaboration UI now - none of that is authorized by this entry.
+
+**Architectural guardrail**: one canonical Project history/event substrate with different query dimensions over it - not separate "Activity History," "User History," "Actor History," or "Construction History" systems, and not a separate "glasses memory" or "construction memory." Everything in this amendment is a way of *querying* the same Structured Project Memory/History (components 4 and 6 above), never a reason to fork it.
+
+**Construction / field-work example**: illustrative of the product thesis only (a Project Workspace where photos/voice/observations/decisions/progress belong to the Project instead of living in a manually-searched folder) - not a pivot into construction software, and not scheduled before Stage 7.
+
+**Glasses differentiation**: unchanged center - the Project Workspace remains canonical; desktop, phone, and glasses are interfaces into it. Glasses are a potential differentiator specifically for hands-free capture, Evidence collection, observation, Investigation, Project queries, and progression while the user is physically performing work - recorded as product thesis, explicitly not market-validated (see "Product Positioning" above), and never a reason to make Meta-specific infrastructure canonical.
+
+### External Research Consulted (2026-09-12)
+
+Extends, and does not replace, `docs/research/PERSISTENT_PROJECT_MEMORY_REFERENCES.md` (which already covered Mem0, LangGraph checkpoints, Graphiti, MEMENTO, and wearable-specific references). New material consulted this pass:
+
+- Anthropic, "Effective context engineering for AI agents" (anthropic.com/engineering) - compaction, structured note-taking outside the context window, and sub-agent summarization as the three patterns for long-running agent memory; Anthropic's file-based memory tool (Sonnet 4.5) and "Memory for Managed Agents" beta (2026-04-23) as concrete implementations of application-owned, file-based external memory.
+- Letta (MemGPT) - tiered memory: core memory (small, always-in-context), recall memory (full searchable raw history), archival memory (processed/indexed long-term store). Cited for the general "small always-loaded tier vs. large on-demand tier" split; not adopted as an infrastructure dependency.
+- Mem0 - explicit two-phase extraction/update pipeline where an LLM call decides ADD/UPDATE/DELETE/NOOP per candidate fact against existing memory. Independently convergent with this week's supersession-by-canonical-key design.
+- LangMem/LangGraph - semantic (facts) vs. episodic (events/conversation) vs. procedural (skills/rules) memory typing, stored as namespaced documents, not necessarily vector-backed.
+- OpenAI/ChatGPT - "saved memories" (explicit or auto-detected durable facts) vs. "chat history reference" (draws on past conversations without an explicit save step); exact conflict-resolution mechanism is not publicly documented and was not assumed.
+
+Cross-cutting conclusion, consistent with the existing "Cross-Project Research Conclusions" list above: none of these systems reach for vector/embedding infrastructure as a first resort, and every one of them separates the "small, always-available current state" concern from the "large, on-demand history" concern - the same split this week's experiments independently arrived at for this repository's Decisions/Progress data.
+
+### Proven vs. Not Yet Proven
+
+This week's falsification experiments (durable-fact extraction, an isolated Memory Reader prototype, Decision/Progress retrieval) produced conversation-scoped, real-provider evidence. Their conclusions, and only their conclusions, are promoted to this document:
+
+**Proven / strongly supported by real-provider experiments this pass:**
+- Raw bounded conversation history alone is insufficient for long-running Project memory (independently consistent with this document's pre-existing "Do not send full Project history to the LLM by default" principle and with the 2026-08-23 product review's "fixed-window blindness" finding).
+- Ordinary durable facts/constraints stated in plain conversation need a persistence path outside raw conversation turns; today none exists for ordinary conversation (only Explore/Investigate/Progression-triggered Activities are written).
+- Current-vs-superseded filtering should be deterministic, applied before any AI selection step - AI-only filtering (no deterministic pre-filter) measurably, reproducibly resurrected superseded information in adversarial testing.
+- Assertion modality (tentative / third-party / hypothetical / historical / committed) is a distinct concern from source/provenance (`source_type`) and is not currently represented by the existing `source_type`/`confirmation_status` taxonomy on `ProjectActivity` - that taxonomy needs a second, orthogonal field before a general fact-extraction pipeline can safely reuse it.
+- Supersession must preserve full history (never delete/mutate in place) and must be modality-aware (a tentative/third-party/hypothetical statement must never be treated as "the thing being corrected").
+- A structured subject+slot model (e.g. `tv_stand/disposition`, `tv_stand/style_choice`) correctly supports Decision supersession without false-collapsing genuinely distinct decisions about the same subject.
+- Specific-topic Decision/Progress retrieval ("what did we decide about X") can remain bounded and cheap (near-constant Context Pack size measured from 20 to 2,000 synthetic records) once deterministic eligibility filtering and topic narrowing run before any AI selection step.
+- AI semantic selection is genuinely useful, and outperforms deterministic keyword matching, for paraphrased/low-keyword questions and for questions with no single resolvable subject - but only once deterministic trust/eligibility filtering has already run first.
+- A two-tier visual Evidence model (durable text description generated once, original image bytes re-fetched only when the description is judged insufficient for a specific question) works end-to-end against a real photo and a real vision call, without resending image bytes on every turn.
+- Provider/model quality was not the primary cause of the Living Room dogfood memory failures - a real, controlled same-model comparison showed dramatically better answers once given correct structured context, with no model change.
+- Simply enlarging the raw conversation window is not the correct primary fix - it delays when the underlying non-durability problem becomes visible without resolving it.
+- Vector/embedding infrastructure is not currently justified by any evidence gathered this pass - a plain "compact summaries + a lightweight model selection call" approach correctly handled up to 2,000 synthetic candidates.
+
+**Not yet proven - do not treat as architectural fact:**
+- Bounded Current Project State / salience at long-running Project scale. This is the one architecture question this pass could not close - see "Remaining Architecture Gate" below.
+- Trustworthy "Where did we leave off?" behavior at large Project scale specifically (the mechanism that worked for narrow single-topic questions does not, by itself, bound this case - a naive "include all current, non-superseded state" fallback was measured to grow unboundedly as a Project accumulates many small, never-revisited, genuinely-still-current decisions).
+- Long-horizon multi-user collaboration - not attempted, not modeled, not scheduled before Stage 7.
+- Large/mature-project onboarding (importing substantial pre-existing history into this architecture).
+- That embeddings/vector-DB infrastructure will remain unnecessary indefinitely - only that it is not justified by evidence gathered so far, consistent with this document's existing "Storage Strategy" and "Architectural Risks" #5 (premature infrastructure).
+- That a local/self-hosted model is needed for any part of this pipeline - nothing gathered this pass supports it; extraction/classification/selection tasks tested this pass all used the same general-purpose hosted provider already used elsewhere.
+
+### Remaining Architecture Gate: Current Project State / Salience Falsification
+
+This is the **last planned architecture experiment** before implementation resumes on the memory/context path. It is explicitly not authorized to run as part of this cleanup pass.
+
+Core question: given potentially thousands of facts, decisions, progress events, and Evidence records, how does the system produce a small, trustworthy, bounded representation of "where does this Project currently stand" - specifically for continuation-style questions ("Where did we leave off?", "What should I do next?", "What's blocking us?", "What changed since last time?") - without either (a) dumping the entire current-state set unbounded, or (b) applying per-item relevance selection that under-selects because almost every current item is nominally "relevant" to a broad continuation question.
+
+Required adversarial cases for that future experiment (not run yet): an old-but-still-critical blocker; an important decision made hundreds of turns ago with no recent mention; a large volume of recent but trivial activity; multiple simultaneous active work areas; reopened or abandoned work; a Project untouched for a long real-world gap; changed priorities; completed milestones; unresolved decisions competing for attention in the same summary.
+
+After that experiment: architecture exploration on the memory/context path stops unless its results falsify a foundational assumption already promoted to "Proven" above. Implementation (Stage 2 onward in `docs/ROADMAP.md`) then proceeds on the evidence gathered across both this week's experiments and that final gate.
+
+### Confirmed Cleanup Decisions (2026-09-12)
+
+- **Legacy memory manager** (`code/prototype_v1/memory_manager.py`, `results/session_memory.json`): confirmed still live via `watch_latest_image.py` (imports `save_observation`/`update_active_task`) and `context_aware_prompt.py` (imports `format_recent_memory`/`get_task_summary`), which are in turn invoked as a real subprocess from `api.py`'s legacy single-image `/analyze`-style endpoint (`WATCH_SCRIPT` at line ~2707). This is the original pre-Project glasses HUD guidance loop, not the ProjectConversation/Project Memory path - migrating it requires redesigning a still-functioning legacy feature's behavior, not a mechanical deletion. Per this document's own Legacy Components policy: **keep, do not expand, migrate only when that legacy endpoint is itself intentionally revisited.** Not removed in this pass.
+- **`project_knowledge.py` (`ProjectKnowledgeReader`)**: inspected in full. It is a **read-only projection** over the same canonical stores everything else already uses (`ProjectActivityStore`, `CheckpointProposalStore`, Investigation session/evidence stores) - it owns no persistence and writes nothing. It already does real, correct provenance-respecting filtering (e.g. an AI-sourced Activity only counts as a "decision" if `confirmation_status == CONFIRMED`). It serves the Project Inspector/UI (Phase F1), a different consumer than the Context Retriever (which serves the model). Classification: **REUSE/EVOLVE** - not a competing knowledge system, and a reasonable existing foundation for part of the future Current Project State projection once Structured Project Memory exists. Not merged or deprecated now.
+- **`Checkpoint`**: must not become a second, competing source of truth once Structured Project Memory (facts/decisions with supersession) is implemented. Recorded now, before implementation, per this document's own Architectural Risk #7 (duplicate sources of truth): `current_objective`/`next_action`/`blockers` are single-task-shaped fields and are the wrong shape for an accumulating set of independent Project constraints/decisions; the eventual direction is for Checkpoint's externally-visible behavior to become a **derived projection** over Structured Project Memory rather than a separately hand-maintained struct - not implemented in this pass, current Checkpoint behavior is preserved unchanged.
+- **Context Retriever**: not redesigned in this pass. Confirmed, reproduced issues to carry into the correct future milestone (Stage 2/4 in `docs/ROADMAP.md`): the closed keyword-based question classifier has real, reproduced blind spots (a historical question with no keyword trigger word was misclassified in this week's experiments; the pre-existing product review independently found the same class of failure via a different example - "What did we discover about the capacitor?" scoring zero across all question classes); the `next_action`-classified-with-fallback rule returns zero supporting Activities by design, which is a defect, not a tuning gap; retrieval is bounded by a fixed recency window (last 5 Activities / 3 Investigations) reranked internally, not retrieval over full Project history.
+- **Route file maintainability** (~3,600-line monolithic API route file, per the 2026-08-23 product review): recorded as debt, not addressed in this pass. Product usability work takes priority over this cosmetic/maintainability concern; scheduled loosely alongside Stage 4 (Real Conversation Integration) when the same file is next touched substantively, not as standalone cleanup work.
+
+### Testing / Acceptance Philosophy
+
+Five distinct tiers, not to be conflated with each other:
+
+1. **Unit / deterministic tests** - prove implementation rules and invariants (e.g. supersession never mutates in place, eligibility filtering excludes non-committed modality). No provider calls.
+2. **Fake-provider tests** - prove orchestration/routing logic in isolation from real model behavior.
+3. **Real-provider tests** - prove actual model/tool-selection behavior (this week's experiments were entirely this tier: real `gpt-4.1-mini` calls, real extraction/classification/selection, no mocks).
+4. **Realistic end-to-end** - proves product behavior across a real multi-turn scenario, not a single isolated call (see "Persistent Project Usability Acceptance" below).
+5. **Physical phone/glasses** - proves device integration specifically; required only for interface-layer claims, never required to validate backend architecture changes.
+
+"All automated tests passed" is never sufficient evidence that the user experience works - tier 4 (and, where the claim is interface-specific, tier 5) is required before any "usable" claim is made.
+
+### Persistent Project Usability Acceptance ("Living Room Long-Horizon Acceptance")
+
+The product must not be called usable merely because unit tests pass. This is the standing, reusable acceptance specification for that claim, superseding any single one-off dogfood run:
+
+**Scenario**: a realistic Project (Living Room Redesign is the reference scenario, not the only permissible one) run across **20-30 natural turns spanning multiple sessions** (a genuine leave-and-return gap, not a single continuous conversation). The user, in natural, unscripted wording (never engineered around known routing/keyword rules):
+- creates/selects the Project and attaches at least one real photograph;
+- discusses goals naturally; states a budget; states an aesthetic preference; states a durability/pet constraint;
+- makes at least one furniture/decision choice, then **changes that decision later** in the same or a later session;
+- selects a specific option among several presented; reports completing real-world progress;
+- asks natural follow-up questions;
+- leaves the Project for a real gap, returns, and continues.
+
+**At the end, the user must be able to naturally ask, and receive a trustworthy answer to, all of**: "Where did we leave off?"; "What was my budget?"; "What constraints did I give you?"; "What did we decide about [the changed item]?"; "Didn't we originally decide something different?"; "Why did we change it?"; "What have I already completed?"; "What should I do next?"; "What is still blocking me?"; "What did the room look like?"; a genuinely visual follow-up question about the room; and (implicitly, not necessarily asked in those words) correct use of original Evidence bytes if a question requires inspecting a visual detail the durable description doesn't cover.
+
+**Success requires all of**: correct current facts; correct handling of the changed decision (new value wins, old value remains retrievable on request, never both presented as equally current); correct historical recall on request; no stale/tentative/third-party/hypothetical contamination of current-truth answers; a meaningful, non-empty current-Project-state answer; a genuinely useful (not generic) next action; real visual continuity; observably bounded context behavior (not a full-history dump); and no requirement that the user understand or work around internal memory mechanics to get a correct answer.
+
+This specification does not itself constitute a passed acceptance run - it is the standing bar. It should be re-run as a tier-4 realistic E2E test at Stage 5 in `docs/ROADMAP.md`, and again after any material change to the memory/context path thereafter.
 - docs/research/UNIVERSAL_PROJECT_WORKSPACE_V1_DESIGN.md is the Universal Project Workspace v1 design/gap-analysis/MVP plan (RESEARCH / RECOMMENDATIONS - HUMAN REVIEW REQUIRED for its MVP scoping and implementation sequencing); the underlying Workspace concept itself is approved architecture (ADR-046 through ADR-051 above), but the specific MVP boundary, milestone sequencing, and implementation choices in that document are audit output, not automatically approved roadmap.

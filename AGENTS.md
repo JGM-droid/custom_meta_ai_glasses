@@ -32,6 +32,16 @@ When writing or reading architecture documentation, keep these four categories d
 
 Multi-agent/multi-perspective review (deliberately different mandates, not the same question asked six times) is an approved development/review practice for high-value decisions, not a product feature. Reviewer/agent conclusions are proposals/research input; they are never automatically architecture.
 
+## Roadmap Discipline Rule (added 2026-09-12)
+
+Dogfooding will keep surfacing real problems. When a new issue appears, triage it in this order before doing anything else:
+
+1. Does it belong to an already-scheduled roadmap milestone (see `docs/ROADMAP.md`'s Canonical Re-Baseline section)? If yes, fix it inside that milestone. Do not open new architecture work for it.
+2. If not, does it block core product usability (see the Persistent Project Usability Acceptance spec in `docs/PROJECT_MEMORY_ARCHITECTURE.md`)? If yes, explicitly amend `docs/ROADMAP.md` and record why - a visible, intentional roadmap change, not a silent pivot.
+3. If neither, it goes in `docs/ROADMAP.md`'s Deferred/Backlog list. Continue the active milestone. Do not interrupt it for optional polish.
+
+Never silently create new architecture exploration in response to a single dogfood finding. The current milestone, next milestone, blockers, and backlog must always be identifiable from `docs/ROADMAP.md` alone without reading conversation history.
+
 ## Agent Team Routing and Operating Policy
 
 `AGENTS.md` defines routing, authority, and permission boundaries. Detailed procedures live in `.agents/skills/<skill-name>/SKILL.md`. When a listed skill matches the task, read and follow that skill rather than approximating its behavior from this summary.
