@@ -206,6 +206,13 @@ from projects import (
     ProjectStoreError,
     ProjectSummary,
     to_project_summary,
+    ProjectCurrentState,
+    ProjectCurrentStateService,
+    ProjectMemoryExtractionError,
+    ProjectMemoryExtractionService,
+    ProjectMemoryRecord,
+    ProjectMemoryStore,
+    ProjectMemoryStoreError,
 )
 from projects.visual_artifacts import (
     OpenAIVisualArtifactProvider,
@@ -335,6 +342,16 @@ def _build_checkpoint_proposal_store() -> CheckpointProposalStore:
 
 CHECKPOINT_PROPOSAL_STORE = _build_checkpoint_proposal_store()
 VISUAL_ARTIFACT_STORE = VisualArtifactStore(PROJECT_STORE)
+
+
+def _build_project_memory_store() -> ProjectMemoryStore:
+    return ProjectMemoryStore(PROJECTS_ROOT, PROJECT_STORE)
+
+
+# Stage 2 (Integrated Persistent Memory Shadow Slice): shadow store, wired unconditionally like
+# every other zero-provider-call store above - only the extraction call itself is API-key gated
+# (see _create_assistant_orchestrator).
+PROJECT_MEMORY_STORE = _build_project_memory_store()
 
 
 def _project_progress_service() -> ProjectProgressService:
@@ -3031,6 +3048,7 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
     explore_service: ProjectExploreService | None = None
     visual_artifact_service: VisualArtifactService | None = None
     ai_result_planner: ProjectAIResultPlanner | None = None
+    memory_extraction_service: ProjectMemoryExtractionService | None = None
     if api_key:
         provider = OpenAIAssistantProvider(
             api_key=api_key,
@@ -3045,6 +3063,13 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         # never calls (no second routing/classification model call is made from here); that object
         # is inert construction only, never invoked, so this carries no extra behavior or cost.
         ai_result_planner = _create_project_ai_result_planner(explore_service=explore_service, include_routing=True)
+        # Stage 2 (Integrated Persistent Memory Shadow Slice): same api_key gate as every other
+        # AI-backed capability above - no api_key means no shadow extraction calls either, matching
+        # AssistantOrchestrator.send()'s own `if self.memory_extraction_service is not None` guard.
+        memory_extraction_service = ProjectMemoryExtractionService(
+            api_key=api_key,
+            model=str(os.environ.get("PROJECT_MEMORY_EXTRACTION_OPENAI_MODEL") or "gpt-4.1-mini"),
+        )
     return AssistantOrchestrator(
         project_store=PROJECT_STORE,
         conversation_store=PROJECT_CONVERSATION_STORE,
@@ -3060,6 +3085,8 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         # OpenAI calls, so wired unconditionally regardless of api_key, matching that service's own
         # existing zero-provider-calls guarantee.
         investigation_trust_service=_project_trust_service(),
+        memory_extraction_service=memory_extraction_service,
+        memory_store=PROJECT_MEMORY_STORE,
     )
 
 
@@ -3921,6 +3948,33 @@ async def get_project_activity(project_id: str, activity_id: str) -> ProjectActi
         _raise_project_http_error(status_code=500, category="project_storage_error", message="Project storage is unavailable.")
     except ProjectActivityStoreError:
         _raise_project_http_error(status_code=500, category="project_activity_storage_error", message="Project activity storage is unavailable.")
+
+
+# Stage 2 (Integrated Persistent Memory Shadow Slice): the smallest useful inspection surface over
+# the shadow memory path - not part of normal production conversation. Lets a developer/test see
+# extracted records (with modality/status/provenance) and the derived Current Project State without
+# a separate debugging tool. See docs/PROJECT_MEMORY_ARCHITECTURE.md's Stage 2 shadow-mode boundary.
+@app.get("/projects/{project_id}/memory", response_model=list[ProjectMemoryRecord])
+async def list_project_memory_records(project_id: str) -> list[ProjectMemoryRecord]:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        return PROJECT_MEMORY_STORE.list_records(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectMemoryStoreError:
+        _raise_project_http_error(status_code=500, category="project_memory_storage_error", message="Project memory storage is unavailable.")
+
+
+@app.get("/projects/{project_id}/memory/state", response_model=ProjectCurrentState)
+async def get_project_memory_current_state(project_id: str, scope: str | None = None) -> ProjectCurrentState:
+    normalized_project_id = _validate_project_id_or_422(project_id)
+    try:
+        records = PROJECT_MEMORY_STORE.list_records(normalized_project_id)
+    except ProjectNotFound:
+        _raise_project_http_error(status_code=404, category="project_not_found", message="Project does not exist.")
+    except ProjectMemoryStoreError:
+        _raise_project_http_error(status_code=500, category="project_memory_storage_error", message="Project memory storage is unavailable.")
+    return ProjectCurrentStateService().get_current_state(normalized_project_id, records, scope=scope)
 
 
 @app.post("/projects/{project_id}/checkpoint-proposals", response_model=CheckpointProposal, status_code=201)

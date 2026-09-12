@@ -24,6 +24,8 @@ PROJECT_IDEA_LIST_SCHEMA_VERSION = "1.0"
 PROJECT_EXPLORE_SCHEMA_VERSION = "1.0"
 PROJECT_EXPLORE_PROVIDER_RESULT_SCHEMA_VERSION = "1.1"
 PROJECT_AI_RESULT_SCHEMA_VERSION = "1.0"
+PROJECT_MEMORY_RECORD_SCHEMA_VERSION = "1.0"
+PROJECT_CURRENT_STATE_SCHEMA_VERSION = "1.0"
 
 _MAX_ACTIVITY_SUMMARY_LENGTH = 500
 _MAX_ACTIVITY_DETAILS_LENGTH = 3000
@@ -1579,3 +1581,177 @@ class ProjectAIResultRoutingDecision(BaseModel):
             if self.clarifying_question is not None:
                 raise ValueError("clarifying_question must be omitted when needs_clarification is false.")
         return self
+
+
+# ---------------------------------------------------------------------------
+# Structured Project Memory (Stage 2 - Integrated Persistent Memory Shadow
+# Slice, ADR-063/064). SHADOW ONLY: not yet the authoritative context source
+# for ProjectConversation (Stage 4). See docs/PROJECT_MEMORY_ARCHITECTURE.md
+# "Stage 1 Result" and "Editable Project Workspace Requirement" for the
+# proven design this schema implements.
+# ---------------------------------------------------------------------------
+
+_MAX_MEMORY_VALUE_LENGTH = 500
+_MAX_MEMORY_SCOPE_LENGTH = 80
+_MAX_MEMORY_SUBJECT_LENGTH = 80
+_MAX_MEMORY_SLOT_LENGTH = 40
+DEFAULT_MEMORY_SCOPE = "overall"
+DEFAULT_MEMORY_SLOT = "value"
+
+
+class ProjectMemoryCategory(str, Enum):
+    FACT = "fact"
+    CONSTRAINT = "constraint"
+    PREFERENCE = "preference"
+    DECISION = "decision"
+    PROGRESS = "progress"
+
+
+class ProjectMemoryModality(str, Enum):
+    """Assertion modality - orthogonal to `ProjectActivitySourceType` (who/what
+    asserted something). This is the trust-taxonomy gap the Stage 1 falsification
+    experiments found: `source_type=USER` alone cannot distinguish a committed
+    statement from a tentative, historical, hypothetical, conditional, or
+    third-party one. Only COMMITTED is eligible to become/replace current truth."""
+
+    COMMITTED = "committed"
+    TENTATIVE = "tentative"
+    HISTORICAL = "historical"
+    HYPOTHETICAL = "hypothetical"
+    CONDITIONAL = "conditional"
+    THIRD_PARTY = "third_party"
+
+
+class ProjectMemoryStatus(str, Enum):
+    CURRENT = "current"
+    SUPERSEDED = "superseded"
+
+
+class ProjectMemoryProgressState(str, Enum):
+    """Only meaningful when category == PROGRESS."""
+
+    PLANNED = "planned"
+    STARTED = "started"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+    REOPENED = "reopened"
+
+
+class ProjectMemoryRecord(BaseModel):
+    """One durable, structured Project Memory record. Facts/constraints/
+    preferences/decisions supersede within the same (scope, subject, slot)
+    when a new COMMITTED record arrives - never deleted, never mutated in
+    place, only status-flipped and pointed at by the superseding record.
+    Progress records are append-only events; current progress is a derived
+    projection (latest event per (scope, subject, slot)), never itself
+    superseded."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    memory_id: str
+    project_id: str
+    category: ProjectMemoryCategory
+    scope: str = Field(..., min_length=1, max_length=_MAX_MEMORY_SCOPE_LENGTH)
+    subject: str = Field(..., min_length=1, max_length=_MAX_MEMORY_SUBJECT_LENGTH)
+    slot: str = Field(..., min_length=1, max_length=_MAX_MEMORY_SLOT_LENGTH)
+    value: str = Field(..., min_length=1, max_length=_MAX_MEMORY_VALUE_LENGTH)
+    modality: ProjectMemoryModality
+    status: ProjectMemoryStatus
+    progress_state: ProjectMemoryProgressState | None = None
+    is_blocker: bool = False
+    superseded_by: str | None = None
+    source_type: ProjectActivitySourceType
+    source_turn_id: str | None = None
+    occurred_at_utc: datetime
+    created_at_utc: datetime
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: str) -> str:
+        if value != PROJECT_MEMORY_RECORD_SCHEMA_VERSION:
+            raise ValueError("Unsupported ProjectMemoryRecord schema_version.")
+        return value
+
+    @field_validator("memory_id", "project_id", "superseded_by", "source_turn_id")
+    @classmethod
+    def _validate_uuid_like(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(UUID(str(value)))
+        except ValueError as exc:
+            raise ValueError("Expected a UUID-shaped identifier.") from exc
+
+    @model_validator(mode="after")
+    def _validate_progress_state_shape(self) -> "ProjectMemoryRecord":
+        if self.category == ProjectMemoryCategory.PROGRESS:
+            if self.progress_state is None:
+                raise ValueError("progress_state is required when category is PROGRESS.")
+        elif self.progress_state is not None:
+            raise ValueError("progress_state is only valid when category is PROGRESS.")
+        if self.status == ProjectMemoryStatus.SUPERSEDED and self.superseded_by is None:
+            raise ValueError("A SUPERSEDED record must set superseded_by.")
+        if self.status == ProjectMemoryStatus.CURRENT and self.superseded_by is not None:
+            raise ValueError("A CURRENT record must not set superseded_by.")
+        return self
+
+
+class ProjectMemoryCandidate(BaseModel):
+    """Unvalidated extraction output for ONE candidate memory item, before
+    application-side eligibility/supersession rules are applied. Never
+    written directly - `ProjectMemoryExtractionService` maps this into a
+    `ProjectMemoryRecord` only after deterministic validation."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    category: ProjectMemoryCategory
+    scope: str = Field(default=DEFAULT_MEMORY_SCOPE, max_length=_MAX_MEMORY_SCOPE_LENGTH)
+    subject: str = Field(..., min_length=1, max_length=_MAX_MEMORY_SUBJECT_LENGTH)
+    slot: str = Field(default=DEFAULT_MEMORY_SLOT, max_length=_MAX_MEMORY_SLOT_LENGTH)
+    value: str = Field(..., min_length=1, max_length=_MAX_MEMORY_VALUE_LENGTH)
+    modality: ProjectMemoryModality
+    progress_state: ProjectMemoryProgressState | None = None
+    is_blocker: bool = False
+
+    @field_validator("scope", "slot")
+    @classmethod
+    def _default_blank(cls, value: str) -> str:
+        text = str(value or "").strip()
+        return text or DEFAULT_MEMORY_SCOPE
+
+
+class ProjectScopeState(BaseModel):
+    """Bounded derived view for ONE scope/workstream - never a second
+    canonical store, always recomputed from ProjectMemoryRecord."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    scope: str
+    status: Literal["blocked", "active", "resolved"]
+    facts: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    blockers: list[str] = Field(default_factory=list)
+    active_progress: list[str] = Field(default_factory=list)
+    pending_decisions: list[str] = Field(default_factory=list)
+    recently_completed: list[str] = Field(default_factory=list)
+    recent_changes: list[str] = Field(default_factory=list)
+
+
+class ProjectCurrentState(BaseModel):
+    """Overall (scope=None) or scoped Current Project State - always DERIVED
+    from ProjectMemoryRecord, never separately canonical. See
+    docs/PROJECT_MEMORY_ARCHITECTURE.md's Stage 1 Result."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    schema_version: str
+    project_id: str
+    requested_scope: str | None = None
+    global_blockers: list[str] = Field(default_factory=list)
+    scope_summaries: list[str] = Field(default_factory=list)
+    resolved_scope_count: int = 0
+    recent_changes: list[str] = Field(default_factory=list)
+    scope_detail: dict[str, ProjectScopeState] = Field(default_factory=dict)
+    salience_call_used: bool = False

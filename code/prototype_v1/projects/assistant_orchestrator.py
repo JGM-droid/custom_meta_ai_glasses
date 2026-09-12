@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid5
 
@@ -59,11 +60,15 @@ from .project_explore import (
 )
 from .project_store import ProjectStore, ProjectStoreError
 from .project_troubleshoot import ProjectTextTroubleshootError
+from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
+from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
 from .models import (
     CheckpointProposalPatch,
     CheckpointProposalStatus,
+    ProjectActivitySourceType,
     ProjectAIRoutingRequest,
     ProjectExploreRequest,
+    ProjectMemoryCandidate,
     ProjectTrustDecisionRequest,
     ProjectTrustDecisionType,
 )
@@ -84,6 +89,8 @@ from .visual_artifacts import (
 # populate next_action today, so this is currently the only field this policy needs to recognize;
 # it is written as a real, general checkless allowlist so it stays correct if that ever changes.
 _LOW_CONSEQUENCE_CHECKPOINT_FIELDS = frozenset({"current_work", "next_action", "discoveries_summary"})
+
+logger = logging.getLogger(__name__)
 
 
 MAX_PRIOR_CONVERSATION_TURNS = 8
@@ -119,7 +126,9 @@ class AssistantOrchestrator:
                  explore_service: ProjectExploreService | None = None,
                  visual_artifact_service: VisualArtifactService | None = None,
                  ai_result_planner: ProjectAIResultPlanner | None = None,
-                 investigation_trust_service: ProjectInvestigationTrustService | None = None):
+                 investigation_trust_service: ProjectInvestigationTrustService | None = None,
+                 memory_extraction_service: "ProjectMemoryExtractionService | None" = None,
+                 memory_store: "ProjectMemoryStore | None" = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
@@ -143,6 +152,13 @@ class AssistantOrchestrator:
         # never advertised and this bridge is a complete no-op - see
         # _find_eligible_investigation_target.
         self.investigation_trust_service = investigation_trust_service
+        # Stage 2 (Integrated Persistent Memory Shadow Slice, ADR-063/064): SHADOW ONLY - populates
+        # structured Project Memory alongside the real turn but never feeds it back into this
+        # turn's own context_pack/provider_request (that integration is Stage 4). None (the
+        # default) means this is a complete no-op, exactly like every other optional capability
+        # here degrading to "not advertised/not run" rather than a hard dependency.
+        self.memory_extraction_service = memory_extraction_service
+        self.memory_store = memory_store
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -336,12 +352,41 @@ class AssistantOrchestrator:
                 "failure_message": None,
             })
             self._replace_turn(conversation, completed)
-            return ConversationSendResponse(
+            response = ConversationSendResponse(
                 conversation_id=conversation.conversation_id,
                 project_id=normalized_project_id,
                 turns=[user_turn, completed],
                 reconstructed=False,
             )
+
+        # Stage 2 (Integrated Persistent Memory Shadow Slice): deliberately OUTSIDE the project
+        # lock above - this makes a real, potentially slow provider call, and the shadow store has
+        # its own independent per-project lock (ProjectMemoryStore._get_project_lock), so it must
+        # never hold the conversation lock while it runs. Fires after the real turn is already
+        # durably saved; a shadow-path failure must never destroy or delay the real, already-
+        # completed conversation response (see docs/PROJECT_MEMORY_ARCHITECTURE.md's Stage 2
+        # shadow-mode boundary). Only the ORIGINAL user turn (not a reconstructed/idempotent
+        # replay) is extracted from, so a retried duplicate send never double-writes memory.
+        if self.memory_extraction_service is not None and self.memory_store is not None:
+            self._run_shadow_memory_extraction(normalized_project_id, user_turn)
+
+        return response
+
+    def _run_shadow_memory_extraction(self, project_id: str, user_turn: ConversationTurn) -> None:
+        try:
+            text = next(
+                (p.text for p in user_turn.content_parts if isinstance(p, ConversationTextPart)), "")
+            candidates = self.memory_extraction_service.extract(text)
+            for candidate in candidates:
+                self.memory_store.write_candidate(
+                    project_id, candidate,
+                    source_type=ProjectActivitySourceType.USER,
+                    source_turn_id=user_turn.turn_id,
+                    occurred_at_utc=user_turn.created_at_utc,
+                )
+        except (ProjectMemoryExtractionError, ProjectMemoryStoreError) as exc:
+            # Shadow-only: observable via logs, never raised into the real turn/response.
+            logger.warning("Shadow memory extraction failed for project %s: %s", project_id, exc)
 
     def _allowed_capability_intents(self) -> frozenset[AssistantCapabilityIntent]:
         intents: set[AssistantCapabilityIntent] = set()

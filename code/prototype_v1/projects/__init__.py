@@ -70,6 +70,18 @@ from .models import (
     ProjectTroubleshootTextResult,
     create_new_project,
     to_project_summary,
+    PROJECT_MEMORY_RECORD_SCHEMA_VERSION,
+    PROJECT_CURRENT_STATE_SCHEMA_VERSION,
+    DEFAULT_MEMORY_SCOPE,
+    DEFAULT_MEMORY_SLOT,
+    ProjectMemoryCategory,
+    ProjectMemoryModality,
+    ProjectMemoryStatus,
+    ProjectMemoryProgressState,
+    ProjectMemoryRecord,
+    ProjectMemoryCandidate,
+    ProjectScopeState,
+    ProjectCurrentState,
 )
 from .investigation_trust import ProjectInvestigationTrustError, ProjectInvestigationTrustService
 from .project_knowledge import (
@@ -174,6 +186,9 @@ from .project_store import (
     ProjectStore,
     ProjectStoreError,
 )
+from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
+from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
+from .project_current_state import ProjectCurrentStateService
 
 __all__ = [
     "ACTIVE_PROJECT_POINTER_SCHEMA_VERSION",
@@ -327,4 +342,21 @@ __all__ = [
     "ProjectTextTroubleshootService",
     "load_project_text_troubleshoot_model_name",
     "load_project_text_troubleshoot_timeout_seconds",
+    "PROJECT_MEMORY_RECORD_SCHEMA_VERSION",
+    "PROJECT_CURRENT_STATE_SCHEMA_VERSION",
+    "DEFAULT_MEMORY_SCOPE",
+    "DEFAULT_MEMORY_SLOT",
+    "ProjectMemoryCategory",
+    "ProjectMemoryModality",
+    "ProjectMemoryStatus",
+    "ProjectMemoryProgressState",
+    "ProjectMemoryRecord",
+    "ProjectMemoryCandidate",
+    "ProjectScopeState",
+    "ProjectCurrentState",
+    "ProjectMemoryStore",
+    "ProjectMemoryStoreError",
+    "ProjectMemoryExtractionService",
+    "ProjectMemoryExtractionError",
+    "ProjectCurrentStateService",
 ]
