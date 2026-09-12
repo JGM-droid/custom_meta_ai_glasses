@@ -1342,22 +1342,116 @@ This week's falsification experiments (durable-fact extraction, an isolated Memo
 - Vector/embedding infrastructure is not currently justified by any evidence gathered this pass - a plain "compact summaries + a lightweight model selection call" approach correctly handled up to 2,000 synthetic candidates.
 
 **Not yet proven - do not treat as architectural fact:**
-- Bounded Current Project State / salience at long-running Project scale. This is the one architecture question this pass could not close - see "Remaining Architecture Gate" below.
-- Trustworthy "Where did we leave off?" behavior at large Project scale specifically (the mechanism that worked for narrow single-topic questions does not, by itself, bound this case - a naive "include all current, non-superseded state" fallback was measured to grow unboundedly as a Project accumulates many small, never-revisited, genuinely-still-current decisions).
 - Long-horizon multi-user collaboration - not attempted, not modeled, not scheduled before Stage 7.
+- Editable Project Workspace behavior (natural-language corrections becoming authoritative updates) - recorded as a requirement this pass (see "Editable Project Workspace Requirement" below), not implemented or tested.
 - Large/mature-project onboarding (importing substantial pre-existing history into this architecture).
 - That embeddings/vector-DB infrastructure will remain unnecessary indefinitely - only that it is not justified by evidence gathered so far, consistent with this document's existing "Storage Strategy" and "Architectural Risks" #5 (premature infrastructure).
 - That a local/self-hosted model is needed for any part of this pipeline - nothing gathered this pass supports it; extraction/classification/selection tasks tested this pass all used the same general-purpose hosted provider already used elsewhere.
 
-### Remaining Architecture Gate: Current Project State / Salience Falsification
+### Stage 1 Result: Current Project State / Salience Gate — PASSED (2026-09-12c)
 
-This is the **last planned architecture experiment** before implementation resumes on the memory/context path. It is explicitly not authorized to run as part of this cleanup pass.
+The final planned architecture falsification experiment is complete. **Architecture exploration on the memory/context path is now closed** - it resumes only if Stage 2 implementation falsifies a foundational assumption below, not on discovery of an interesting optimization (see the Roadmap Discipline Rule in `AGENTS.md`).
 
-Core question: given potentially thousands of facts, decisions, progress events, and Evidence records, how does the system produce a small, trustworthy, bounded representation of "where does this Project currently stand" - specifically for continuation-style questions ("Where did we leave off?", "What should I do next?", "What's blocking us?", "What changed since last time?") - without either (a) dumping the entire current-state set unbounded, or (b) applying per-item relevance selection that under-selects because almost every current item is nominally "relevant" to a broad continuation question.
+**Core question tested**: given potentially thousands of facts, decisions, progress events, and Evidence records, how does the system produce a small, trustworthy, bounded representation of "where does this Project currently stand" for continuation-style questions, without either dumping the entire current-state set unbounded or under-selecting because almost every current item is nominally "relevant"?
 
-Required adversarial cases for that future experiment (not run yet): an old-but-still-critical blocker; an important decision made hundreds of turns ago with no recent mention; a large volume of recent but trivial activity; multiple simultaneous active work areas; reopened or abandoned work; a Project untouched for a long real-world gap; changed priorities; completed milestones; unresolved decisions competing for attention in the same summary.
+**Additional findings promoted to Proven** (extending the list above):
+- Recent-N history is insufficient for global Project continuation - it is both untrustworthy (carries no status filtering) and, at scale, incomplete (real content gets evicted by unrelated volume).
+- A flat structured current-state projection (all workstreams/areas combined, no grouping) can be fully correct but becomes unbounded as the number of distinct active Project areas grows - it is not solved by supersession alone, only facts/single-slot decisions are bounded that way.
+- Naive hierarchy (grouping by workstream/scope but expanding every group in full) is not an improvement over a flat projection for boundedness - it must be paired with resolved-area collapsing and a real selection mechanism to help at all.
+- Deterministic recency-among-active-items is bounded but was measured to incorrectly evict an old, non-recently-touched item after its priority changed - recency is not a safe proxy for importance.
+- Deterministic truth/eligibility filtering (current-vs-superseded, modality, abandoned-scope exclusion) must run before any AI selection step, not alongside or instead of it - confirmed again this pass.
+- Active blockers must remain visible regardless of age - implemented as an unconditional, never-evicted category, not subject to recency or selection at all.
+- Resolved (fully completed or abandoned) workstreams/areas can safely collapse to a count rather than being individually expanded.
+- AI salience selection is justified - not merely convenient - for choosing which non-blocked active workstreams to surface for a broad continuation question; the deterministic recency alternative was directly measured to fail this specific job.
+- Topic/scope-specific questions ("what did we decide about X," "where are we on electrical") remain a different, already-solved problem (targeted bounded retrieval, per the prior Decision & Progress gate) - global continuation and topic-specific retrieval are genuinely different mechanisms and should not be forced into one.
+- Current Project State can be derived on demand from canonical History/Structured Project Memory rather than persisted as a second store - recomputing fresh on every request was fast and cheap enough at tested scale, with zero state-drift risk by construction.
+- Workstreams/scopes do not currently justify a new canonical subsystem - grouping existing Project records by a scope field was sufficient for every case tested.
+- Embeddings/vector infrastructure remains unjustified - plain-text candidate lists plus a single lightweight-model selection call worked correctly up to 2,000 records and 234 distinct workstreams.
+- A local/internal LLM remains unjustified - every step used the same general-purpose hosted provider already used elsewhere.
 
-After that experiment: architecture exploration on the memory/context path stops unless its results falsify a foundational assumption already promoted to "Proven" above. Implementation (Stage 2 onward in `docs/ROADMAP.md`) then proceeds on the evidence gathered across both this week's experiments and that final gate.
+**Winning flow, global continuation:**
+
+```text
+Canonical Project History / Structured Project Memory
+    |
+    v
+deterministic current-truth eligibility filtering
+    |
+    v
+deterministic blocker identification (age-independent, always shown)
+    |
+    v
+resolved-area collapsing (fully completed/abandoned -> a count, not detail)
+    |
+    v
+group remaining eligible state by workstream/scope
+    |
+    v
+AI salience selection among non-blocked active workstreams
+    |
+    v
+bounded Current Project State
+    |
+    v
+Context Retriever / Context Pack
+    |
+    v
+LLM synthesis
+```
+
+**Winning flow, topic/scope-specific questions** (unchanged from the prior gate, reconfirmed compatible):
+
+```text
+question
+    |
+    v
+deterministic scope/topic resolution where possible
+    |
+    v
+bounded relevant Project state/history
+    |
+    v
+AI semantic fallback only where deterministic resolution fails
+    |
+    v
+LLM synthesis
+```
+
+Preserve this distinction going forward: **Project History answers "what happened?"; Current Project State answers "what matters now?"** Current Project State is derived, never a second canonical truth store.
+
+**Boundedness evidence** (~2,018 total records, real-provider measured, not simulated): flat projection grew to ~31,355 characters; naive full-expansion hierarchy grew to ~165,792 characters; the corrected bounded design (deterministic blockers + collapsed resolved areas + AI salience selection replacing recency) stayed at ~2,016 characters - flat across a 112x growth in total History.
+
+**Remaining scaling caveat, not currently blocking**: the AI salience-ranking step's own candidate input (the list of currently non-resolved workstreams handed to the ranking call, not the final Current Project State output) grew with active-workstream count - about 21,000 characters at the 2,000-record/234-workstream test point. This is a real, different, gentler growth curve than growing with total History, and it did not cause a correctness or cost problem at tested scale. It is recorded as a **future escalation trigger**: if a real Project ever develops a very large number of simultaneously active workstreams and this candidate list becomes expensive or slow, evaluate additional deterministic narrowing or indexing at that time - not solved now, and not a reason to delay Stage 2.
+
+### Editable Project Workspace Requirement (2026-09-12c)
+
+Recorded as a requirement to shape Stage 2 onward, not authorization to implement this behavior now.
+
+The Project Workspace must not be a read-only, AI-generated summary. Users must eventually be able to correct and progress Project state through the same natural conversation used for everything else - e.g. "those three things are already done," "we don't need to do that anymore," "actually John did that, not Jesse," "that issue came back," "we changed our mind, keep the existing fixture," "we're still waiting on inspection." These are eventually authoritative Project updates (completion, cancellation/no-longer-required, correction, attribution correction, reopening, decision supersession, blocker update, progress update) - not merely conversation.
+
+**Architectural rule, non-negotiable**: users do not directly edit the derived Current Project State as if it were canonical truth. The flow is always:
+
+```text
+User natural-language correction/update
+    |
+    v
+interpretation / validation
+    |
+    v
+new authoritative Project event / memory update
+    |
+    v
+canonical Project History is preserved (never overwritten)
+    |
+    v
+Current Project State is re-derived
+```
+
+Consequently, editing current Project understanding must never erase historical truth. Example: "Replace Unit 412 panel" recorded, then later "we don't need to replace that panel anymore" - History preserves both the original decision and the cancellation as distinct events; Current Project State shows "panel replacement: no longer required"; a later historical question ("didn't we originally plan to replace the panel?") must still be answerable, correctly, as a superseded/cancelled decision - exactly the same supersession discipline already proven for ordinary decision changes, applied to user-initiated corrections as well as new information.
+
+**Trust/confirmation boundary - reuses existing principles, no new trust system**: clear, low-consequence natural-language updates may eventually be interpreted as explicit user Project updates without a separate approval step, extending the precedent Conversational Project Progression Slice 1 (ADR-062) already established for low-consequence auto-apply. Ambiguous or consequential corrections require clarification or the existing `CheckpointProposal` confirmation mechanism, not a new one. Silence is never confirmation. The model never directly mutates canonical Project state; the application interprets/validates and owns persistence - unchanged from this document's Core Architectural Principle.
+
+This requirement must remain compatible with, and must not fork into a separate system from, the previously recorded future dimensions (actor/contributor attribution, time, location/scope/workstream, Evidence, provenance, status/progress, decisions) and the existing architectural guardrail: one canonical Project history/event substrate with different projections and queries over it - not a separate Actor History, Construction History, Glasses History, or User History, and not a separate correction/edit subsystem either. Multi-user collaboration remains out of scope and deferred to Stage 7.
 
 ### Confirmed Cleanup Decisions (2026-09-12)
 
