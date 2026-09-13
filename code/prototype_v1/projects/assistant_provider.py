@@ -275,7 +275,11 @@ class OpenAIAssistantProvider:
                 "In bounded_project_context.structured_project_memory, only text under a CURRENT "
                 "heading is confirmed present Project truth. Text under a HISTORY heading is past "
                 "record only - do not treat it as still true, and do not invent why something "
-                "changed beyond what the history entries themselves show."
+                "changed beyond what the history entries themselves show. A block starting with "
+                "NO_RELEVANT_MEMORY means no durable record was retrieved for this specific topic - "
+                "that is NOT proof the Project never contained it; say you don't have enough durable "
+                "Project history to verify it confidently rather than guessing or asserting the "
+                "opposite of what may actually be true."
             ),
             "response": (
                 "Reply naturally as the Project assistant for ordinary conversation, or call the "
@@ -295,7 +299,9 @@ class OpenAIAssistantProvider:
                 "the question, but never say you can currently see, are looking at, or are viewing "
                 "the picture. If the question asks about a visual detail the stored description does "
                 "not mention, say that detail cannot be verified from the stored description rather "
-                "than guessing."
+                "than guessing. If this text instead says Evidence exists but could not be matched "
+                "or retrieved, say a photo exists but its specific contents cannot currently be "
+                "confirmed - never say no photo was ever provided when this text says one exists."
             )
         payload = {
             "current_user_message": request.user_text,

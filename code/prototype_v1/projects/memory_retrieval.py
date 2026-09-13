@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -35,18 +36,74 @@ logger = logging.getLogger(__name__)
 _MAX_SUBJECT_CANDIDATES = 12
 _MAX_HISTORY_EVENTS = 8
 
-_CONTINUATION_PHRASES = (
-    "leave off", "left off", "what's next", "whats next", "what should i do next",
-    "still need", "still needs", "still needed", "remain", "remains", "remaining",
-    "where are we", "is anything blocking", "blocking the project", "what's blocking",
-    "what have i completed", "what have we completed", "completed so far",
-    "what should i do", "what needs to be done", "still to do",
+_WORD_RE = re.compile(r"[a-z]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    return _WORD_RE.findall(str(text or "").lower())
+
+
+def _has_token_sequence(tokens: list[str], pattern: tuple) -> bool:
+    """True if `tokens` contains every slot of `pattern`, IN ORDER, as a subsequence - each slot is
+    either a single token or a tuple of acceptable alternative tokens for that position. Unlike
+    literal substring matching, arbitrary other words (filler like "actually", "right now", a name)
+    may appear before, between, or after the anchors without breaking the match - this is exactly
+    what a fixed phrase list cannot tolerate (see the Stage 5 "is anything actually blocking me"
+    regression this replaces). Order is still required, which keeps false-positive risk low: a
+    two-or-more-word pattern only fires when its anchors appear in the SAME relative order a real
+    instance of that phrasing would use, not merely somewhere in the same sentence."""
+    pos = 0
+    for slot in pattern:
+        options = (slot,) if isinstance(slot, str) else slot
+        matched_at = None
+        for i in range(pos, len(tokens)):
+            if tokens[i] in options:
+                matched_at = i
+                break
+        if matched_at is None:
+            return False
+        pos = matched_at + 1
+    return True
+
+
+def _matches_any_pattern(text: str, patterns: tuple) -> bool:
+    tokens = _tokenize(text)
+    return any(_has_token_sequence(tokens, pattern) for pattern in patterns)
+
+
+# Token-sequence patterns for a broad "continuation / current Project state" question - deliberately
+# NOT a list of exact substrings, since natural phrasing routinely inserts filler words a literal
+# match can't tolerate ("is anything blocking me" vs. "is anything ACTUALLY blocking me RIGHT NOW").
+# Each pattern is a tuple of slots; a slot is one token or a tuple of acceptable alternatives; a
+# pattern matches when its slots appear, in order, anywhere in the question. Kept as several narrow,
+# multi-anchor patterns (mostly 2+ required words) rather than single common words, so this stays
+# selective - a bare "what" or "did" is never enough on its own to trigger.
+_CONTINUATION_TOKEN_PATTERNS = (
+    # "is anything blocking", "any blockers", "am I stuck", "what's the holdup"
+    (("blocking", "blocker", "blockers", "blocked", "stuck", "holdup", "holdups"),),
+    ("holding", "up"),  # "what's holding this up"
+    (("remain", "remains", "remaining"),),
+    (("leave", "left"), "off"),  # "leave off" / "left off"
+    ("where", "we"),  # "where are we", "where did we leave off"
+    ("what", "next"),  # "what's next", "what should I do next"
+    ("should", ("do", "focus")),  # "what should I do", "what should I focus on now"
+    ("still", ("need", "needs", "needed", "open", "to", "going", "working", "todo")),
+    (("completed", "complete", "finished", "finish", "done"), ("so", "far")),  # "completed so far"
+    (("completed", "complete", "finished", "finish"),),  # bare "finished"/"completed" is unambiguous
 )
 
-_HISTORICAL_PHRASES = (
-    "originally", "used to", "before we", "before the", "what did we decide",
-    "why did", "why does", "why is", "what changed", "what was the original",
-    "did we used to",
+# Same technique for historical framing ("originally", "why did that change") - preserved as its own
+# distinct intent, not merged into continuation: a historical question wants the PAST record and an
+# explanation of a change, a continuation question wants the CURRENT derived state.
+_HISTORICAL_TOKEN_PATTERNS = (
+    ("originally",),
+    ("used", "to"),
+    ("before", ("we", "the")),
+    ("what", "did", "we", "decide"),
+    ("why", ("did", "does", "is", "was")),
+    ("what", "changed"),
+    ("what", "was", "the", "original"),
+    ("what", "original"),
 )
 
 _CATEGORY_KEYWORDS: dict[str, tuple[ProjectMemoryCategory, ...]] = {
@@ -58,13 +115,11 @@ _CATEGORY_KEYWORDS: dict[str, tuple[ProjectMemoryCategory, ...]] = {
 
 
 def is_continuation_question(text: str) -> bool:
-    lowered = str(text or "").lower()
-    return any(phrase in lowered for phrase in _CONTINUATION_PHRASES)
+    return _matches_any_pattern(text, _CONTINUATION_TOKEN_PATTERNS)
 
 
 def is_historical_question(text: str) -> bool:
-    lowered = str(text or "").lower()
-    return any(phrase in lowered for phrase in _HISTORICAL_PHRASES)
+    return _matches_any_pattern(text, _HISTORICAL_TOKEN_PATTERNS)
 
 
 def _current_committed(records: list[ProjectMemoryRecord]) -> list[ProjectMemoryRecord]:
@@ -82,6 +137,40 @@ def known_current_subjects(records: list[ProjectMemoryRecord]) -> list[tuple[str
         if key not in seen_set:
             seen_set.add(key)
             seen.append(key)
+    return seen
+
+
+_MAX_KNOWN_SUBJECT_HINTS = 20
+
+
+def known_subject_hints(
+    records: list[ProjectMemoryRecord], *, limit: int = _MAX_KNOWN_SUBJECT_HINTS,
+) -> list[tuple[str, str, str, str]]:
+    """Stage 5 repair (subject-identity stabilization): a bounded, most-recent-first list of
+    (scope, subject, slot, current_value) hints for existing canonical subjects - handed to
+    extraction so a new statement about the SAME real-world item, worded differently, can reuse the
+    existing identity instead of silently forking a second, disconnected one (the exact failure
+    dogfooding found: "accent_wall"/"wall_paint_color"/"wall_painting"/"paint_purchase" all
+    describing one real-world paint job). The slot is included, not just scope/subject: a
+    same-item update must land on the SAME slot to actually supersede/append correctly (a progress
+    subject given a NEW slot name instead of its existing one silently creates a second,
+    independently-"current" progress line for the same real-world task - e.g. an already-resolved
+    blocker still showing as an active blocker under its old slot while a resolution sits, unseen,
+    under a new one). Deliberately bounded like every other candidate list in this module - never
+    the whole Project's memory, and this hands the model a shortlist to MATCH against, never a
+    mandate to merge unrelated items."""
+    committed = _current_committed(records)
+    committed.sort(key=lambda r: r.occurred_at_utc, reverse=True)
+    seen: list[tuple[str, str, str, str]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for record in committed:
+        key = (record.scope, record.subject, record.slot)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        seen.append((record.scope, record.subject, record.slot, record.value))
+        if len(seen) >= limit:
+            break
     return seen
 
 
@@ -230,21 +319,44 @@ context, and a bounded list of subjects the Project currently has committed info
 (each with an index, scope, and a short current-value hint), decide:
 
 - applicable: true only if the question is plausibly asking about the Project's current or \
-historical state for one of these specific subjects, or is a broad "where do things stand" \
-continuation question. False for anything else (small talk, an unrelated question, a new \
-instruction).
+historical state for one of these SPECIFIC LISTED subjects, or is a broad "where do things stand" \
+continuation question. If the question clearly names or refers to a topic/item that is NOT among \
+the listed subjects - even if the question's phrasing otherwise sounds exactly like a historical or \
+current-state question ("didn't we originally decide X", "why did X change") - return \
+applicable=false. NEVER select the closest-sounding, most-recent, or otherwise "least bad" listed \
+subject as a stand-in for a topic that genuinely is not represented in the list; an unrelated \
+subject (e.g. a budget record) must never be presented as if it answers a question about a \
+completely different item (e.g. a TV stand) the list does not contain. False for anything else \
+(small talk, an unrelated question, a new instruction, or a topic simply absent from the list).
 - intent: "continuation" if this is a broad status/next-step/blocker question not about one \
 specific subject; "current" if it asks what is presently true about one specific subject; \
 "historical" if it asks what used to be true, why something changed, or what was originally \
 decided about one specific subject.
 - selected_subject_index: required (and must be a valid index) when intent is "current" or \
 "historical" - use the recent conversation context to resolve pronouns/anaphora ("that", "it") to \
-the right subject when possible. Omit or use null when intent is "continuation", or when you \
-cannot confidently tell which subject is meant.
+the right subject when possible, but only when the referent is actually identifiable from the \
+question or recent conversation text - never guess a plausible-sounding subject with no textual \
+basis. Omit or use null when intent is "continuation", or when you cannot confidently tell which \
+subject is meant.
 
-Never guess a specific subject when genuinely unclear - return applicable=false instead. Output \
-ONLY a JSON object: {"applicable": true/false, "intent": "continuation"/"current"/"historical"/null, \
-"selected_subject_index": <int or null>}."""
+Never guess a specific subject when genuinely unclear, and never substitute an unrelated subject \
+for one that is simply missing from the list - return applicable=false instead in both cases. \
+Output ONLY a JSON object: {"applicable": true/false, "intent": \
+"continuation"/"current"/"historical"/null, "selected_subject_index": <int or null>}."""
+
+# Stage 5 repair: a question that clearly LOOKS like it wants durable Project history/current-state
+# (matches the same historical-phrase heuristic used elsewhere) but for which nothing could be
+# grounded - not silently omitted, because silence here is exactly what let the model fall back on
+# its own unsupported inference and confidently invert a real decision (found during Stage 5
+# dogfooding: a TV-stand question with no durable record produced a confident, backwards answer).
+_NO_RELEVANT_MEMORY_NOTICE = (
+    "NO_RELEVANT_MEMORY: No durable Structured Project Memory record was found specifically "
+    "matching this question's topic. This does NOT mean the Project definitely never contained "
+    "this information - it means no confirmed durable record currently covers it. Check the "
+    "recent conversation above; if that does not clearly answer it either, say honestly that you "
+    "do not have enough durable Project history to verify this confidently, rather than guessing "
+    "or asserting a specific historical or current claim."
+)
 
 
 class ProjectMemoryRetrievalError(RuntimeError):
@@ -320,6 +432,34 @@ class MemorySelection:
     subject: str | None
 
 
+def _selection_is_grounded(selection: MemorySelection, question_text: str, prior_turns_text: str) -> bool:
+    """Deterministic, generic post-hoc sanity check on the AI selection's subject choice - a real
+    safety net (not topic-specific) against exactly the failure Stage 5 dogfooding found: the model
+    selecting an unrelated known subject (e.g. "budget") for a question about a completely
+    different, unknown topic (e.g. a TV stand) rather than abstaining. A continuation selection
+    (subject=None) makes no specific-subject claim, so nothing to check. A subject selection is
+    trusted only if its own name is actually findable in the current question, or in something the
+    USER themselves said in the bounded recent conversation - never merely because it appears
+    somewhere in an assistant's own reply. This distinction matters: an assistant recap/summary turn
+    routinely lists many unrelated topics side by side (budget, TV stand, accent wall, ...), and a
+    keyword's mere presence in that kind of list is not evidence the CURRENT question is about it -
+    this is exactly how the real "budget substituted for a TV stand question" bug kept recurring
+    even after this check first shipped. Legitimate anaphora ("why did that change" -> tv_stand)
+    still passes, since a real referent was, by construction, raised by the user themselves
+    somewhere in that same bounded text."""
+    if selection.subject is None:
+        return True
+    keyword = selection.subject.replace("_", " ")
+    if not keyword:
+        return False
+    if keyword in question_text.lower():
+        return True
+    user_said = "\n".join(
+        line.split(":", 1)[1] for line in prior_turns_text.splitlines() if line.lower().startswith("user:")
+    )
+    return keyword in user_said.lower()
+
+
 @dataclass(frozen=True)
 class MemoryRetrievalResult:
     context_text: str | None = None
@@ -361,6 +501,15 @@ def retrieve_memory_context(
     if selection_service is not None:
         selection = selection_service.select(
             question_text=question_text, prior_turns_text=prior_turns_text, subjects=subjects, records=records)
+        if selection is not None and not _selection_is_grounded(selection, question_text, prior_turns_text):
+            # The AI selected a subject with no textual basis in the question or recent
+            # conversation - exactly the "unrelated record presented as evidence" failure found
+            # during Stage 5 dogfooding. Discard it and fall through to the honesty-notice path
+            # below, never trusting an ungrounded pick.
+            logger.warning(
+                "Discarding ungrounded memory selection (subject=%r not found in question/recent context).",
+                selection.subject)
+            selection = None
         if selection is not None:
             if selection.intent == "continuation" and current_state_service is not None:
                 state = current_state_service.get_current_state(project_id, records)
@@ -371,5 +520,11 @@ def retrieve_memory_context(
                     historical=selection.intent == "historical", turn_text_lookup=turn_text_lookup)
                 if text is not None:
                     return MemoryRetrievalResult(context_text=text, intent=selection.intent, subject=selection.subject)
+        # Stage 5 repair: nothing could be grounded for a question that looks like it wants durable
+        # Project history - stay honest rather than silent, so the model does not quietly fall back
+        # on its own unsupported inference (which previously produced a confident, backwards claim
+        # about a real decision). Bounded and generic - never names the missing topic itself.
+        if is_historical_question(question_text):
+            return MemoryRetrievalResult(context_text=_NO_RELEVANT_MEMORY_NOTICE, intent="not_found", subject=None)
 
     return MemoryRetrievalResult()

@@ -64,11 +64,18 @@ from .project_store import ProjectStore, ProjectStoreError
 from .project_troubleshoot import ProjectTextTroubleshootError
 from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
 from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
-from .memory_retrieval import MemoryRetrievalResult, ProjectMemoryRetrievalService, retrieve_memory_context
+from .memory_retrieval import (
+    MemoryRetrievalResult,
+    ProjectMemoryRetrievalService,
+    known_subject_hints,
+    retrieve_memory_context,
+)
 from .project_current_state import ProjectCurrentStateService
 from .visual_evidence import (
     VisualEvidenceContinuityError,
     VisualEvidenceContinuityService,
+    _EVIDENCE_EXISTS_BUT_UNMATCHED_NOTICE,
+    _NO_DESCRIPTION_PLACEHOLDER,
     is_visual_continuity_candidate,
     select_candidates,
 )
@@ -462,7 +469,13 @@ class AssistantOrchestrator:
         try:
             text = next(
                 (p.text for p in user_turn.content_parts if isinstance(p, ConversationTextPart)), "")
-            candidates = self.memory_extraction_service.extract(text)
+            # Stage 5 repair (subject-identity stabilization): a bounded shortlist of this
+            # Project's existing canonical subjects, so a naturally-worded update ("only got
+            # halfway done") can be matched to the SAME real-world item as an earlier statement
+            # ("I finished painting the wall") instead of silently forking a second, disconnected
+            # identity - dogfooding found this happening even without adversarial phrasing.
+            known_subjects = known_subject_hints(self.memory_store.list_records(project_id))
+            candidates = self.memory_extraction_service.extract(text, known_subjects)
             for candidate in candidates:
                 self.memory_store.write_candidate(
                     project_id, candidate,
@@ -514,7 +527,14 @@ class AssistantOrchestrator:
             logger.warning("Visual evidence candidate gathering failed for project %s: %s", project_id, exc)
             return _VisualContinuityResolution()
         if selection is None:
-            return _VisualContinuityResolution()
+            # Stage 5 repair: candidates was non-empty, so Evidence genuinely EXISTS for this
+            # Project - the selection call just could not confidently match it to this specific
+            # question. Stay honest about existence rather than silent (which previously let the
+            # model conclude, and state, that no photo was ever provided at all - found during
+            # Stage 5 dogfooding against a real photo that predates Stage 3's description
+            # pipeline).
+            return _VisualContinuityResolution(
+                visual_context=_EVIDENCE_EXISTS_BUT_UNMATCHED_NOTICE, tier="not_found", evidence_id=None)
 
         if selection.tier == "original_required":
             try:
@@ -531,18 +551,25 @@ class AssistantOrchestrator:
                     )
             except (InvestigationSessionStoreError, InvestigationEvidenceStoreError, OSError):
                 pass
-            # Original pixels were judged necessary but are unavailable - fall back to the stored
-            # description with an explicit unavailability note, per the required failure behavior:
-            # state that the detail cannot be verified rather than silently answering as if Tier 1
-            # were sufficient or fabricating the visual detail.
+            # Original pixels were judged necessary but are unavailable - fall back to an explicit
+            # unavailability note, per the required failure behavior: state that the detail cannot
+            # be verified rather than silently answering as if Tier 1 were sufficient or
+            # fabricating the visual detail. A selected candidate with no real stored description
+            # (only the placeholder) gets its own clearer wording, since claiming "only this stored
+            # description is available" would be misleading when there was never a real one.
+            note = (
+                "This Project has Evidence indicating a photo exists, but neither a stored "
+                "description nor the original image could be retrieved right now - say you cannot "
+                "currently verify the image's contents, rather than guessing or denying a photo "
+                "exists."
+                if selection.description == _NO_DESCRIPTION_PLACEHOLDER else
+                f"{selection.description} (Note: the original image for this Evidence could not "
+                "be retrieved right now; only this stored description is available. If asked "
+                "about a visual detail this description does not cover, say it cannot be "
+                "verified from the stored description - do not guess.)"
+            )
             return _VisualContinuityResolution(
-                visual_context=(
-                    f"{selection.description} (Note: the original image for this Evidence could not "
-                    "be retrieved right now; only this stored description is available. If asked "
-                    "about a visual detail this description does not cover, say it cannot be "
-                    "verified from the stored description - do not guess.)"
-                ),
-                tier="description_sufficient", evidence_id=selection.evidence_id,
+                visual_context=note, tier="description_sufficient", evidence_id=selection.evidence_id,
             )
         return _VisualContinuityResolution(
             visual_context=selection.description,

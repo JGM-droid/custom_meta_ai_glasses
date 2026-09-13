@@ -73,6 +73,28 @@ referring to more than one prior item at once (e.g. "those are both already done
 need either of those anymore") when this single message alone does not make it unambiguous which \
 specific subjects are meant - extract nothing rather than guessing which items the user means.
 
+You may be given a bounded list of EXISTING KNOWN SUBJECTS already tracked for this Project, each \
+shown as "scope/subject/slot: current value". If the new message clearly refers to the SAME \
+real-world item, decision, or task as one of these - even if worded completely differently (e.g. \
+"the wall" for "wall_painting", "the old server" for "server", "it" resolved from context) - reuse \
+that EXACT scope, subject, and slot shown for it (e.g. "I finished painting the wall" then later \
+"actually only got halfway done" are both updates to the SAME painting task, so both belong on that \
+item's existing progress slot, not a new slot of your own choosing). This still only changes WHICH \
+scope/subject/slot you write to - the value itself should still be your own concise wording of what \
+the user actually said, exactly as you would write it with no hint at all. Only reuse an existing \
+subject (and slot) when you are reasonably confident the new statement is about that SAME specific \
+item or task, not merely the same general area or topic - a statement describing a DIFFERENT, \
+additional task or issue in that area (even one that is related to or caused by the existing \
+subject) must get its own new subject, never be folded into an existing one. This matters most for \
+progress: an existing blocked/in-progress item must never be silently overwritten by a newer, \
+unrelated follow-up task update that happens to share a general topic - if in doubt whether two \
+statements describe the same task or two different ones, treat them as different (new subject) \
+rather than merging them. If it is genuinely unclear whether a statement refers to an existing \
+subject or a new one, or which of two existing subjects it means, do not force a match - fall back \
+to your own best new scope/subject choice if the item itself is clearly identifiable, or extract \
+nothing if the reference itself is ambiguous per the rule above. Never merge two genuinely \
+different real-world items into one subject merely because they seem topically related.
+
 Output ONLY a JSON object: {"candidates": [{"category": "...", "scope": "...", "subject": \
 "...", "slot": "...", "value": "...", "modality": "...", "progress_state": "..." (omit if not \
 progress), "is_blocker": false}, ...]} - use "candidates": [] if nothing qualifies."""
@@ -100,16 +122,29 @@ class ProjectMemoryExtractionService:
         self._client = client_factory(api_key=api_key.strip(), timeout=float(timeout_seconds))
         self._model = str(model or "gpt-4.1-mini").strip()
 
-    def extract(self, user_text: str) -> list[ProjectMemoryCandidate]:
+    def extract(
+        self, user_text: str, known_subjects: list[tuple[str, str, str, str]] | None = None,
+    ) -> list[ProjectMemoryCandidate]:
+        """known_subjects, when given, is a bounded (scope, subject, slot, current_value) shortlist
+        the caller already narrowed (see memory_retrieval.known_subject_hints) - a hint for the
+        model to REUSE an existing identity (and its EXACT slot) for the same real-world item, never
+        a mandate to merge unrelated ones. None/empty preserves the exact prior single-message
+        prompt shape."""
         text = str(user_text or "").strip()
         if not text:
             return []
+        if known_subjects:
+            hint_lines = "\n".join(
+                f"- {scope}/{subject}/{slot}: {value!r}" for scope, subject, slot, value in known_subjects)
+            user_content = f"Existing known subjects for this Project:\n{hint_lines}\n\nUser message: {text}"
+        else:
+            user_content = text
         try:
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": user_content},
                 ],
                 response_format={"type": "json_object"},
                 temperature=0,

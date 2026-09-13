@@ -69,6 +69,11 @@ class VisualEvidenceCandidate:
     scope: str
     description: str
     occurred_at_utc: datetime
+    # Stage 5 repair: False for Evidence that has no durable Stage 3 description yet (e.g. it
+    # predates Stage 3, or description generation previously failed). Such Evidence must still be
+    # a selectable candidate - excluding it entirely caused the assistant to falsely claim no photo
+    # was ever provided (found during Stage 5 dogfooding on a real pre-existing photo).
+    has_description: bool = True
 
 
 @dataclass(frozen=True)
@@ -79,21 +84,44 @@ class VisualEvidenceSelection:
     description: str
 
 
+_NO_DESCRIPTION_PLACEHOLDER = "(no stored description yet - the original photo is still available)"
+
+# Stage 5 repair: emitted when candidates was non-empty (Evidence genuinely exists for this
+# Project) but the selection call could not confidently match any of it to the specific question
+# asked. Distinct from "no candidates at all" (which stays silent, correctly, since nothing exists
+# to acknowledge) - staying silent here previously let the model conclude no photo was ever
+# provided at all, which is false (found during Stage 5 dogfooding).
+_EVIDENCE_EXISTS_BUT_UNMATCHED_NOTICE = (
+    "This Project has stored visual Evidence (at least one photo) from earlier in its history, "
+    "but none could be confidently matched to this specific question. Do not say no photo was "
+    "ever provided - if asked about visual appearance, say you cannot currently confirm the "
+    "specific details being asked about without more context, rather than guessing or denying "
+    "that any photo exists."
+)
+
+
 def select_candidates(
     all_evidence: list[InvestigationEvidence], *, question_text: str, limit: int = _MAX_CANDIDATES,
 ) -> list[VisualEvidenceCandidate]:
-    """Deterministic-only, no provider call. Narrows to Evidence that already has a durable
-    description, prefers Evidence whose stored scope is named in the question text (so "what does
-    the kitchen look like" never has to consider Living Room candidates when a kitchen scope
-    exists), falls back to the full described set otherwise, and bounds the result to `limit`,
+    """Deterministic-only, no provider call. Includes ALL of the Project's Evidence - both
+    described (Stage 3 has generated a durable summary) and undescribed - so a question about an
+    existing photo can never be met with "no Evidence at all" merely because no description was
+    ever generated for it. Prefers Evidence whose stored scope is named in the question text (so
+    "what does the kitchen look like" never has to consider Living Room candidates when a kitchen
+    scope exists); undescribed Evidence has no known scope, so it is never excluded by scope
+    matching - it is always still a candidate, just an unscoped one. Bounds the result to `limit`,
     most-recent first."""
-    described = [item for item in all_evidence if item.visual_description]
-    described.sort(key=lambda item: item.created_at_utc, reverse=True)
+    eligible = list(all_evidence)
+    eligible.sort(key=lambda item: item.created_at_utc, reverse=True)
 
     lowered = str(question_text or "").lower()
-    known_scopes = {item.visual_description_scope for item in described if item.visual_description_scope}
+    known_scopes = {item.visual_description_scope for item in eligible if item.visual_description_scope}
     matched_scopes = {scope for scope in known_scopes if scope.replace("_", " ") in lowered or scope in lowered}
-    pool = [item for item in described if item.visual_description_scope in matched_scopes] if matched_scopes else described
+    pool = (
+        [item for item in eligible if item.visual_description_scope in matched_scopes
+         or item.visual_description_scope is None]
+        if matched_scopes else eligible
+    )
 
     bounded = pool[:limit]
     return [
@@ -101,8 +129,9 @@ def select_candidates(
             session_id=item.session_id,
             evidence_id=item.evidence_id,
             scope=item.visual_description_scope or _DEFAULT_SCOPE,
-            description=item.visual_description or "",
+            description=item.visual_description or _NO_DESCRIPTION_PLACEHOLDER,
             occurred_at_utc=item.created_at_utc,
+            has_description=bool(item.visual_description),
         )
         for item in bounded
     ]
@@ -138,7 +167,10 @@ you cannot reasonably tell which one.
 - tier: "description_sufficient" if the stored description text already contains enough \
 information to answer the question reliably; "original_required" if answering requires a visual \
 detail (e.g. an exact pattern, a small object, precise color, text/label) that the stored \
-description does not cover and only the original photo could show.
+description does not cover and only the original photo could show, OR if the candidate's \
+description literally reads "(no stored description yet - the original photo is still \
+available)" - there is nothing to judge sufficiency from in that case, so the original must \
+always be used.
 
 Never guess a specific candidate when multiple are plausible and the question does not disambiguate \
 - return applicable=false with selected_index=null instead. Output ONLY a JSON object: \
@@ -234,6 +266,12 @@ class VisualEvidenceContinuityService:
         if tier not in ("description_sufficient", "original_required"):
             return None
         chosen = sorted_candidates[index]
+        if not chosen.has_description:
+            # Deterministic safety net, not just prompt-level trust: Tier 1 is structurally
+            # impossible without a stored description, regardless of what the model returned -
+            # never rely solely on the model's own honesty for this (Stage 5 safety bar: "do not
+            # trade fabrication for aggressive fuzzy matching").
+            tier = "original_required"
         return VisualEvidenceSelection(
             session_id=chosen.session_id, evidence_id=chosen.evidence_id,
             tier=tier, description=chosen.description,

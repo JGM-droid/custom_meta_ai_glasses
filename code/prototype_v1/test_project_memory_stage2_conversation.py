@@ -31,7 +31,7 @@ class FakeMemoryExtractionService:
         self.candidates_by_text: dict[str, list] = {}
         self.fail_texts: set[str] = set()
 
-    def extract(self, user_text: str):
+    def extract(self, user_text: str, known_subjects: list[tuple[str, str, str]] | None = None):
         self.calls.append(user_text)
         if user_text in self.fail_texts:
             raise ProjectMemoryExtractionError("fixture-forced extraction failure")

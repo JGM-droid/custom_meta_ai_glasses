@@ -163,6 +163,11 @@ def test_ambiguous_question_falls_back_to_selection_service(memory_retrieval_con
                                            subject="tv_stand", slot="disposition", value="replace with warm wood"),
         source_type=ProjectActivitySourceType.USER, source_turn_id=None)
 
+    # A legitimate anaphora resolution always has SOME textual antecedent in the bounded recent
+    # conversation - matching the Stage 5 repair's grounding sanity check (a selection with no
+    # textual basis anywhere in question+recent-context is discarded, not trusted blindly).
+    _send(ctx["client"], project["project_id"], "Are we still keeping the TV stand?", "turn-0")
+
     ctx["retrieval_service"].select_result = MemorySelection(
         intent="historical", scope="living_room", subject="tv_stand")
     response = _send(ctx["client"], project["project_id"], "Why did that change?", "turn-1")

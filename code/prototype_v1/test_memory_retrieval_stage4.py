@@ -367,6 +367,10 @@ def test_retrieve_memory_context_falls_back_to_selection_service(tmp_path):
 
     result = retrieve_memory_context(
         project_id=project_id, records=records, question_text="Why did that change?",
+        # A legitimate anaphora resolution always has SOME textual antecedent - here, in the
+        # bounded recent conversation - matching the Stage 5 repair's grounding sanity check
+        # (a selection with no textual basis anywhere in question+recent-context is discarded).
+        prior_turns_text="user: Are we still keeping the TV stand?\nassistant: No, replacing it.",
         selection_service=FakeSelectionService())
     assert result.intent == "historical"
     assert result.subject == "tv_stand"

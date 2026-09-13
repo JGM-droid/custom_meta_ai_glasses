@@ -203,9 +203,9 @@ def test_living_room_scenario_provider_call_count(living_room_backend):
     calls = {"count": 0}
     real_extract = ctx["extraction_service"].extract
 
-    def counting_extract(text):
+    def counting_extract(text, known_subjects=None):
         calls["count"] += 1
-        return real_extract(text)
+        return real_extract(text, known_subjects)
 
     ctx["extraction_service"].extract = counting_extract
     _run_scenario(ctx)

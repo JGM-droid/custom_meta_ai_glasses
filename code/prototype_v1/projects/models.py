@@ -1721,6 +1721,15 @@ class ProjectMemoryCandidate(BaseModel):
         text = str(value or "").strip()
         return text or DEFAULT_MEMORY_SCOPE
 
+    @model_validator(mode="after")
+    def _validate_progress_state_shape(self) -> "ProjectMemoryCandidate":
+        if self.category == ProjectMemoryCategory.PROGRESS:
+            if self.progress_state is None:
+                raise ValueError("progress_state is required when category is PROGRESS.")
+        elif self.progress_state is not None:
+            raise ValueError("progress_state is only valid when category is PROGRESS.")
+        return self
+
 
 class ProjectScopeState(BaseModel):
     """Bounded derived view for ONE scope/workstream - never a second
