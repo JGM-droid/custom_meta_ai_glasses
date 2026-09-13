@@ -64,6 +64,8 @@ from .project_store import ProjectStore, ProjectStoreError
 from .project_troubleshoot import ProjectTextTroubleshootError
 from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
 from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
+from .memory_retrieval import MemoryRetrievalResult, ProjectMemoryRetrievalService, retrieve_memory_context
+from .project_current_state import ProjectCurrentStateService
 from .visual_evidence import (
     VisualEvidenceContinuityError,
     VisualEvidenceContinuityService,
@@ -162,7 +164,9 @@ class AssistantOrchestrator:
                  investigation_trust_service: ProjectInvestigationTrustService | None = None,
                  memory_extraction_service: "ProjectMemoryExtractionService | None" = None,
                  memory_store: "ProjectMemoryStore | None" = None,
-                 visual_evidence_service: "VisualEvidenceContinuityService | None" = None):
+                 visual_evidence_service: "VisualEvidenceContinuityService | None" = None,
+                 memory_retrieval_service: "ProjectMemoryRetrievalService | None" = None,
+                 current_state_service: "ProjectCurrentStateService | None" = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
@@ -186,17 +190,26 @@ class AssistantOrchestrator:
         # never advertised and this bridge is a complete no-op - see
         # _find_eligible_investigation_target.
         self.investigation_trust_service = investigation_trust_service
-        # Stage 2 (Integrated Persistent Memory Shadow Slice, ADR-063/064): SHADOW ONLY - populates
-        # structured Project Memory alongside the real turn but never feeds it back into this
-        # turn's own context_pack/provider_request (that integration is Stage 4). None (the
-        # default) means this is a complete no-op, exactly like every other optional capability
-        # here degrading to "not advertised/not run" rather than a hard dependency.
+        # Stage 2 (Integrated Persistent Memory Shadow Slice, ADR-063/064): writes structured
+        # Project Memory after every eligible turn. Stage 4 (Real Conversation Integration) now
+        # also READS it back via memory_retrieval_service/current_state_service below - extraction
+        # itself is unchanged. None (the default) means no extraction at all, exactly like every
+        # other optional capability here degrading to "not advertised/not run".
         self.memory_extraction_service = memory_extraction_service
         self.memory_store = memory_store
         # Stage 3 (Visual Evidence Continuity): also degrades to a complete no-op when None - no
         # description generation, no Tier 1/2 retrieval, existing image-attachment behavior
         # (evidence_refs on the current turn) is completely unaffected either way.
         self.visual_evidence_service = visual_evidence_service
+        # Stage 4 (Real Conversation Integration): question-aware retrieval over the SAME canonical
+        # Structured Project Memory (memory_store) - no second store. None means no AI-assisted
+        # subject/continuation disambiguation call (deterministic subject/continuation matching
+        # still works without it); the orchestrator degrades to no structured memory context at all
+        # when memory_store itself is None. current_state_service defaults to a fresh instance with
+        # no salience client (bounded deterministic fallback only) when not supplied - it is a pure,
+        # stateless derivation service, never a second canonical state store.
+        self.memory_retrieval_service = memory_retrieval_service
+        self.current_state_service = current_state_service or ProjectCurrentStateService()
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -289,9 +302,20 @@ class AssistantOrchestrator:
             )
             if visual_resolution.image_override is not None:
                 image_inputs = (visual_resolution.image_override,)
+            # Stage 4 (Real Conversation Integration): question-aware retrieval over the SAME
+            # canonical Structured Project Memory Stage 2 already writes - never a second store,
+            # never persisted here. Merged into the existing free-form project_context payload
+            # dict, so no AssistantRequest/provider schema change was needed (unlike Stage 3's
+            # visual_context, which answers a different question - "is there an image" - this is
+            # plain additional bounded text).
+            memory_result = self._resolve_memory_retrieval(
+                normalized_project_id, request.text, conversation, prior_turns)
+            project_context_payload = self._project_context_payload(context_pack)
+            if memory_result.context_text:
+                project_context_payload["structured_project_memory"] = memory_result.context_text
             provider_request = AssistantRequest(
                 user_text=request.text,
-                project_context=self._project_context_payload(context_pack),
+                project_context=project_context_payload,
                 prior_turns=prior_turns,
                 images=image_inputs,
                 allowed_capability_intents=allowed_intents,
@@ -399,7 +423,9 @@ class AssistantOrchestrator:
                 "provider_provenance": ConversationProviderProvenance(
                     provider=result.provider, model=result.model, request_id=result.request_id,
                     visual_retrieval_tier=visual_resolution.tier,
-                    visual_evidence_id=visual_resolution.evidence_id),
+                    visual_evidence_id=visual_resolution.evidence_id,
+                    memory_retrieval_intent=memory_result.intent,
+                    memory_retrieval_subject=memory_result.subject),
                 "failure_category": None,
                 "failure_message": None,
             })
@@ -528,6 +554,38 @@ class AssistantOrchestrator:
         for session in self.session_store.list_sessions_for_project(project_id):
             all_evidence.extend(self.evidence_store.list_evidence_for_analysis(session.session_id))
         return all_evidence
+
+    def _resolve_memory_retrieval(
+        self, project_id: str, question_text: str, conversation: ProjectConversation,
+        prior_turns: tuple[AssistantContextTurn, ...],
+    ) -> MemoryRetrievalResult:
+        """Stage 4: deterministic-first, question-aware retrieval over Structured Project Memory.
+        Degrades to a fully "nothing relevant" result (never raises into the real turn) whenever no
+        memory_store is configured, the store read fails, or nothing about the question resolves."""
+        if self.memory_store is None:
+            return MemoryRetrievalResult()
+        try:
+            records = self.memory_store.list_records(project_id)
+        except ProjectMemoryStoreError as exc:
+            logger.warning("Structured Project Memory retrieval failed for project %s: %s", project_id, exc)
+            return MemoryRetrievalResult()
+
+        prior_turns_text = "\n".join(f"{item.role}: {item.text}" for item in prior_turns[-3:])
+
+        def _turn_text_lookup(turn_id: str) -> str | None:
+            for item in conversation.turns:
+                if item.turn_id == turn_id:
+                    return next(
+                        (part.text for part in item.content_parts if isinstance(part, ConversationTextPart)),
+                        None,
+                    )
+            return None
+
+        return retrieve_memory_context(
+            project_id=project_id, records=records, question_text=question_text,
+            prior_turns_text=prior_turns_text, current_state_service=self.current_state_service,
+            selection_service=self.memory_retrieval_service, turn_text_lookup=_turn_text_lookup,
+        )
 
     def _allowed_capability_intents(self) -> frozenset[AssistantCapabilityIntent]:
         intents: set[AssistantCapabilityIntent] = set()

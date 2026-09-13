@@ -37,7 +37,12 @@ For each item, output:
 specific area
 - subject: a short lowercase identifier for what this is about (e.g. "budget", "tv_stand", "rug")
 - slot: a short lowercase identifier for which aspect of the subject this is (e.g. "amount", \
-"disposition", "procurement") - use "value" if there is no meaningful further breakdown
+"disposition", "procurement") - use "value" if there is no meaningful further breakdown. \
+IMPORTANT for a "replace/swap/change X for/to/with Y"-style statement about an item's fate: put \
+the WHOLE outcome ("replace with warm wood", not just "warm wood") on that item's "disposition" \
+slot - do not park it under a separate slot like "material"/"style" while leaving "disposition" \
+stuck at an earlier, now-stale value ("keep"). A reader must be able to tell the item's current \
+fate from the "disposition" slot alone, without cross-referencing another slot.
 - value: the actual content, in your own concise words
 - modality: exactly one of committed, tentative, historical, hypothetical, conditional, \
 third_party
@@ -63,7 +68,10 @@ own committed decision. Never extract anything from a plain question the user is
 a question restating known facts ("what was my budget again?") produces nothing, not a new \
 fact. If a statement's subject is genuinely ambiguous (e.g. "I like that one better" referring \
 to an unspecified prior option with no way to resolve which one from this message alone), \
-extract nothing for it rather than guessing.
+extract nothing for it rather than guessing. This includes a PLURAL or anaphoric correction \
+referring to more than one prior item at once (e.g. "those are both already done", "we don't \
+need either of those anymore") when this single message alone does not make it unambiguous which \
+specific subjects are meant - extract nothing rather than guessing which items the user means.
 
 Output ONLY a JSON object: {"candidates": [{"category": "...", "scope": "...", "subject": \
 "...", "slot": "...", "value": "...", "modality": "...", "progress_state": "..." (omit if not \

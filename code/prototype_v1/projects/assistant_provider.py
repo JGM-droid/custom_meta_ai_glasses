@@ -265,6 +265,18 @@ class OpenAIAssistantProvider:
             "continuity": "Use relevant prior conversation when it helps answer the current message.",
             "grounding": "Ground Project facts in bounded_project_context; do not invent Project state.",
             "trust": "Do not claim that Project state changed and do not mutate Project state.",
+            # Stage 4 (Real Conversation Integration): bounded_project_context.structured_project_memory,
+            # when present, is pre-filtered, question-relevant Structured Project Memory - text
+            # explicitly under a "CURRENT" heading is confirmed present Project truth; text under a
+            # "HISTORY" heading is past record only, not necessarily still true. Never state
+            # something is currently true based only on a HISTORY-labeled entry, and never invent a
+            # reason a decision changed beyond what the HISTORY entries themselves show.
+            "structured_memory": (
+                "In bounded_project_context.structured_project_memory, only text under a CURRENT "
+                "heading is confirmed present Project truth. Text under a HISTORY heading is past "
+                "record only - do not treat it as still true, and do not invent why something "
+                "changed beyond what the history entries themselves show."
+            ),
             "response": (
                 "Reply naturally as the Project assistant for ordinary conversation, or call the "
                 "appropriate available tool immediately when the user's message already clearly "

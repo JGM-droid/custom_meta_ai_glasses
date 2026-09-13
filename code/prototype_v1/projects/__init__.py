@@ -189,6 +189,13 @@ from .project_store import (
 from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
 from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
 from .project_current_state import ProjectCurrentStateService
+from .memory_retrieval import (
+    MemoryRetrievalResult,
+    MemorySelection,
+    ProjectMemoryRetrievalError,
+    ProjectMemoryRetrievalService,
+    retrieve_memory_context,
+)
 from .visual_evidence import (
     VisualEvidenceCandidate,
     VisualEvidenceContinuityError,
@@ -375,4 +382,9 @@ __all__ = [
     "VisualEvidenceSelection",
     "is_visual_continuity_candidate",
     "select_candidates",
+    "MemoryRetrievalResult",
+    "MemorySelection",
+    "ProjectMemoryRetrievalError",
+    "ProjectMemoryRetrievalService",
+    "retrieve_memory_context",
 ]

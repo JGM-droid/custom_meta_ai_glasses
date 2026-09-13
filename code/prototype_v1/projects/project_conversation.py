@@ -151,6 +151,11 @@ class ConversationProviderProvenance(BaseModel):
     # "retrieval" - the image was already given this turn, not looked up from history).
     visual_retrieval_tier: str | None = Field(default=None, max_length=32)
     visual_evidence_id: str | None = Field(default=None, max_length=64)
+    # Stage 4 (Real Conversation Integration) inspectability: which Structured Project Memory
+    # retrieval intent (if any) this turn used and which subject it resolved to - populated only
+    # when memory-aware retrieval actually contributed context (see AssistantOrchestrator.send()).
+    memory_retrieval_intent: str | None = Field(default=None, max_length=32)
+    memory_retrieval_subject: str | None = Field(default=None, max_length=80)
 
 
 class ConversationTurn(BaseModel):

@@ -213,6 +213,7 @@ from projects import (
     ProjectMemoryRecord,
     ProjectMemoryStore,
     ProjectMemoryStoreError,
+    ProjectMemoryRetrievalService,
     VisualEvidenceContinuityService,
 )
 from projects.visual_artifacts import (
@@ -3051,6 +3052,8 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
     ai_result_planner: ProjectAIResultPlanner | None = None
     memory_extraction_service: ProjectMemoryExtractionService | None = None
     visual_evidence_service: VisualEvidenceContinuityService | None = None
+    memory_retrieval_service: ProjectMemoryRetrievalService | None = None
+    current_state_service: ProjectCurrentStateService | None = None
     if api_key:
         provider = OpenAIAssistantProvider(
             api_key=api_key,
@@ -3079,6 +3082,16 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
             api_key=api_key,
             model=str(os.environ.get("PROJECT_VISUAL_EVIDENCE_OPENAI_MODEL") or "gpt-4.1-mini"),
         )
+        # Stage 4 (Real Conversation Integration): same api_key gate - no api_key means no
+        # AI-assisted subject/continuation disambiguation call and no salience call inside
+        # ProjectCurrentStateService (deterministic behavior only in both cases).
+        memory_retrieval_service = ProjectMemoryRetrievalService(
+            api_key=api_key,
+            model=str(os.environ.get("PROJECT_MEMORY_RETRIEVAL_OPENAI_MODEL") or "gpt-4.1-mini"),
+        )
+        current_state_service = ProjectCurrentStateService(
+            salience_client=OpenAI(api_key=api_key) if OpenAI is not None else None,
+        )
     return AssistantOrchestrator(
         project_store=PROJECT_STORE,
         conversation_store=PROJECT_CONVERSATION_STORE,
@@ -3097,6 +3110,8 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         memory_extraction_service=memory_extraction_service,
         memory_store=PROJECT_MEMORY_STORE,
         visual_evidence_service=visual_evidence_service,
+        memory_retrieval_service=memory_retrieval_service,
+        current_state_service=current_state_service,
     )
 
 
