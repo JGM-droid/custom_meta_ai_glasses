@@ -621,3 +621,60 @@ class InvestigationEvidenceStore:
             return updated
 
         return self.session_store.run_with_session_lock(normalized_session_id, _update)
+
+    def set_visual_description(
+        self, *, session_id: str, evidence_id: str, description: str, scope: str,
+        generated_at_utc: datetime,
+    ) -> InvestigationEvidence:
+        """Stage 3 (Visual Evidence Continuity): backfills a durable, AI-generated visual
+        description onto an EXISTING evidence record - never creates a new record, never touches
+        bytes/storage_ref/content_hash. Deliberately allowed in ANY session state, unlike
+        set_evidence_explanation's COLLECTING-only gate above: visual continuity must cover Project
+        history, including Evidence captured in a session that is no longer collecting (analyzed,
+        paused, or closed) - restricting this to COLLECTING would make older Evidence permanently
+        undescribable. Uses the same atomic-write idiom as every other mutation in this store."""
+        normalized_session_id = self.session_store.validate_session_id(session_id)
+        normalized_evidence_id = _normalize_uuid_text(evidence_id)
+        text = str(description or "").strip()
+        if not text:
+            raise ValueError("description is required.")
+        normalized_scope = str(scope or "").strip() or "overall"
+
+        def _update(_session: InvestigationSession) -> InvestigationEvidence:
+            metadata_path = self._session_evidence_dir(normalized_session_id) / f"{normalized_evidence_id}.json"
+            if not metadata_path.exists() or not metadata_path.is_file():
+                raise InvestigationEvidenceNotFound("Evidence does not exist.")
+            record = self._load_evidence_from_path(metadata_path, normalized_session_id)
+            updated = record.model_copy(update={
+                "visual_description": text,
+                "visual_description_scope": normalized_scope,
+                "visual_description_generated_at_utc": generated_at_utc,
+            })
+
+            temp_metadata: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=str(self.session_store.temp_dir),
+                    prefix=f"{normalized_evidence_id}.visual.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    handle.write(json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    temp_metadata = Path(handle.name)
+                os.replace(str(temp_metadata), str(metadata_path))
+            except OSError as exc:
+                raise InvestigationEvidenceStoreError("Failed to persist visual description.") from exc
+            finally:
+                if temp_metadata and temp_metadata.exists():
+                    try:
+                        temp_metadata.unlink()
+                    except OSError:
+                        pass
+
+            return updated
+
+        return self.session_store.run_with_session_lock(normalized_session_id, _update)

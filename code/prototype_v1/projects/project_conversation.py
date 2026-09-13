@@ -144,6 +144,13 @@ class ConversationProviderProvenance(BaseModel):
     provider: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=200)
     request_id: str | None = Field(default=None, max_length=200)
+    # Stage 3 (Visual Evidence Continuity) inspectability: which retrieval tier (if any) this turn
+    # used and which Evidence it selected - populated only when the deterministic+AI visual
+    # continuity retrieval actually fired for this turn (see AssistantOrchestrator.send()). None for
+    # every ordinary turn, including one with freshly-attached evidence_refs (that is not a
+    # "retrieval" - the image was already given this turn, not looked up from history).
+    visual_retrieval_tier: str | None = Field(default=None, max_length=32)
+    visual_evidence_id: str | None = Field(default=None, max_length=64)
 
 
 class ConversationTurn(BaseModel):

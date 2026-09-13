@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import UUID, uuid5
 
 from investigations import (
     MAX_IMAGE_UPLOAD_BYTES,
+    InvestigationEvidence,
     InvestigationEvidenceStore,
     InvestigationEvidenceStoreError,
     InvestigationEvidenceType,
@@ -62,6 +64,12 @@ from .project_store import ProjectStore, ProjectStoreError
 from .project_troubleshoot import ProjectTextTroubleshootError
 from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
 from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
+from .visual_evidence import (
+    VisualEvidenceContinuityError,
+    VisualEvidenceContinuityService,
+    is_visual_continuity_candidate,
+    select_candidates,
+)
 from .models import (
     CheckpointProposalPatch,
     CheckpointProposalStatus,
@@ -118,6 +126,31 @@ class ConversationInvestigationError(RuntimeError):
     VisualArtifactBridgeError/ProjectExploreError's own single-base-type handling."""
 
 
+@dataclass(frozen=True)
+class _PendingVisualDescriptionTarget:
+    """Stage 3: one freshly-attached image this turn that has no durable description yet - gathered
+    while resolving this turn's images (inside the project lock, cheap - no extra I/O beyond what
+    _resolve_image_inputs already does), described AFTER the lock releases (a real, potentially
+    slow provider call), exactly like Stage 2's shadow memory extraction."""
+
+    session_id: str
+    evidence_id: str
+    media_type: str
+    image_bytes: bytes
+
+
+@dataclass(frozen=True)
+class _VisualContinuityResolution:
+    """Stage 3: the outcome of deterministic-then-AI visual Evidence retrieval for a text-only turn
+    (no fresh evidence_refs). All fields default to "not applicable" - the common case for an
+    ordinary non-visual turn, which must cost nothing beyond the cheap keyword gate."""
+
+    image_override: AssistantImageInput | None = None
+    visual_context: str | None = None
+    tier: str | None = None
+    evidence_id: str | None = None
+
+
 class AssistantOrchestrator:
     def __init__(self, *, project_store: ProjectStore, conversation_store: ProjectConversationStore,
                  context_retriever: ProjectContextRetriever, provider: AssistantProvider,
@@ -128,7 +161,8 @@ class AssistantOrchestrator:
                  ai_result_planner: ProjectAIResultPlanner | None = None,
                  investigation_trust_service: ProjectInvestigationTrustService | None = None,
                  memory_extraction_service: "ProjectMemoryExtractionService | None" = None,
-                 memory_store: "ProjectMemoryStore | None" = None):
+                 memory_store: "ProjectMemoryStore | None" = None,
+                 visual_evidence_service: "VisualEvidenceContinuityService | None" = None):
         self.project_store = project_store
         self.conversation_store = conversation_store
         self.context_retriever = context_retriever
@@ -159,6 +193,10 @@ class AssistantOrchestrator:
         # here degrading to "not advertised/not run" rather than a hard dependency.
         self.memory_extraction_service = memory_extraction_service
         self.memory_store = memory_store
+        # Stage 3 (Visual Evidence Continuity): also degrades to a complete no-op when None - no
+        # description generation, no Tier 1/2 retrieval, existing image-attachment behavior
+        # (evidence_refs on the current turn) is completely unaffected either way.
+        self.visual_evidence_service = visual_evidence_service
 
     def get_or_create(self, project_id: str) -> ConversationReadResponse:
         conversation = self.conversation_store.create_or_load(project_id)
@@ -197,11 +235,13 @@ class AssistantOrchestrator:
                         turns=[existing_user, existing_assistant],
                         reconstructed=True,
                     )
-                image_inputs = self._resolve_image_inputs(normalized_project_id, request.evidence_refs)
+                image_inputs, pending_visual_descriptions = self._resolve_image_inputs(
+                    normalized_project_id, request.evidence_refs)
                 user_turn = existing_user
                 assistant_turn = existing_assistant
             else:
-                image_inputs = self._resolve_image_inputs(normalized_project_id, request.evidence_refs)
+                image_inputs, pending_visual_descriptions = self._resolve_image_inputs(
+                    normalized_project_id, request.evidence_refs)
                 now = datetime.now(timezone.utc)
                 user_turn = ConversationTurn(
                     turn_id=user_id,
@@ -240,6 +280,15 @@ class AssistantOrchestrator:
             allowed_intents = self._allowed_capability_intents()
             progress_target = self._find_eligible_investigation_target(
                 normalized_project_id, conversation, before_sequence=user_turn.sequence_number)
+            # Stage 3 (Visual Evidence Continuity): only ever considered when this turn has no
+            # fresh evidence_refs of its own - a freshly-attached image is already handled by
+            # image_inputs above and needs no retrieval. Never overrides a fresh attachment.
+            visual_resolution = (
+                self._resolve_visual_continuity(normalized_project_id, request.text)
+                if not request.evidence_refs else _VisualContinuityResolution()
+            )
+            if visual_resolution.image_override is not None:
+                image_inputs = (visual_resolution.image_override,)
             provider_request = AssistantRequest(
                 user_text=request.text,
                 project_context=self._project_context_payload(context_pack),
@@ -247,6 +296,7 @@ class AssistantOrchestrator:
                 images=image_inputs,
                 allowed_capability_intents=allowed_intents,
                 investigation_progress_eligible=progress_target is not None,
+                visual_context=visual_resolution.visual_context,
             )
             try:
                 result = self.provider.respond(provider_request)
@@ -347,7 +397,9 @@ class AssistantOrchestrator:
                 "content_parts": content_parts,
                 "completed_at_utc": datetime.now(timezone.utc),
                 "provider_provenance": ConversationProviderProvenance(
-                    provider=result.provider, model=result.model, request_id=result.request_id),
+                    provider=result.provider, model=result.model, request_id=result.request_id,
+                    visual_retrieval_tier=visual_resolution.tier,
+                    visual_evidence_id=visual_resolution.evidence_id),
                 "failure_category": None,
                 "failure_message": None,
             })
@@ -370,6 +422,14 @@ class AssistantOrchestrator:
         if self.memory_extraction_service is not None and self.memory_store is not None:
             self._run_shadow_memory_extraction(normalized_project_id, user_turn)
 
+        # Stage 3 (Visual Evidence Continuity): same placement rationale as Stage 2 above - a real,
+        # potentially slow provider call per pending image, run only after the real turn is already
+        # durably saved and the project lock released. A description-generation failure must never
+        # destroy the real conversation turn (see docs/PROJECT_MEMORY_ARCHITECTURE.md's Stage 3
+        # failure-behavior requirement) - the original Evidence is always preserved regardless.
+        if self.visual_evidence_service is not None and pending_visual_descriptions:
+            self._run_shadow_visual_description_generation(pending_visual_descriptions)
+
         return response
 
     def _run_shadow_memory_extraction(self, project_id: str, user_turn: ConversationTurn) -> None:
@@ -387,6 +447,87 @@ class AssistantOrchestrator:
         except (ProjectMemoryExtractionError, ProjectMemoryStoreError) as exc:
             # Shadow-only: observable via logs, never raised into the real turn/response.
             logger.warning("Shadow memory extraction failed for project %s: %s", project_id, exc)
+
+    def _run_shadow_visual_description_generation(
+        self, targets: tuple[_PendingVisualDescriptionTarget, ...],
+    ) -> None:
+        for target in targets:
+            try:
+                result = self.visual_evidence_service.describe(
+                    image_bytes=target.image_bytes, media_type=target.media_type)
+                self.evidence_store.set_visual_description(
+                    session_id=target.session_id, evidence_id=target.evidence_id,
+                    description=result.description, scope=result.scope,
+                    generated_at_utc=datetime.now(timezone.utc),
+                )
+            except (VisualEvidenceContinuityError, InvestigationEvidenceStoreError,
+                    InvestigationSessionStoreError, ValueError) as exc:
+                # Shadow-only: the original Evidence is untouched either way; observable via logs,
+                # never raised into the real turn/response.
+                logger.warning(
+                    "Shadow visual description generation failed for evidence %s: %s",
+                    target.evidence_id, exc)
+
+    def _resolve_visual_continuity(self, project_id: str, question_text: str) -> _VisualContinuityResolution:
+        """Deterministic-then-AI Tier 1/Tier 2 retrieval for a text-only turn. Returns a fully
+        "not applicable" resolution (the cheap common case) whenever the service is unavailable, the
+        cheap keyword gate does not match, no described Evidence candidates exist, or the AI
+        selection call abstains/fails - never guesses, never raises into the real turn."""
+        if (self.visual_evidence_service is None or self.session_store is None
+                or self.evidence_store is None):
+            return _VisualContinuityResolution()
+        if not is_visual_continuity_candidate(question_text):
+            return _VisualContinuityResolution()
+        try:
+            all_evidence = self._gather_project_evidence(project_id)
+            candidates = select_candidates(all_evidence, question_text=question_text)
+            if not candidates:
+                return _VisualContinuityResolution()
+            selection = self.visual_evidence_service.select(question_text=question_text, candidates=candidates)
+        except (InvestigationSessionStoreError, InvestigationEvidenceStoreError) as exc:
+            logger.warning("Visual evidence candidate gathering failed for project %s: %s", project_id, exc)
+            return _VisualContinuityResolution()
+        if selection is None:
+            return _VisualContinuityResolution()
+
+        if selection.tier == "original_required":
+            try:
+                evidence, payload_path = self.evidence_store.load_evidence_content(
+                    session_id=selection.session_id, evidence_id=selection.evidence_id)
+                size_bytes = payload_path.stat().st_size
+                if 0 < size_bytes <= MAX_IMAGE_UPLOAD_BYTES:
+                    return _VisualContinuityResolution(
+                        image_override=AssistantImageInput(
+                            evidence_id=evidence.evidence_id, media_type=evidence.mime_type,
+                            image_bytes=payload_path.read_bytes(),
+                        ),
+                        tier="original_required", evidence_id=evidence.evidence_id,
+                    )
+            except (InvestigationSessionStoreError, InvestigationEvidenceStoreError, OSError):
+                pass
+            # Original pixels were judged necessary but are unavailable - fall back to the stored
+            # description with an explicit unavailability note, per the required failure behavior:
+            # state that the detail cannot be verified rather than silently answering as if Tier 1
+            # were sufficient or fabricating the visual detail.
+            return _VisualContinuityResolution(
+                visual_context=(
+                    f"{selection.description} (Note: the original image for this Evidence could not "
+                    "be retrieved right now; only this stored description is available. If asked "
+                    "about a visual detail this description does not cover, say it cannot be "
+                    "verified from the stored description - do not guess.)"
+                ),
+                tier="description_sufficient", evidence_id=selection.evidence_id,
+            )
+        return _VisualContinuityResolution(
+            visual_context=selection.description,
+            tier="description_sufficient", evidence_id=selection.evidence_id,
+        )
+
+    def _gather_project_evidence(self, project_id: str) -> list[InvestigationEvidence]:
+        all_evidence: list[InvestigationEvidence] = []
+        for session in self.session_store.list_sessions_for_project(project_id):
+            all_evidence.extend(self.evidence_store.list_evidence_for_analysis(session.session_id))
+        return all_evidence
 
     def _allowed_capability_intents(self) -> frozenset[AssistantCapabilityIntent]:
         intents: set[AssistantCapabilityIntent] = set()
@@ -747,12 +888,17 @@ class AssistantOrchestrator:
         self,
         project_id: str,
         references: list[ConversationEvidenceReferencePart],
-    ) -> tuple[AssistantImageInput, ...]:
+    ) -> tuple[tuple[AssistantImageInput, ...], tuple[_PendingVisualDescriptionTarget, ...]]:
         if not references:
-            return ()
+            return (), ()
         if self.session_store is None or self.evidence_store is None:
             raise ConversationEvidenceUnavailable("Conversation Evidence resolution is unavailable.")
         resolved: list[AssistantImageInput] = []
+        # Stage 3 (Visual Evidence Continuity): freshly-attached Evidence with no durable description
+        # yet is flagged here (no extra I/O - `evidence` is already loaded) and described AFTER this
+        # method returns and the caller's project lock releases, since description generation is a
+        # real, potentially slow provider call - see AssistantOrchestrator.send().
+        pending_descriptions: list[_PendingVisualDescriptionTarget] = []
         try:
             for reference in references:
                 session = self.session_store.load_session_for_project(project_id, reference.container_id)
@@ -770,15 +916,21 @@ class AssistantOrchestrator:
                 size_bytes = payload_path.stat().st_size
                 if size_bytes <= 0 or size_bytes > MAX_IMAGE_UPLOAD_BYTES:
                     raise ConversationEvidenceUnavailable("Evidence image size is unavailable or out of bounds.")
+                image_bytes = payload_path.read_bytes()
                 resolved.append(AssistantImageInput(
                     evidence_id=evidence.evidence_id,
                     media_type=evidence.mime_type,
-                    image_bytes=payload_path.read_bytes(),
+                    image_bytes=image_bytes,
                 ))
+                if not evidence.visual_description:
+                    pending_descriptions.append(_PendingVisualDescriptionTarget(
+                        session_id=session.session_id, evidence_id=evidence.evidence_id,
+                        media_type=evidence.mime_type, image_bytes=image_bytes,
+                    ))
         except (InvestigationSessionStoreError, InvestigationEvidenceStoreError, OSError) as exc:
             raise ConversationEvidenceUnavailable(
                 "Evidence does not exist or is unavailable for this Project.") from exc
-        return tuple(resolved)
+        return tuple(resolved), tuple(pending_descriptions)
     @staticmethod
     def _project_context_payload(pack) -> dict[str, object]:
         return {

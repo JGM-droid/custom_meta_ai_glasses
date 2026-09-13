@@ -72,6 +72,14 @@ class AssistantRequest:
     # model judgment. False means the progress-report tool must not even be offered, so the model
     # cannot fire it on an unrelated message, silence, or topic change.
     investigation_progress_eligible: bool = False
+    # Stage 3 (Visual Evidence Continuity), Tier 1 only: a durable TEXT description retrieved from
+    # stored Evidence, when the orchestrator's deterministic+AI retrieval decided the stored
+    # description (not the original pixels) is sufficient to answer this turn. None whenever Tier 1
+    # retrieval did not apply - never populated alongside a Tier 2 turn, which instead supplies the
+    # actual original pixels via `images` above (see AssistantOrchestrator.send()). The system
+    # message/payload must make unmistakable that this is NOT a live image the model can currently
+    # see, so it never claims direct visual access it does not have in this exact request.
+    visual_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -253,6 +261,30 @@ class OpenAIAssistantProvider:
         self._client_factory = client_factory
 
     def respond(self, request: AssistantRequest) -> AssistantResponse:
+        instructions: dict[str, str] = {
+            "continuity": "Use relevant prior conversation when it helps answer the current message.",
+            "grounding": "Ground Project facts in bounded_project_context; do not invent Project state.",
+            "trust": "Do not claim that Project state changed and do not mutate Project state.",
+            "response": (
+                "Reply naturally as the Project assistant for ordinary conversation, or call the "
+                "appropriate available tool immediately when the user's message already clearly "
+                "matches one - never narrate or promise that action in text instead of calling it."
+            ),
+        }
+        if request.visual_context:
+            # Stage 3 (Visual Evidence Continuity), Tier 1: a stored TEXT description, not a live
+            # image. This instruction is the guardrail this feature is required to be testable
+            # against - the model must never claim it is currently looking at/seeing this image.
+            instructions["stored_visual_memory"] = (
+                "retrieved_visual_evidence_description below is a durable TEXT description saved "
+                "earlier from a photo you are NOT currently viewing - there is no image attached to "
+                "this message unless one appears under attached_evidence_ids with actual image "
+                "content in this exact request. Use the stored description to answer if it covers "
+                "the question, but never say you can currently see, are looking at, or are viewing "
+                "the picture. If the question asks about a visual detail the stored description does "
+                "not mention, say that detail cannot be verified from the stored description rather "
+                "than guessing."
+            )
         payload = {
             "current_user_message": request.user_text,
             "attached_evidence_ids": [item.evidence_id for item in request.images],
@@ -260,16 +292,8 @@ class OpenAIAssistantProvider:
             "bounded_prior_conversation": [
                 {"role": item.role, "text": item.text} for item in request.prior_turns
             ],
-            "instructions": {
-                "continuity": "Use relevant prior conversation when it helps answer the current message.",
-                "grounding": "Ground Project facts in bounded_project_context; do not invent Project state.",
-                "trust": "Do not claim that Project state changed and do not mutate Project state.",
-                "response": (
-                    "Reply naturally as the Project assistant for ordinary conversation, or call the "
-                    "appropriate available tool immediately when the user's message already clearly "
-                    "matches one - never narrate or promise that action in text instead of calling it."
-                ),
-            },
+            "retrieved_visual_evidence_description": request.visual_context,
+            "instructions": instructions,
         }
         try:
             current_content: list[dict[str, object]] = [{

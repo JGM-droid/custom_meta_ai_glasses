@@ -213,6 +213,7 @@ from projects import (
     ProjectMemoryRecord,
     ProjectMemoryStore,
     ProjectMemoryStoreError,
+    VisualEvidenceContinuityService,
 )
 from projects.visual_artifacts import (
     OpenAIVisualArtifactProvider,
@@ -3049,6 +3050,7 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
     visual_artifact_service: VisualArtifactService | None = None
     ai_result_planner: ProjectAIResultPlanner | None = None
     memory_extraction_service: ProjectMemoryExtractionService | None = None
+    visual_evidence_service: VisualEvidenceContinuityService | None = None
     if api_key:
         provider = OpenAIAssistantProvider(
             api_key=api_key,
@@ -3070,6 +3072,13 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
             api_key=api_key,
             model=str(os.environ.get("PROJECT_MEMORY_EXTRACTION_OPENAI_MODEL") or "gpt-4.1-mini"),
         )
+        # Stage 3 (Visual Evidence Continuity): same api_key gate - no api_key means no description
+        # generation and no Tier 1/2 retrieval, matching AssistantOrchestrator.send()'s own
+        # `if self.visual_evidence_service is not None` guards.
+        visual_evidence_service = VisualEvidenceContinuityService(
+            api_key=api_key,
+            model=str(os.environ.get("PROJECT_VISUAL_EVIDENCE_OPENAI_MODEL") or "gpt-4.1-mini"),
+        )
     return AssistantOrchestrator(
         project_store=PROJECT_STORE,
         conversation_store=PROJECT_CONVERSATION_STORE,
@@ -3087,6 +3096,7 @@ def _create_assistant_orchestrator() -> AssistantOrchestrator:
         investigation_trust_service=_project_trust_service(),
         memory_extraction_service=memory_extraction_service,
         memory_store=PROJECT_MEMORY_STORE,
+        visual_evidence_service=visual_evidence_service,
     )
 
 

@@ -189,6 +189,15 @@ from .project_store import (
 from .memory_store import ProjectMemoryStore, ProjectMemoryStoreError
 from .memory_extraction import ProjectMemoryExtractionError, ProjectMemoryExtractionService
 from .project_current_state import ProjectCurrentStateService
+from .visual_evidence import (
+    VisualEvidenceCandidate,
+    VisualEvidenceContinuityError,
+    VisualEvidenceContinuityService,
+    VisualEvidenceDescriptionResult,
+    VisualEvidenceSelection,
+    is_visual_continuity_candidate,
+    select_candidates,
+)
 
 __all__ = [
     "ACTIVE_PROJECT_POINTER_SCHEMA_VERSION",
@@ -359,4 +368,11 @@ __all__ = [
     "ProjectMemoryExtractionService",
     "ProjectMemoryExtractionError",
     "ProjectCurrentStateService",
+    "VisualEvidenceCandidate",
+    "VisualEvidenceContinuityError",
+    "VisualEvidenceContinuityService",
+    "VisualEvidenceDescriptionResult",
+    "VisualEvidenceSelection",
+    "is_visual_continuity_candidate",
+    "select_candidates",
 ]

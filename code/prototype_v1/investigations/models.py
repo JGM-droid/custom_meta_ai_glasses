@@ -43,6 +43,8 @@ _MAX_SELECTION_POLICY_VERSION_LENGTH = 32
 _MAX_RENDERER_VERSION_LENGTH = 32
 _MAX_STRUCTURED_LIST_ITEMS = 12
 _MAX_STRUCTURED_TEXT_LENGTH = 1000
+_MAX_VISUAL_DESCRIPTION_LENGTH = 1500
+_MAX_VISUAL_DESCRIPTION_SCOPE_LENGTH = 80
 MAX_INVESTIGATION_IMAGE_COUNT = 5
 _MAX_SELECTED_IMAGE_COUNT = MAX_INVESTIGATION_IMAGE_COUNT
 _MAX_REQUEST_INSTRUCTION_LENGTH = 6000
@@ -127,6 +129,15 @@ class InvestigationEvidence(BaseModel):
     duration_seconds: float | None = Field(default=None, gt=0, le=float(_MAX_EVIDENCE_DURATION_SECONDS))
     normalized_text: str | None = None
     metadata: dict[str, str | int | float | bool | None] | None = None
+    # Stage 3 (Visual Evidence Continuity): a durable, AI-generated TEXT description of what is
+    # visibly present - generated once when this Evidence enters a ProjectConversation, never
+    # regenerated on every turn. This is an OBSERVATION about the image, not user-confirmed Project
+    # truth - it must never be treated as equivalent to a Stage 2 committed fact. None means no
+    # description has been generated yet (e.g. Evidence never referenced in a conversation, or
+    # generation failed and was not retried).
+    visual_description: str | None = Field(default=None, max_length=_MAX_VISUAL_DESCRIPTION_LENGTH)
+    visual_description_scope: str | None = Field(default=None, max_length=_MAX_VISUAL_DESCRIPTION_SCOPE_LENGTH)
+    visual_description_generated_at_utc: datetime | None = None
 
     @field_validator("schema_version")
     @classmethod
@@ -147,7 +158,7 @@ class InvestigationEvidence(BaseModel):
             raise ValueError("UUID fields must be valid UUIDs.") from exc
         return str(parsed)
 
-    @field_validator("created_at_utc", "client_timestamp_utc")
+    @field_validator("created_at_utc", "client_timestamp_utc", "visual_description_generated_at_utc")
     @classmethod
     def _validate_utc_timestamp(cls, value: datetime | None) -> datetime | None:
         if value is None:
@@ -166,7 +177,8 @@ class InvestigationEvidence(BaseModel):
             raise ValueError("content_hash must be a 64-character hex digest.")
         return text
 
-    @field_validator("source", "filename", "mime_type", "storage_ref", "normalized_text")
+    @field_validator("source", "filename", "mime_type", "storage_ref", "normalized_text",
+                      "visual_description", "visual_description_scope")
     @classmethod
     def _validate_trimmed_text_fields(cls, value: str | None) -> str | None:
         if value is None:
